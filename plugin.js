@@ -1,4 +1,4 @@
-/* music-player v0.2.0 | built 2026-11-02T14:56:41.834Z */
+/* music-player v0.3.0 | built 2026-11-02T15:18:08.500Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -323,7 +323,19 @@
   }
 
   // src/core/settings.js
-  var SCHEMA_VERSION = 2;
+  var SCHEMA_VERSION = 3;
+  var THEMES = [
+    { id: "auto", name: "跟随系统" },
+    { id: "light", name: "白天" },
+    { id: "dark", name: "夜间" }
+  ];
+  var ACCENTS = [
+    { id: "red", name: "赤红", color: "#e14b4b" },
+    { id: "blue", name: "雾蓝", color: "#3b82f6" },
+    { id: "green", name: "松绿", color: "#2f9e44" },
+    { id: "purple", name: "藕紫", color: "#8b5cf6" },
+    { id: "amber", name: "暖橙", color: "#e8850c" }
+  ];
   function defaultSettings() {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -331,7 +343,11 @@
       prefix: "",
       volume: 0.8,
       repeat: REPEAT.OFF,
-      shuffle: false
+      shuffle: false,
+      theme: "auto",
+      accent: "red",
+      floating: true,
+      floatLyric: true
     };
   }
   function bool(v, fallback) {
@@ -341,6 +357,12 @@
     var n = Number(v);
     if (!Number.isFinite(n)) return fallback;
     return Math.min(max, Math.max(min, n));
+  }
+  function pickId(list, value, fallback) {
+    var hit = list.filter(function(item) {
+      return item.id === value;
+    })[0];
+    return hit ? hit.id : fallback;
   }
   function normalizeSettings(raw) {
     var def = defaultSettings();
@@ -357,7 +379,11 @@
       prefix: String(s.prefix || s.proxy || "").trim(),
       volume: clampNum(s.volume, 0, 1, def.volume),
       repeat: REPEAT_ORDER.indexOf(s.repeat) === -1 ? def.repeat : s.repeat,
-      shuffle: bool(s.shuffle, def.shuffle)
+      shuffle: bool(s.shuffle, def.shuffle),
+      theme: pickId(THEMES, s.theme, def.theme),
+      accent: pickId(ACCENTS, s.accent, def.accent),
+      floating: bool(s.floating, def.floating),
+      floatLyric: bool(s.floatLyric, def.floatLyric)
     };
   }
 
@@ -705,9 +731,7 @@
     });
   }
 
-  // src/services/sources.js
-  var VKEYS = "https://api.vkeys.cn/v2/music";
-  var ITUNES = "https://itunes.apple.com/search";
+  // src/services/http.js
   var TIMEOUT_MS = 12e3;
   function applyProxy(url, prefix) {
     var p = String(prefix || "").trim();
@@ -715,7 +739,7 @@
     if (p.indexOf("{url}") !== -1) return p.replace("{url}", encodeURIComponent(url));
     return p + encodeURIComponent(url);
   }
-  async function fetchJson(url, prefix) {
+  async function fetchText(url, prefix) {
     var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = controller ? setTimeout(function() {
       controller.abort();
@@ -727,17 +751,24 @@
         signal: controller ? controller.signal : void 0
       });
       if (!res.ok) throw new Error("HTTP " + res.status);
-      var text = await res.text();
-      if (!text) return null;
-      try {
-        return JSON.parse(text);
-      } catch (err) {
-        return JSON.parse(JSON.parse(text));
-      }
+      return await res.text();
     } finally {
       if (timer) clearTimeout(timer);
     }
   }
+  async function fetchJson(url, prefix) {
+    var text = await fetchText(url, prefix);
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      return JSON.parse(JSON.parse(text));
+    }
+  }
+
+  // src/services/sources.js
+  var VKEYS = "https://api.vkeys.cn/v2/music";
+  var ITUNES = "https://itunes.apple.com/search";
   async function tencentSearch(keyword, settings, limit) {
     var url = VKEYS + "/tencent?word=" + encodeURIComponent(keyword) + "&page=1&num=" + limit;
     var data = await fetchJson(url, settings.prefix);
@@ -903,6 +934,98 @@
       return results;
     }
     return { search, createResolver, selfTest };
+  }
+
+  // src/core/lrc.js
+  var TIME_RE = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+  function msOf(fraction) {
+    if (!fraction) return 0;
+    var text = String(fraction);
+    if (text.length === 1) text = text + "00";
+    else if (text.length === 2) text = text + "0";
+    return Number(text.slice(0, 3)) || 0;
+  }
+  function parseLrc(text) {
+    var out = [];
+    if (!text) return out;
+    String(text).split(/\r?\n/).forEach(function(raw) {
+      if (!raw) return;
+      var times = [];
+      var content = raw.replace(TIME_RE, function(all, mm, ss, fraction) {
+        times.push((Number(mm) * 60 + Number(ss)) * 1e3 + msOf(fraction));
+        return "";
+      }).trim();
+      if (!times.length) return;
+      if (!content) return;
+      times.forEach(function(time) {
+        out.push({ time, text: content });
+      });
+    });
+    out.sort(function(a, b) {
+      return a.time - b.time;
+    });
+    return out;
+  }
+  function activeLineIndex(lines, ms) {
+    var arr = lines || [];
+    if (!arr.length) return -1;
+    var target = Number(ms) || 0;
+    var lo = 0;
+    var hi = arr.length - 1;
+    var ans = -1;
+    while (lo <= hi) {
+      var mid = lo + hi >> 1;
+      if (arr[mid].time <= target) {
+        ans = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return ans;
+  }
+  function pickLrc(payload) {
+    if (!payload) return "";
+    if (typeof payload === "string") return payload;
+    var data = payload.data || payload;
+    if (typeof data === "string") return data;
+    if (data && typeof data.lrc === "string") return data.lrc;
+    if (data && typeof data.lyric === "string") return data.lyric;
+    return "";
+  }
+
+  // src/services/lyrics.js
+  var VKEYS2 = "https://api.vkeys.cn/v2/music";
+  function createLyrics() {
+    var cache = /* @__PURE__ */ Object.create(null);
+    async function load(track, settings) {
+      if (!track) return [];
+      if (track.source !== "tencent" || !track.id) return [];
+      var url = VKEYS2 + "/tencent/lyric?id=" + encodeURIComponent(track.id);
+      var data = await fetchJson(url, settings.prefix);
+      var text = pickLrc(data);
+      return text ? parseLrc(text) : [];
+    }
+    async function get(track, settings) {
+      var key = trackKey(track);
+      if (!key) return [];
+      if (cache[key]) return cache[key];
+      try {
+        var lines = await load(track, settings);
+        cache[key] = lines;
+        return lines;
+      } catch (err) {
+        cache[key] = [];
+        return [];
+      }
+    }
+    function getCached(track) {
+      return cache[trackKey(track)] || null;
+    }
+    function clear2() {
+      cache = /* @__PURE__ */ Object.create(null);
+    }
+    return { get, getCached, clear: clear2 };
   }
 
   // src/services/player.js
@@ -1084,6 +1207,11 @@
       state.status = "idle";
       state.track = null;
     }
+    function setHandlers(handlers) {
+      var h2 = handlers || {};
+      opts.onChange = typeof h2.onChange === "function" ? h2.onChange : null;
+      opts.onEnded = typeof h2.onEnded === "function" ? h2.onEnded : null;
+    }
     return {
       load,
       toggle,
@@ -1092,10 +1220,21 @@
       stop,
       dispose,
       getState,
+      setHandlers,
       isPlaying: function() {
         return state.status === "playing";
       }
     };
+  }
+  var shared = null;
+  function getPlayer(options) {
+    if (!shared) {
+      shared = createPlayer(options || {});
+    } else if (options) {
+      shared.setHandlers(options);
+      if (typeof options.volume === "number") shared.setVolume(options.volume);
+    }
+    return shared;
   }
 
   // src/ui/dom.js
@@ -1169,6 +1308,8 @@
     down: '<svg viewBox="0 0 24 24" ' + STROKE + '><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
     up: '<svg viewBox="0 0 24 24" ' + STROKE + '><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
     folder: '<svg viewBox="0 0 24 24" ' + STROKE + '><path d="M4 7h6l2 2h8v9H4z"/></svg>',
+    lyric: '<svg viewBox="0 0 24 24" ' + STROKE + '><path d="M4 7h16M4 12h11M4 17h13"/></svg>',
+    float: '<svg viewBox="0 0 24 24" ' + STROKE + '><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M7 9h7M7 12h5"/></svg>',
     note: '<svg viewBox="0 0 24 24" ' + STROKE + '><path d="M7 4h10v16l-5-3-5 3z"/></svg>'
   };
   function icon(name) {
@@ -1176,13 +1317,13 @@
   }
 
   // src/ui/theme.css
-  var theme_default = '/* 主题变量：只在插件根容器内生效 */\n.mp-root {\n  --mp-bg: #ffffff;\n  --mp-bg-2: #f7f7f9;\n  --mp-soft: #f2f3f5;\n  --mp-soft-2: #e9eaee;\n  --mp-line: #ededf0;\n  --mp-line-strong: #dfe0e4;\n  --mp-ink: #1b1c1f;\n  --mp-ink-2: #4f5259;\n  --mp-muted: #9299a3;\n  --mp-accent: #e14b4b;\n  --mp-accent-soft: rgba(225, 75, 75, 0.1);\n  --mp-on-accent: #ffffff;\n\n  --mp-r-lg: 16px;\n  --mp-r-md: 10px;\n  --mp-r-sm: 8px;\n  --mp-r-full: 999px;\n\n  --mp-shadow: 0 10px 30px rgba(17, 18, 20, 0.08);\n  --mp-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;\n}\n\n.mp-root[data-theme="dark"] {\n  --mp-bg: #141518;\n  --mp-bg-2: #1a1c20;\n  --mp-soft: #22242a;\n  --mp-soft-2: #2b2e35;\n  --mp-line: #262930;\n  --mp-line-strong: #34383f;\n  --mp-ink: #f1f2f4;\n  --mp-ink-2: #c3c7cd;\n  --mp-muted: #868c96;\n  --mp-accent: #f0645f;\n  --mp-accent-soft: rgba(240, 100, 95, 0.16);\n  --mp-on-accent: #ffffff;\n  --mp-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);\n}\n';
+  var theme_default = '/* 主题变量：只在插件根容器内生效 */\n.mp-root {\n  --mp-bg: #ffffff;\n  --mp-bg-2: #f7f7f9;\n  --mp-soft: #f2f3f5;\n  --mp-soft-2: #e9eaee;\n  --mp-line: #ededf0;\n  --mp-line-strong: #dfe0e4;\n  --mp-ink: #1b1c1f;\n  --mp-ink-2: #4f5259;\n  --mp-muted: #9299a3;\n  --mp-accent: #e14b4b;\n  --mp-accent-soft: rgba(225, 75, 75, 0.1);\n  --mp-on-accent: #ffffff;\n\n  --mp-r-lg: 16px;\n  --mp-r-md: 10px;\n  --mp-r-sm: 8px;\n  --mp-r-full: 999px;\n\n  --mp-shadow: 0 10px 30px rgba(17, 18, 20, 0.08);\n  --mp-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;\n}\n\n/* 主色调：与日夜模式正交，放在 dark 之后保证优先级 */\n.mp-root[data-accent="blue"] {\n  --mp-accent: #3b82f6;\n  --mp-accent-soft: rgba(59, 130, 246, 0.14);\n}\n\n.mp-root[data-accent="green"] {\n  --mp-accent: #2f9e44;\n  --mp-accent-soft: rgba(47, 158, 68, 0.14);\n}\n\n.mp-root[data-accent="purple"] {\n  --mp-accent: #8b5cf6;\n  --mp-accent-soft: rgba(139, 92, 246, 0.14);\n}\n\n.mp-root[data-accent="amber"] {\n  --mp-accent: #e8850c;\n  --mp-accent-soft: rgba(232, 133, 12, 0.16);\n}\n\n.mp-root[data-theme="dark"] {\n  --mp-bg: #141518;\n  --mp-bg-2: #1a1c20;\n  --mp-soft: #22242a;\n  --mp-soft-2: #2b2e35;\n  --mp-line: #262930;\n  --mp-line-strong: #34383f;\n  --mp-ink: #f1f2f4;\n  --mp-ink-2: #c3c7cd;\n  --mp-muted: #868c96;\n  --mp-accent: #f0645f;\n  --mp-accent-soft: rgba(240, 100, 95, 0.16);\n  --mp-on-accent: #ffffff;\n  --mp-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);\n}\n\n/* 深色下的主色调：提亮一点，避免压得太沉 */\n.mp-root[data-theme="dark"][data-accent="blue"] { --mp-accent: #6ba4ff; }\n.mp-root[data-theme="dark"][data-accent="green"] { --mp-accent: #4ec46a; }\n.mp-root[data-theme="dark"][data-accent="purple"] { --mp-accent: #a78bfa; }\n.mp-root[data-theme="dark"][data-accent="amber"] { --mp-accent: #ffb347; }\n.mp-root[data-theme="dark"][data-accent="red"] { --mp-accent: #f0645f; }\n';
 
   // src/ui/base.css
-  var base_default = '/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */\n\n.mp-root,\n.mp-root * {\n  box-sizing: border-box;\n}\n\n.mp-root {\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--mp-bg);\n  color: var(--mp-ink);\n  font-family: var(--mp-font);\n  font-size: 14px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\n.mp-root button {\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.mp-root button:disabled {\n  opacity: 0.45;\n  cursor: default;\n}\n\n/* ---------- 页面骨架 ---------- */\n\n.mp-view-host {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-view {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-header {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-header__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 21px;\n  font-weight: 700;\n  letter-spacing: -0.2px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-header__sub {\n  font-size: 12px;\n  color: var(--mp-muted);\n  font-weight: 400;\n}\n\n.mp-body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  padding-bottom: 12px;\n}\n\n.mp-icon-btn {\n  flex: 0 0 auto;\n  width: 34px;\n  height: 34px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink-2);\n  padding: 0;\n}\n\n.mp-icon-btn:active {\n  background: var(--mp-soft);\n}\n\n.mp-icon-btn svg {\n  width: 21px;\n  height: 21px;\n}\n\n.mp-icon-btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 歌曲行 ---------- */\n\n.mp-row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  border: 0;\n  background: transparent;\n  width: 100%;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-row:active {\n  background: var(--mp-soft);\n}\n\n.mp-row__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: var(--mp-r-sm);\n  object-fit: cover;\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-row__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-row__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-row__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-row__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row.is-current .mp-row__name {\n  color: var(--mp-accent);\n}\n\n.mp-row__sub {\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row__tag {\n  display: inline-block;\n  margin-right: 5px;\n  padding: 0 5px;\n  border-radius: 4px;\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n  font-size: 10px;\n  line-height: 15px;\n  vertical-align: 1px;\n}\n\n.mp-row__btn {\n  flex: 0 0 auto;\n  width: 32px;\n  height: 32px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-muted);\n}\n\n.mp-row__btn:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-row__btn svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-row__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 迷你播放条 ---------- */\n\n.mp-player {\n  position: relative;\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 14px 10px;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n}\n\n.mp-player__bar {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  background: var(--mp-line);\n  cursor: pointer;\n}\n\n.mp-player__bar i {\n  display: block;\n  height: 100%;\n  width: 0;\n  background: var(--mp-accent);\n}\n\n.mp-player__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  overflow: hidden;\n  color: var(--mp-muted);\n}\n\n.mp-player__cover svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-player__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-player__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-player__hit {\n  display: block;\n  border: 0;\n  background: transparent;\n  padding: 0;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-player__name {\n  font-size: 13.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__sub {\n  font-size: 11px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__play {\n  flex: 0 0 auto;\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink);\n}\n\n.mp-player__play svg {\n  width: 26px;\n  height: 26px;\n}\n\n/* ---------- 四按钮底栏 ---------- */\n\n.mp-dock {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: stretch;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));\n}\n\n.mp-dock__btn {\n  flex: 1 1 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n  padding: 5px 0 3px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 10.5px;\n  line-height: 1.2;\n}\n\n.mp-dock__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-dock__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 底部弹层（挂在插件根内） ---------- */\n\n.mp-mask {\n  position: absolute;\n  inset: 0;\n  z-index: 40;\n  display: flex;\n  align-items: flex-end;\n  background: rgba(0, 0, 0, 0.35);\n}\n\n.mp-sheet {\n  width: 100%;\n  max-height: 74%;\n  display: flex;\n  flex-direction: column;\n  background: var(--mp-bg);\n  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;\n  padding-bottom: calc(6px + env(safe-area-inset-bottom));\n  animation: mp-rise 0.18s ease-out;\n}\n\n@keyframes mp-rise {\n  from { transform: translateY(12px); opacity: 0.6; }\n  to { transform: translateY(0); opacity: 1; }\n}\n\n.mp-sheet__head {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-sheet__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  padding-bottom: 6px;\n}\n\n.mp-sheet__item {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 12px 16px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14.5px;\n  text-align: left;\n}\n\n.mp-sheet__item:active {\n  background: var(--mp-soft);\n}\n\n.mp-sheet__item svg {\n  width: 19px;\n  height: 19px;\n  color: var(--mp-muted);\n}\n\n.mp-sheet__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__item.is-danger {\n  color: var(--mp-accent);\n}\n\n/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */\n\n.mp-card {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 11px;\n  border-radius: 12px;\n  background: var(--mp-bg, #fff);\n  color: var(--mp-ink, #1b1c1f);\n  border: 1px solid var(--mp-line, #ededf0);\n  min-width: 190px;\n  max-width: 100%;\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-card__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: 8px;\n  background: var(--mp-soft-2, #e9eaee);\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-card__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-card__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__name {\n  font-size: 13.5px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__sub {\n  margin-top: 1px;\n  font-size: 11px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  border: 0;\n  background: rgba(225, 75, 75, 0.1);\n  color: #e14b4b;\n  font-size: 12px;\n  font-weight: 600;\n  padding: 6px 11px;\n  border-radius: 999px;\n}\n\n/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */\n\n.mp-modal {\n  position: fixed;\n  inset: 0;\n  z-index: 9999;\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  background: rgba(0, 0, 0, 0.4);\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-modal__panel {\n  width: 100%;\n  max-width: 480px;\n  max-height: 76vh;\n  display: flex;\n  flex-direction: column;\n  background: #fff;\n  color: #1b1c1f;\n  border-radius: 18px 18px 0 0;\n  padding-bottom: calc(8px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-modal__head {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 10px;\n  border-bottom: 1px solid #ededf0;\n}\n\n.mp-modal__title {\n  flex: 1 1 auto;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.mp-modal__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  font-size: 14.5px;\n  background: transparent;\n  color: inherit;\n}\n\n.mp-modal__body {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 56vh;\n  overflow-y: auto;\n}\n\n.mp-modal__row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 10px 16px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-size: 14px;\n}\n\n.mp-modal__row:active {\n  background: #f2f3f5;\n}\n\n.mp-modal__row span {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__hint {\n  padding: 14px 16px;\n  font-size: 12.5px;\n  color: #9299a3;\n  text-align: center;\n}\n';
+  var base_default = '/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */\n\n.mp-root,\n.mp-root * {\n  box-sizing: border-box;\n}\n\n.mp-root {\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--mp-bg);\n  color: var(--mp-ink);\n  font-family: var(--mp-font);\n  font-size: 14px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\n.mp-root button {\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.mp-root button:disabled {\n  opacity: 0.45;\n  cursor: default;\n}\n\n/* ---------- 页面骨架 ---------- */\n\n.mp-view-host {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-view {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-header {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-header__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 21px;\n  font-weight: 700;\n  letter-spacing: -0.2px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-header__sub {\n  font-size: 12px;\n  color: var(--mp-muted);\n  font-weight: 400;\n}\n\n.mp-body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  padding-bottom: 12px;\n}\n\n.mp-icon-btn {\n  flex: 0 0 auto;\n  width: 34px;\n  height: 34px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink-2);\n  padding: 0;\n}\n\n.mp-icon-btn:active {\n  background: var(--mp-soft);\n}\n\n.mp-icon-btn svg {\n  width: 21px;\n  height: 21px;\n}\n\n.mp-icon-btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 歌曲行 ---------- */\n\n.mp-row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  border: 0;\n  background: transparent;\n  width: 100%;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-row:active {\n  background: var(--mp-soft);\n}\n\n.mp-row__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: var(--mp-r-sm);\n  object-fit: cover;\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-row__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-row__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-row__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-row__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row.is-current .mp-row__name {\n  color: var(--mp-accent);\n}\n\n.mp-row__sub {\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row__tag {\n  display: inline-block;\n  margin-right: 5px;\n  padding: 0 5px;\n  border-radius: 4px;\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n  font-size: 10px;\n  line-height: 15px;\n  vertical-align: 1px;\n}\n\n.mp-row__btn {\n  flex: 0 0 auto;\n  width: 32px;\n  height: 32px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-muted);\n}\n\n.mp-row__btn:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-row__btn svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-row__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 迷你播放条 ---------- */\n\n.mp-player {\n  position: relative;\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 14px 10px;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n}\n\n.mp-player__bar {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  background: var(--mp-line);\n  cursor: pointer;\n}\n\n.mp-player__bar i {\n  display: block;\n  height: 100%;\n  width: 0;\n  background: var(--mp-accent);\n}\n\n.mp-player__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  overflow: hidden;\n  color: var(--mp-muted);\n}\n\n.mp-player__cover svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-player__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-player__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-player__hit {\n  display: block;\n  border: 0;\n  background: transparent;\n  padding: 0;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-player__name {\n  font-size: 13.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__sub {\n  font-size: 11px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__play {\n  flex: 0 0 auto;\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink);\n}\n\n.mp-player__play svg {\n  width: 26px;\n  height: 26px;\n}\n\n/* ---------- 悬浮歌词 ---------- */\n\n.mp-float-lyric {\n  flex: 0 0 auto;\n  display: none;\n  margin: 0 10px 6px;\n  padding: 5px 12px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-bg-2);\n  font-size: 11.5px;\n  line-height: 1.5;\n  color: var(--mp-ink-2);\n  text-align: center;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.mp-float-lyric.is-fresh {\n  animation: mp-lyric-in 0.28s ease-out;\n}\n\n@keyframes mp-lyric-in {\n  from { opacity: 0.25; transform: translateY(3px); }\n  to { opacity: 1; transform: none; }\n}\n\n/* 键盘弹出时把播放条、悬浮歌词、底栏全部让出去，屏幕留给搜索结果 */\n.mp-root.is-keyboard .mp-player,\n.mp-root.is-keyboard .mp-float-lyric,\n.mp-root.is-keyboard .mp-dock {\n  display: none !important;\n}\n\n/* ---------- 四按钮底栏 ---------- */\n\n.mp-dock {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: stretch;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));\n}\n\n.mp-dock__btn {\n  flex: 1 1 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n  padding: 5px 0 3px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 10.5px;\n  line-height: 1.2;\n}\n\n.mp-dock__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-dock__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 底部弹层（挂在插件根内） ---------- */\n\n.mp-mask {\n  position: absolute;\n  inset: 0;\n  z-index: 40;\n  display: flex;\n  align-items: flex-end;\n  background: rgba(0, 0, 0, 0.35);\n}\n\n.mp-sheet {\n  width: 100%;\n  max-height: 74%;\n  display: flex;\n  flex-direction: column;\n  background: var(--mp-bg);\n  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;\n  padding-bottom: calc(6px + env(safe-area-inset-bottom));\n  animation: mp-rise 0.18s ease-out;\n}\n\n@keyframes mp-rise {\n  from { transform: translateY(12px); opacity: 0.6; }\n  to { transform: translateY(0); opacity: 1; }\n}\n\n.mp-sheet__head {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-sheet__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  padding-bottom: 6px;\n}\n\n.mp-sheet__item {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 12px 16px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14.5px;\n  text-align: left;\n}\n\n.mp-sheet__item:active {\n  background: var(--mp-soft);\n}\n\n.mp-sheet__item svg {\n  width: 19px;\n  height: 19px;\n  color: var(--mp-muted);\n}\n\n.mp-sheet__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__item.is-danger {\n  color: var(--mp-accent);\n}\n\n/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */\n\n.mp-card {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 11px;\n  border-radius: 12px;\n  background: var(--mp-bg, #fff);\n  color: var(--mp-ink, #1b1c1f);\n  border: 1px solid var(--mp-line, #ededf0);\n  min-width: 190px;\n  max-width: 100%;\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-card__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: 8px;\n  background: var(--mp-soft-2, #e9eaee);\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-card__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-card__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__name {\n  font-size: 13.5px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__sub {\n  margin-top: 1px;\n  font-size: 11px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  border: 0;\n  background: rgba(225, 75, 75, 0.1);\n  color: #e14b4b;\n  font-size: 12px;\n  font-weight: 600;\n  padding: 6px 11px;\n  border-radius: 999px;\n}\n\n/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */\n\n.mp-modal {\n  position: fixed;\n  inset: 0;\n  z-index: 9999;\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  background: rgba(0, 0, 0, 0.4);\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-modal__panel {\n  width: 100%;\n  max-width: 480px;\n  max-height: 76vh;\n  display: flex;\n  flex-direction: column;\n  background: #fff;\n  color: #1b1c1f;\n  border-radius: 18px 18px 0 0;\n  padding-bottom: calc(8px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-modal__head {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 10px;\n  border-bottom: 1px solid #ededf0;\n}\n\n.mp-modal__title {\n  flex: 1 1 auto;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.mp-modal__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  font-size: 14.5px;\n  background: transparent;\n  color: inherit;\n}\n\n.mp-modal__body {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 56vh;\n  overflow-y: auto;\n}\n\n.mp-modal__row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 10px 16px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-size: 14px;\n}\n\n.mp-modal__row:active {\n  background: #f2f3f5;\n}\n\n.mp-modal__row span {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__hint {\n  padding: 14px 16px;\n  font-size: 12.5px;\n  color: #9299a3;\n  text-align: center;\n}\n';
 
   // src/ui/views.css
-  var views_default = '/* 各页面专属样式 */\n\n/* ---------- 搜索 ---------- */\n\n.mp-search {\n  flex: 0 0 auto;\n  padding: 0 16px 8px;\n}\n\n.mp-search__box {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  height: 38px;\n  padding: 0 12px;\n  border-radius: var(--mp-r-full);\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n}\n\n.mp-search__box svg {\n  width: 17px;\n  height: 17px;\n  flex: 0 0 auto;\n}\n\n.mp-search__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14px;\n}\n\n.mp-search__clear {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-soft-2);\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-search__clear svg {\n  width: 12px;\n  height: 12px;\n}\n\n.mp-chips {\n  display: flex;\n  gap: 8px;\n  overflow-x: auto;\n  padding: 6px 16px 2px;\n  scrollbar-width: none;\n}\n\n.mp-chips::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-chip {\n  flex: 0 0 auto;\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 4px 12px;\n  font-size: 12.5px;\n}\n\n.mp-chip.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n/* ---------- 通用段落 ---------- */\n\n.mp-section {\n  padding: 14px 16px 6px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-hint {\n  padding: 22px 24px;\n  text-align: center;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.7;\n}\n\n.mp-error {\n  margin: 8px 16px;\n  padding: 9px 12px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-size: 12px;\n}\n\n/* ---------- 歌单列表 ---------- */\n\n.mp-list {\n  padding: 4px 10px 8px;\n}\n\n.mp-pl {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  width: 100%;\n  padding: 9px 6px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  border-radius: var(--mp-r-md);\n}\n\n.mp-pl:active {\n  background: var(--mp-soft);\n}\n\n.mp-pl__cover {\n  flex: 0 0 auto;\n  width: 54px;\n  height: 54px;\n  border-radius: var(--mp-r-md);\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-pl__cover svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-pl__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-pl__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-pl__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-pl__sub {\n  margin-top: 3px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */\n\n.mp-actions {\n  display: flex;\n  gap: 10px;\n  padding: 4px 16px 10px;\n}\n\n.mp-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 6px;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  padding: 8px 16px;\n  font-size: 13px;\n  font-weight: 600;\n  background: var(--mp-soft);\n  color: var(--mp-ink);\n}\n\n.mp-btn svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-btn--primary {\n  background: var(--mp-accent);\n  color: var(--mp-on-accent);\n}\n\n.mp-btn--ghost {\n  background: transparent;\n  border: 1px solid var(--mp-line-strong);\n  color: var(--mp-ink-2);\n  font-weight: 500;\n}\n\n.mp-actions .mp-btn {\n  flex: 1 1 0;\n}\n\n/* ---------- 正在播放页 ---------- */\n\n.mp-now {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  padding: 4px 26px 18px;\n  overflow: hidden;\n}\n\n.mp-now__head {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 0 8px;\n}\n\n.mp-now__from {\n  flex: 1 1 auto;\n  text-align: center;\n  font-size: 12px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__cover {\n  flex: 0 0 auto;\n  width: min(76vw, 300px);\n  height: min(76vw, 300px);\n  margin: auto 0;\n  border-radius: 50%;\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n  box-shadow: var(--mp-shadow);\n}\n\n.mp-now__cover svg {\n  width: 54px;\n  height: 54px;\n}\n\n.mp-now__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-now__meta {\n  flex: 0 0 auto;\n  width: 100%;\n  text-align: center;\n  margin-top: 18px;\n}\n\n.mp-now__name {\n  font-size: 18px;\n  font-weight: 700;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__artist {\n  margin-top: 4px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__progress {\n  flex: 0 0 auto;\n  width: 100%;\n  margin-top: 16px;\n}\n\n.mp-now__track {\n  height: 4px;\n  border-radius: 999px;\n  background: var(--mp-soft-2);\n  cursor: pointer;\n  position: relative;\n}\n\n.mp-now__track i {\n  display: block;\n  height: 100%;\n  width: 0;\n  border-radius: 999px;\n  background: var(--mp-accent);\n}\n\n.mp-now__times {\n  display: flex;\n  justify-content: space-between;\n  margin-top: 5px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  font-variant-numeric: tabular-nums;\n}\n\n.mp-now__ctrl {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: 14px;\n}\n\n.mp-now__ctrl .mp-icon-btn {\n  width: 42px;\n  height: 42px;\n}\n\n.mp-now__ctrl .mp-icon-btn svg {\n  width: 23px;\n  height: 23px;\n}\n\n.mp-now__play {\n  width: 58px;\n  height: 58px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-ink);\n  color: var(--mp-bg);\n}\n\n.mp-now__play svg {\n  width: 28px;\n  height: 28px;\n}\n\n.mp-now__extras {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  justify-content: space-around;\n  margin-top: 14px;\n  padding-bottom: 4px;\n}\n\n/* ---------- 设置 ---------- */\n\n.mp-group {\n  margin: 6px 16px 14px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  overflow: hidden;\n}\n\n.mp-group__title {\n  padding: 12px 14px 6px;\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-field {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 11px 14px;\n  border-top: 1px solid var(--mp-line);\n}\n\n.mp-group__title + .mp-field {\n  border-top: 0;\n}\n\n.mp-field__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n}\n\n.mp-field__desc {\n  margin-top: 2px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  line-height: 1.5;\n}\n\n.mp-field__value {\n  flex: 0 0 auto;\n  font-size: 13px;\n  color: var(--mp-muted);\n  max-width: 55%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-input {\n  flex: 0 0 auto;\n  width: 55%;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 13px;\n  text-align: right;\n}\n\n.mp-switch {\n  flex: 0 0 auto;\n  width: 46px;\n  height: 27px;\n  border-radius: 999px;\n  border: 0;\n  background: var(--mp-soft-2);\n  position: relative;\n  transition: background 0.15s;\n  padding: 0;\n}\n\n.mp-switch::after {\n  content: "";\n  position: absolute;\n  top: 3px;\n  left: 3px;\n  width: 21px;\n  height: 21px;\n  border-radius: 50%;\n  background: #fff;\n  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);\n  transition: transform 0.15s;\n}\n\n.mp-switch.is-on {\n  background: var(--mp-accent);\n}\n\n.mp-switch.is-on::after {\n  transform: translateX(19px);\n}\n\n.mp-select {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 13px;\n  text-align: right;\n  outline: none;\n}\n\n.mp-slider {\n  flex: 0 0 auto;\n  width: 55%;\n  accent-color: var(--mp-accent);\n}\n\n.mp-about {\n  padding: 6px 24px 28px;\n  text-align: center;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n';
+  var views_default = '/* 各页面专属样式 */\n\n/* ---------- 搜索 ---------- */\n\n.mp-search {\n  flex: 0 0 auto;\n  padding: 0 16px 8px;\n}\n\n.mp-search__box {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  height: 38px;\n  padding: 0 12px;\n  border-radius: var(--mp-r-full);\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n}\n\n.mp-search__box svg {\n  width: 17px;\n  height: 17px;\n  flex: 0 0 auto;\n}\n\n.mp-search__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14px;\n  -webkit-appearance: none;\n  appearance: none;\n}\n\n/* 去掉 WebView 自带的搜索框装饰（那个多余的 × 和小图标） */\n.mp-search__input::-webkit-search-cancel-button,\n.mp-search__input::-webkit-search-decoration,\n.mp-search__input::-webkit-search-results-button {\n  -webkit-appearance: none;\n  display: none;\n}\n\n.mp-search__clear {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-soft-2);\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-search__clear svg {\n  width: 12px;\n  height: 12px;\n}\n\n.mp-chips {\n  display: flex;\n  gap: 8px;\n  overflow-x: auto;\n  padding: 6px 16px 2px;\n  scrollbar-width: none;\n}\n\n.mp-chips::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-chip {\n  flex: 0 0 auto;\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 4px 12px;\n  font-size: 12.5px;\n}\n\n.mp-chip.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n/* ---------- 通用段落 ---------- */\n\n.mp-section {\n  padding: 14px 16px 6px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-hint {\n  padding: 22px 24px;\n  text-align: center;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.7;\n}\n\n.mp-error {\n  margin: 8px 16px;\n  padding: 9px 12px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-size: 12px;\n}\n\n/* ---------- 歌单列表 ---------- */\n\n.mp-list {\n  padding: 4px 10px 8px;\n}\n\n.mp-pl {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  width: 100%;\n  padding: 9px 6px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  border-radius: var(--mp-r-md);\n}\n\n.mp-pl:active {\n  background: var(--mp-soft);\n}\n\n.mp-pl__cover {\n  flex: 0 0 auto;\n  width: 54px;\n  height: 54px;\n  border-radius: var(--mp-r-md);\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-pl__cover svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-pl__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-pl__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-pl__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-pl__sub {\n  margin-top: 3px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */\n\n.mp-actions {\n  display: flex;\n  gap: 10px;\n  padding: 4px 16px 10px;\n}\n\n.mp-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 6px;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  padding: 8px 16px;\n  font-size: 13px;\n  font-weight: 600;\n  background: var(--mp-soft);\n  color: var(--mp-ink);\n}\n\n.mp-btn svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-btn--primary {\n  background: var(--mp-accent);\n  color: var(--mp-on-accent);\n}\n\n.mp-btn--ghost {\n  background: transparent;\n  border: 1px solid var(--mp-line-strong);\n  color: var(--mp-ink-2);\n  font-weight: 500;\n}\n\n.mp-actions .mp-btn {\n  flex: 1 1 0;\n}\n\n/* ---------- 正在播放页 ---------- */\n\n.mp-now {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  padding: 4px 26px 18px;\n  overflow: hidden;\n}\n\n.mp-now__head {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 0 8px;\n}\n\n.mp-now__from {\n  flex: 1 1 auto;\n  text-align: center;\n  font-size: 12px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__stage {\n  flex: 1 1 auto;\n  min-height: 0;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n\n.mp-now__cover {\n  flex: 0 0 auto;\n  width: min(76vw, 300px);\n  height: min(76vw, 300px);\n  margin: auto 0;\n  border-radius: 50%;\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n  box-shadow: var(--mp-shadow);\n}\n\n.mp-now__cover svg {\n  width: 54px;\n  height: 54px;\n}\n\n.mp-now__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-now__meta {\n  flex: 0 0 auto;\n  width: 100%;\n  text-align: center;\n  margin-top: 18px;\n}\n\n.mp-now__name {\n  font-size: 18px;\n  font-weight: 700;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__artist {\n  margin-top: 4px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__progress {\n  flex: 0 0 auto;\n  width: 100%;\n  margin-top: 16px;\n}\n\n.mp-now__track {\n  height: 4px;\n  border-radius: 999px;\n  background: var(--mp-soft-2);\n  cursor: pointer;\n  position: relative;\n}\n\n.mp-now__track i {\n  display: block;\n  height: 100%;\n  width: 0;\n  border-radius: 999px;\n  background: var(--mp-accent);\n}\n\n.mp-now__times {\n  display: flex;\n  justify-content: space-between;\n  margin-top: 5px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  font-variant-numeric: tabular-nums;\n}\n\n.mp-now__ctrl {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: 14px;\n}\n\n.mp-now__ctrl .mp-icon-btn {\n  width: 42px;\n  height: 42px;\n}\n\n.mp-now__ctrl .mp-icon-btn svg {\n  width: 23px;\n  height: 23px;\n}\n\n.mp-now__play {\n  width: 58px;\n  height: 58px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-ink);\n  color: var(--mp-bg);\n}\n\n.mp-now__play svg {\n  width: 28px;\n  height: 28px;\n}\n\n.mp-now__extras {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  justify-content: space-around;\n  margin-top: 14px;\n  padding-bottom: 4px;\n}\n\n/* 正在播放：滚动歌词 */\n\n.mp-now__lyric {\n  flex: 1 1 auto;\n  align-self: stretch;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  text-align: center;\n  padding: 4px 0 8px;\n  scrollbar-width: none;\n}\n\n.mp-now__lyric::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-lyric__line {\n  padding: 7px 10px;\n  font-size: 13.5px;\n  line-height: 1.5;\n  color: var(--mp-muted);\n  transition: color 0.15s, transform 0.15s, opacity 0.15s;\n  opacity: 0.7;\n}\n\n.mp-lyric__line.is-active {\n  color: var(--mp-accent);\n  font-weight: 600;\n  opacity: 1;\n  transform: scale(1.05);\n}\n\n.mp-lyric__empty {\n  padding: 46px 24px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n\n/* ---------- 设置 ---------- */\n\n.mp-group {\n  margin: 6px 16px 14px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  overflow: hidden;\n}\n\n.mp-group__title {\n  padding: 12px 14px 6px;\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-field {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 11px 14px;\n  border-top: 1px solid var(--mp-line);\n}\n\n.mp-group__title + .mp-field {\n  border-top: 0;\n}\n\n.mp-field__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n}\n\n.mp-field__desc {\n  margin-top: 2px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  line-height: 1.5;\n}\n\n.mp-field__value {\n  flex: 0 0 auto;\n  font-size: 13px;\n  color: var(--mp-muted);\n  max-width: 55%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-input {\n  flex: 0 0 auto;\n  width: 55%;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 13px;\n  text-align: right;\n}\n\n.mp-switch {\n  flex: 0 0 auto;\n  width: 46px;\n  height: 27px;\n  border-radius: 999px;\n  border: 0;\n  background: var(--mp-soft-2);\n  position: relative;\n  transition: background 0.15s;\n  padding: 0;\n}\n\n.mp-switch::after {\n  content: "";\n  position: absolute;\n  top: 3px;\n  left: 3px;\n  width: 21px;\n  height: 21px;\n  border-radius: 50%;\n  background: #fff;\n  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);\n  transition: transform 0.15s;\n}\n\n.mp-switch.is-on {\n  background: var(--mp-accent);\n}\n\n.mp-switch.is-on::after {\n  transform: translateX(19px);\n}\n\n.mp-select {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 13px;\n  text-align: right;\n  outline: none;\n}\n\n.mp-slider {\n  flex: 0 0 auto;\n  width: 55%;\n  accent-color: var(--mp-accent);\n}\n\n.mp-theme-row {\n  display: flex;\n  gap: 8px;\n  padding: 11px 14px;\n}\n\n.mp-theme-btn {\n  flex: 1 1 0;\n  padding: 8px 2px;\n  border-radius: var(--mp-r-sm);\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  font-size: 12.5px;\n  white-space: nowrap;\n}\n\n.mp-theme-btn.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n.mp-dots {\n  display: flex;\n  gap: 10px;\n}\n\n.mp-dot {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border-radius: 50%;\n  border: 2px solid transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);\n}\n\n.mp-dot.is-active {\n  border-color: var(--mp-ink);\n}\n\n.mp-about {\n  padding: 6px 24px 28px;\n  text-align: center;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n';
 
   // src/ui/style.js
   var STYLE_ID = "music-player-style";
@@ -1389,10 +1530,11 @@
   // src/ui/views/search.js
   function mount(host, ctx) {
     var state = ctx.state;
-    var resultsBox = h("div");
+    var resultsBox = h("div", { class: "mp-body" });
     var input = h("input", {
       class: "mp-search__input",
-      type: "search",
+      type: "text",
+      inputmode: "search",
       placeholder: "搜索歌曲、歌手、专辑",
       value: state.search.keyword || "",
       enterkeyhint: "search"
@@ -1420,11 +1562,11 @@
       input.focus();
     });
     var headerRight = [];
-    if (ctx.host.caps.minimizeApp) {
+    if (ctx.canMinimize()) {
       headerRight.push(iconBtn("down", {
         label: "最小化",
         onClick: function() {
-          ctx.host.ui.minimizeApp();
+          ctx.minimizeApp();
         }
       }));
     }
@@ -1547,7 +1689,7 @@
   // src/ui/views/playlists.js
   function mount2(host, ctx) {
     var state = ctx.state;
-    var listBox = h("div", { class: "mp-list" });
+    var listBox = h("div", { class: "mp-list mp-body" });
     var header = h("div", { class: "mp-header" }, [
       h("div", { class: "mp-header__title", text: "歌单" }),
       iconBtn("plus", {
@@ -1598,7 +1740,7 @@
   // src/ui/views/playlistDetail.js
   function mount3(host, ctx) {
     var state = ctx.state;
-    var listBox = h("div");
+    var listBox = h("div", { class: "mp-body" });
     function back2() {
       ctx.goto("playlists");
     }
@@ -1720,7 +1862,7 @@
   // src/ui/views/favorites.js
   function mount4(host, ctx) {
     var state = ctx.state;
-    var listBox = h("div");
+    var listBox = h("div", { class: "mp-body" });
     var actions = h("div", { class: "mp-actions" });
     var subEl = h("div", { class: "mp-header__sub", text: "" });
     var header = h("div", { class: "mp-header" }, [
@@ -1837,6 +1979,50 @@
     function render2() {
       clear(body);
       var s = state.settings;
+      var themeRow = h("div", { class: "mp-theme-row" });
+      THEMES.forEach(function(t) {
+        var btn = h("button", {
+          class: "mp-theme-btn" + (s.theme === t.id ? " is-active" : ""),
+          type: "button",
+          text: t.name
+        });
+        btn.addEventListener("click", function() {
+          ctx.updateSettings({ theme: t.id });
+        });
+        themeRow.appendChild(btn);
+      });
+      var dotRow = h("div", { class: "mp-dots" });
+      ACCENTS.forEach(function(a) {
+        var dot = h("button", {
+          class: "mp-dot" + (s.accent === a.id ? " is-active" : ""),
+          type: "button",
+          "aria-label": a.name,
+          style: "background:" + a.color
+        });
+        dot.addEventListener("click", function() {
+          ctx.updateSettings({ accent: a.id });
+        });
+        dotRow.appendChild(dot);
+      });
+      var appearanceGroup = h("div", { class: "mp-group" }, [
+        h("div", { class: "mp-group__title", text: "外观" }),
+        field("主题", themeRow, "跟随系统 / 白天白色 / 夜间深色"),
+        field("主色调", dotRow),
+        field(
+          "悬浮播放",
+          switchEl(!!s.floating, function(v) {
+            ctx.updateSettings({ floating: v });
+          }),
+          "允许把 App 缩成悬浮按钮，边聊边听"
+        ),
+        field(
+          "悬浮歌词",
+          switchEl(!!s.floatLyric, function(v) {
+            ctx.updateSettings({ floatLyric: v });
+          }),
+          "在其他页面底部显示当前歌词"
+        )
+      ]);
       var sourceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "音源" }),
         field(
@@ -1917,6 +2103,7 @@
         h("div", { text: "音源来自公开接口，仅供个人学习使用" }),
         h("div", { text: "歌曲版权归各平台与版权方所有" })
       ]);
+      body.appendChild(appearanceGroup);
       body.appendChild(sourceGroup);
       body.appendChild(netGroup);
       body.appendChild(playGroup);
@@ -1940,7 +2127,13 @@
     var state = ctx.state;
     var coverCheck = "";
     var timer = null;
+    var showLyric = true;
+    var lastActive = -2;
+    var renderedKey = "";
+    var userScrolledAt = 0;
     var coverBox = h("div", { class: "mp-now__cover" });
+    var lyricBox = h("div", { class: "mp-now__lyric" });
+    var stage = h("div", { class: "mp-now__stage" }, [coverBox, lyricBox]);
     var nameEl = h("div", { class: "mp-now__name", text: "未在播放" });
     var artistEl = h("div", { class: "mp-now__artist", text: "" });
     var fromEl = h("div", { class: "mp-now__from", text: "" });
@@ -1950,37 +2143,47 @@
     var trackBar = h("div", { class: "mp-now__track" }, [trackFill]);
     var playIcon = h("span", { html: icon("play") });
     var playBtn = h("button", { class: "mp-now__play", type: "button", "aria-label": "播放/暂停" }, [playIcon]);
-    var shuffleBtn = iconBtn("shuffle", {
-      label: "随机",
-      onClick: function() {
-        ctx.toggleShuffle();
-      }
-    });
-    var repeatBtn = iconBtn("repeat", {
-      label: "循环",
-      onClick: function() {
-        ctx.cycleRepeat();
-      }
-    });
+    var shuffleBtn = iconBtn("shuffle", { label: "随机", onClick: function() {
+      ctx.toggleShuffle();
+    } });
+    var repeatBtn = iconBtn("repeat", { label: "循环", onClick: function() {
+      ctx.cycleRepeat();
+    } });
+    var prevBtn = iconBtn("prev", { label: "上一首", onClick: function() {
+      ctx.prev();
+    } });
+    var nextBtn = iconBtn("next", { label: "下一首", onClick: function() {
+      ctx.next(false);
+    } });
     var favBtn = iconBtn("heart", {
       label: "收藏",
       onClick: function() {
-        var track = state.player.track;
-        if (track) ctx.toggleFavorite(track);
+        if (state.player.track) ctx.toggleFavorite(state.player.track);
       }
     });
     var addBtn = iconBtn("plus", {
       label: "加入歌单",
       onClick: function() {
-        var track = state.player.track;
-        if (track) ctx.openAddToPlaylist(track);
+        if (state.player.track) ctx.openAddToPlaylist(state.player.track);
+      }
+    });
+    var floatBtn = iconBtn("float", {
+      label: "悬浮歌词",
+      onClick: function() {
+        ctx.updateSettings({ floatLyric: !state.settings.floatLyric });
+      }
+    });
+    var lyricToggle = iconBtn("lyric", {
+      label: "歌词",
+      onClick: function() {
+        showLyric = !showLyric;
+        sync();
       }
     });
     var moreBtn = iconBtn("more", {
       label: "更多",
       onClick: function() {
-        var track = state.player.track;
-        if (track) ctx.openSongSheet(track, {});
+        if (state.player.track) ctx.openSongSheet(state.player.track, {});
       }
     });
     var head = h("div", { class: "mp-now__head" }, [
@@ -1988,17 +2191,12 @@
         ctx.closeNow();
       } }),
       fromEl,
+      lyricToggle,
       moreBtn
     ]);
     playBtn.addEventListener("click", function() {
       ctx.togglePlay();
     });
-    var prevBtn = iconBtn("prev", { label: "上一首", onClick: function() {
-      ctx.prev();
-    } });
-    var nextBtn = iconBtn("next", { label: "下一首", onClick: function() {
-      ctx.next(false);
-    } });
     trackBar.addEventListener("click", function(e) {
       var st = state.player;
       var dur = st.duration || st.track && st.track.duration || 0;
@@ -2008,18 +2206,67 @@
       ctx.seek(Math.max(0, Math.min(1, ratio)) * dur);
       sync();
     });
+    lyricBox.addEventListener("scroll", function() {
+      userScrolledAt = Date.now();
+    });
     var view = h("div", { class: "mp-now" }, [
       head,
-      coverBox,
+      stage,
       h("div", { class: "mp-now__meta" }, [nameEl, artistEl]),
       h("div", { class: "mp-now__progress" }, [
         trackBar,
         h("div", { class: "mp-now__times" }, [curEl, durEl])
       ]),
       h("div", { class: "mp-now__ctrl" }, [shuffleBtn, prevBtn, playBtn, nextBtn, repeatBtn]),
-      h("div", { class: "mp-now__extras" }, [favBtn, addBtn])
+      h("div", { class: "mp-now__extras" }, [favBtn, addBtn, floatBtn])
     ]);
     host.appendChild(view);
+    function renderLyricList() {
+      var lines = ctx.lyricLines();
+      var key = state.player.track ? trackKey(state.player.track) + "|" + lines.length : "none";
+      if (key === renderedKey) return;
+      renderedKey = key;
+      lastActive = -2;
+      clear(lyricBox);
+      if (!lines.length) {
+        lyricBox.appendChild(h("div", {
+          class: "mp-lyric__empty",
+          text: ctx.lyricLoading() ? "歌词加载中…" : "暂无歌词"
+        }));
+        return;
+      }
+      lines.forEach(function(line) {
+        var node = h("div", { class: "mp-lyric__line", text: line.text || "♪" });
+        node.addEventListener("click", function() {
+          ctx.seek(line.time);
+        });
+        lyricBox.appendChild(node);
+      });
+      var pad = Math.max(24, Math.round(lyricBox.clientHeight * 0.38));
+      lyricBox.style.paddingTop = pad + "px";
+      lyricBox.style.paddingBottom = pad + "px";
+    }
+    function syncLyric(ms) {
+      if (!showLyric) return;
+      var lines = ctx.lyricLines();
+      if (!lines.length) return;
+      var index = activeLineIndex(lines, ms);
+      if (index === lastActive) return;
+      lastActive = index;
+      var nodes = lyricBox.children;
+      for (var i = 0; i < nodes.length; i++) {
+        nodes[i].classList.toggle("is-active", i === index);
+      }
+      var node = nodes[index];
+      if (node && Date.now() - userScrolledAt > 2500) {
+        var top = node.offsetTop - lyricBox.clientHeight / 2 + node.offsetHeight / 2;
+        if (typeof lyricBox.scrollTo === "function") {
+          lyricBox.scrollTo({ top, behavior: "smooth" });
+        } else {
+          lyricBox.scrollTop = top;
+        }
+      }
+    }
     function sync() {
       var st = state.player;
       var track = st.track;
@@ -2030,6 +2277,8 @@
         curEl.textContent = "00:00";
         durEl.textContent = "00:00";
         trackFill.style.width = "0%";
+        coverBox.style.display = "";
+        lyricBox.style.display = "none";
         return;
       }
       var coverUrl = ctx.coverOf(track);
@@ -2040,7 +2289,7 @@
       }
       nameEl.textContent = track.name;
       artistEl.textContent = track.artist + (track.album ? " · " + track.album : "");
-      fromEl.textContent = track.source === "itunes" ? "iTunes 试听" : "GD · " + track.platform;
+      fromEl.textContent = track.source === "itunes" ? "iTunes 试听" : "QQ 音乐";
       var dur = st.duration || track.duration || 0;
       var cur = Math.min(st.time || 0, dur || st.time || 0);
       curEl.textContent = fmtTime(cur);
@@ -2056,6 +2305,13 @@
       });
       favBtn.innerHTML = icon(fav ? "heartFull" : "heart");
       favBtn.classList.toggle("is-active", fav);
+      floatBtn.classList.toggle("is-active", !!state.settings.floatLyric);
+      renderLyricList();
+      var hasLyric = ctx.lyricLines().length > 0;
+      lyricToggle.classList.toggle("is-active", showLyric && hasLyric);
+      coverBox.style.display = showLyric && hasLyric ? "none" : "";
+      lyricBox.style.display = showLyric && hasLyric ? "" : "none";
+      if (showLyric && hasLyric) syncLyric(cur);
     }
     sync();
     timer = setInterval(sync, 400);
@@ -2086,19 +2342,19 @@
     var playBtn = h("button", { class: "mp-player__play", type: "button", "aria-label": "播放/暂停" }, [playIcon]);
     var barFill = h("i");
     var bar = h("div", { class: "mp-player__bar" }, [barFill]);
-    var mainBtn = h("button", {
-      class: "mp-player__main mp-player__hit",
-      type: "button"
-    }, [nameEl, subEl]);
+    var mainBtn = h("button", { class: "mp-player__main mp-player__hit", type: "button" }, [nameEl, subEl]);
     var playerEl = h("div", { class: "mp-player" }, [bar, coverBox, mainBtn, playBtn]);
+    var floatLyric = h("div", { class: "mp-float-lyric" });
     var dockEl = h("nav", { class: "mp-dock" });
     root.appendChild(viewHost);
+    root.appendChild(floatLyric);
     root.appendChild(playerEl);
     root.appendChild(dockEl);
     container.replaceChildren(root);
-    var disposeTheme = watchTheme(root);
+    var disposeTheme = null;
     var page = null;
     var playerCoverKey = "";
+    var lastLyricText = "";
     function isNow() {
       return ctx.state.route === "now";
     }
@@ -2106,6 +2362,52 @@
       if (ctx.state.route === "playlist") return "playlists";
       return ctx.state.route;
     }
+    function applyAppearance() {
+      var s = ctx.state.settings;
+      root.dataset.accent = s.accent || "red";
+      if (disposeTheme) {
+        disposeTheme();
+        disposeTheme = null;
+      }
+      if (s.theme === "auto") {
+        disposeTheme = watchTheme(root);
+      } else {
+        root.dataset.theme = s.theme === "dark" ? "dark" : "light";
+      }
+    }
+    function keyboardOpen() {
+      var shrunk = false;
+      if (typeof window !== "undefined" && window.visualViewport && window.innerHeight) {
+        shrunk = window.innerHeight - window.visualViewport.height > 120;
+      }
+      var focused = false;
+      try {
+        var active = document.activeElement;
+        focused = !!(active && root.contains(active) && (active.tagName === "INPUT" || active.tagName === "TEXTAREA"));
+      } catch (err) {
+      }
+      return shrunk || focused;
+    }
+    function syncKeyboard() {
+      root.classList.toggle("is-keyboard", keyboardOpen());
+    }
+    function onViewportChange() {
+      syncKeyboard();
+    }
+    function onFocusIn() {
+      setTimeout(syncKeyboard, 60);
+    }
+    function onFocusOut() {
+      setTimeout(syncKeyboard, 120);
+    }
+    window.addEventListener("resize", onViewportChange);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", onViewportChange);
+      window.visualViewport.addEventListener("scroll", onViewportChange);
+    }
+    root.addEventListener("focusin", onFocusIn);
+    root.addEventListener("focusout", onFocusOut);
+    var keyboardTimer = setInterval(syncKeyboard, 300);
     function renderDock() {
       clear(dockEl);
       dockEl.style.display = isNow() ? "none" : "flex";
@@ -2124,10 +2426,32 @@
         dockEl.appendChild(btn);
       });
     }
+    function renderFloatLyric() {
+      var st = ctx.state.player;
+      var s = ctx.state.settings;
+      var lines = ctx.lyricLines();
+      var visible = !!(s.floatLyric && st.track && lines.length && !isNow());
+      if (!visible) {
+        floatLyric.style.display = "none";
+        return;
+      }
+      var index = activeLineIndex(lines, st.time);
+      var text = index >= 0 ? lines[index].text : "";
+      floatLyric.style.display = text ? "block" : "none";
+      if (text && text !== lastLyricText) {
+        lastLyricText = text;
+        clear(floatLyric);
+        floatLyric.appendChild(document.createTextNode(text));
+        floatLyric.classList.remove("is-fresh");
+        void floatLyric.offsetWidth;
+        floatLyric.classList.add("is-fresh");
+      }
+    }
     function renderPlayer() {
       var st = ctx.state.player;
       if (!st.track || isNow()) {
         playerEl.style.display = "none";
+        renderFloatLyric();
         return;
       }
       playerEl.style.display = "flex";
@@ -2146,6 +2470,7 @@
       var dur = st.duration || st.track.duration || 0;
       var pct = dur > 0 ? Math.min(100, st.time / dur * 100) : 0;
       barFill.style.width = pct.toFixed(2) + "%";
+      renderFloatLyric();
     }
     function renderView() {
       if (page && page.destroy) {
@@ -2165,9 +2490,11 @@
       else if (route === "now") page = mount6(viewHost, ctx);
     }
     function renderAll() {
+      applyAppearance();
       renderDock();
       renderView();
       renderPlayer();
+      syncKeyboard();
     }
     function refreshPage() {
       if (page && typeof page.refresh === "function") {
@@ -2199,8 +2526,8 @@
       var ratio = rect.width ? (e.clientX - rect.left) / rect.width : 0;
       ctx.seek(Math.max(0, Math.min(1, ratio)) * dur);
     });
+    applyAppearance();
     renderAll();
-    if (ctx.state.route === "now") renderPlayer();
     return {
       root,
       mount: function() {
@@ -2211,6 +2538,7 @@
       renderPlayer,
       renderView,
       refreshPage,
+      applyAppearance,
       applyCover,
       openSheet: function(options) {
         return openSheet(root, options);
@@ -2226,8 +2554,21 @@
           }
         }
         page = null;
-        disposeTheme();
+        if (disposeTheme) {
+          disposeTheme();
+          disposeTheme = null;
+        }
+        window.removeEventListener("resize", onViewportChange);
+        if (window.visualViewport) {
+          window.visualViewport.removeEventListener("resize", onViewportChange);
+          window.visualViewport.removeEventListener("scroll", onViewportChange);
+        }
+        root.removeEventListener("focusin", onFocusIn);
+        root.removeEventListener("focusout", onFocusOut);
+        if (keyboardTimer) clearInterval(keyboardTimer);
+        keyboardTimer = null;
         playerCoverKey = "";
+        lastLyricText = "";
       }
     };
   }
@@ -2244,6 +2585,7 @@
     var host = createHost(roche);
     var store = createStore(host);
     var sources = createSources();
+    var lyrics = createLyrics();
     var state = {
       version,
       route: "search",
@@ -2256,6 +2598,7 @@
       search: { keyword: "", busy: false, tracks: [], errors: [], counts: {}, at: 0 },
       queue: null,
       player: { status: "idle", track: null, time: 0, duration: 0, error: "", volume: 0.8 },
+      lyrics: { lines: [], loading: false, error: "" },
       covers: {}
     };
     var shell = null;
@@ -2281,6 +2624,51 @@
         shell.refreshPage();
       }
     }
+    async function saveQueue() {
+      var q = state.queue;
+      if (!q) return;
+      await host.storage.set("mp:queue", {
+        tracks: q.tracks.slice(0, 200),
+        order: q.order,
+        pos: q.pos,
+        shuffle: q.shuffle,
+        repeat: q.repeat
+      });
+    }
+    async function loadQueue() {
+      var raw = await host.storage.get("mp:queue", null);
+      if (!raw || !Array.isArray(raw.tracks) || !raw.tracks.length) return null;
+      var tracks = raw.tracks.map(function(t) {
+        return normalizeTrack(t, t && t.source);
+      }).filter(Boolean);
+      if (!tracks.length) return null;
+      var natural = tracks.map(function(_, i) {
+        return i;
+      });
+      var order = Array.isArray(raw.order) && raw.order.length === tracks.length ? raw.order : natural;
+      var valid = order.every(function(n) {
+        return Number.isInteger(n) && n >= 0 && n < tracks.length;
+      });
+      return {
+        tracks,
+        order: valid ? order : natural,
+        pos: Math.min(Math.max(Number(raw.pos) || 0, 0), tracks.length - 1),
+        shuffle: !!raw.shuffle,
+        repeat: raw.repeat || state.settings.repeat
+      };
+    }
+    async function loadLyrics(track2) {
+      var key = trackKey(track2);
+      state.lyrics = { lines: [], loading: true, error: "" };
+      if (shell) shell.renderPlayer();
+      var lines = await lyrics.get(track2, state.settings);
+      if (!state.player.track || trackKey(state.player.track) !== key) return;
+      state.lyrics = { lines, loading: false, error: lines.length ? "" : "暂无歌词" };
+      if (shell) {
+        shell.renderPlayer();
+        if (state.route === "now") shell.refreshPage();
+      }
+    }
     async function playTrack(track2) {
       if (!track2) return false;
       state.player = Object.assign({}, state.player, { status: "loading", track: track2, error: "" });
@@ -2289,6 +2677,7 @@
       if (ok) {
         state.recent = pushRecent(state.recent, track2, MAX_RECENT);
         await store.saveRecent(state.recent);
+        loadLyrics(track2);
         if (state.route === "now" && shell) shell.refreshPage();
       } else {
         toast("这首放不了（音源可能没版权），换一首试试");
@@ -2307,6 +2696,7 @@
         shuffle: state.settings.shuffle,
         repeat: state.settings.repeat
       });
+      saveQueue();
       await playTrack(current(state.queue));
       refresh();
     }
@@ -2318,6 +2708,7 @@
         return;
       }
       state.queue = res.queue;
+      saveQueue();
       playTrack(res.track);
       refresh();
     }
@@ -2325,6 +2716,7 @@
       var res = back(state.queue);
       if (!res.track) return;
       state.queue = res.queue;
+      saveQueue();
       if (res.restart) {
         player.seek(0);
         return;
@@ -2364,6 +2756,7 @@
       state.settings = Object.assign({}, state.settings, { repeat: mode });
       state.queue = setRepeat(state.queue, mode);
       await store.saveSettings(state.settings);
+      saveQueue();
       refresh();
       return mode;
     }
@@ -2372,6 +2765,7 @@
       state.settings = Object.assign({}, state.settings, { shuffle });
       state.queue = setShuffle(state.queue, shuffle);
       await store.saveSettings(state.settings);
+      saveQueue();
       refresh();
       return shuffle;
     }
@@ -2572,6 +2966,7 @@
       }
       if (typeof state.settings.volume === "number" && player) player.setVolume(state.settings.volume);
       refresh();
+      if (shell) shell.applyAppearance();
     }
     async function clearData() {
       var ok = await host.ui.confirm({
@@ -2645,7 +3040,22 @@
         if (shell) shell.openSheet(options);
       },
       updateSettings,
-      clearData
+      clearData,
+      lyricLines: function() {
+        return state.lyrics.lines;
+      },
+      lyricLoading: function() {
+        return state.lyrics.loading;
+      },
+      reloadLyrics: function() {
+        if (state.player.track) loadLyrics(state.player.track);
+      },
+      canMinimize: function() {
+        return !!host.caps.minimizeApp && !!state.settings.floating;
+      },
+      minimizeApp: function() {
+        host.ui.minimizeApp();
+      }
     };
     var loaded = await Promise.all([
       store.loadSettings(),
@@ -2658,8 +3068,11 @@
     state.favorites = loaded[2];
     state.recent = loaded[3];
     state.player.volume = state.settings.volume;
-    state.queue = createQueue([], { repeat: state.settings.repeat, shuffle: state.settings.shuffle });
-    player = createPlayer({
+    state.queue = await loadQueue() || createQueue([], {
+      repeat: state.settings.repeat,
+      shuffle: state.settings.shuffle
+    });
+    player = getPlayer({
       volume: state.settings.volume,
       onChange: function(snapshot) {
         state.player = snapshot;
@@ -2669,14 +3082,25 @@
         next(true);
       }
     });
+    state.player = player.getState();
     shell = createShell(container, ctx);
     shell.mount();
+    if (state.player.track) {
+      var cached = lyrics.getCached(state.player.track);
+      if (cached && cached.length) {
+        state.lyrics = { lines: cached, loading: false, error: "" };
+        shell.renderPlayer();
+      } else {
+        loadLyrics(state.player.track);
+      }
+    }
     var pending = await host.storage.get("mp:pending", null);
     if (pending) {
       await host.storage.delete("mp:pending");
       var track = normalizeTrack(pending, "local");
       if (track) {
         state.queue = createQueue([track], { repeat: state.settings.repeat, shuffle: false });
+        saveQueue();
         playTrack(track);
       }
     }
@@ -2684,10 +3108,10 @@
       ctx,
       destroy: function() {
         searchToken += 1;
-        if (player) player.dispose();
+        if (player) player.setHandlers({});
         if (shell) shell.destroy();
         shell = null;
-        player = null;
+        saveQueue();
       }
     };
   }
@@ -2892,7 +3316,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.2.0" });
+    app = await createApp({ container, roche, version: "0.3.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -2908,7 +3332,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.2.0",
+    version: "0.3.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
