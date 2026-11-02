@@ -1,4 +1,4 @@
-/* music-player v0.1.0 | built 2026-11-02T14:29:37.705Z */
+/* music-player v0.2.0 | built 2026-11-02T14:56:41.834Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -323,28 +323,12 @@
   }
 
   // src/core/settings.js
-  var SCHEMA_VERSION = 1;
-  var GD_PLATFORMS = [
-    { id: "netease", name: "网易云" },
-    { id: "kuwo", name: "酷我" },
-    { id: "tencent", name: "QQ 音乐" },
-    { id: "kugou", name: "酷狗" },
-    { id: "migu", name: "咪咕" },
-    { id: "joox", name: "JOOX" }
-  ];
-  var QUALITY_OPTIONS = [
-    { id: 128, name: "标准 128k" },
-    { id: 192, name: "较高 192k" },
-    { id: 320, name: "高品 320k" },
-    { id: 999, name: "无损（部分源）" }
-  ];
+  var SCHEMA_VERSION = 2;
   function defaultSettings() {
     return {
       schemaVersion: SCHEMA_VERSION,
-      sources: { gd: true, itunes: true },
-      gdPlatform: "netease",
-      quality: 320,
-      proxy: "",
+      sources: { tencent: true, itunes: true, netease: true },
+      prefix: "",
       volume: 0.8,
       repeat: REPEAT.OFF,
       shuffle: false
@@ -362,18 +346,15 @@
     var def = defaultSettings();
     var s = raw && typeof raw === "object" ? raw : {};
     var sources = s.sources && typeof s.sources === "object" ? s.sources : {};
-    var platformOk = GD_PLATFORMS.some(function(p) {
-      return p.id === s.gdPlatform;
-    });
+    var tencent = bool(sources.tencent, sources.gd === false ? false : def.sources.tencent);
     return {
       schemaVersion: SCHEMA_VERSION,
       sources: {
-        gd: bool(sources.gd, def.sources.gd),
-        itunes: bool(sources.itunes, def.sources.itunes)
+        tencent,
+        itunes: bool(sources.itunes, def.sources.itunes),
+        netease: bool(sources.netease, def.sources.netease)
       },
-      gdPlatform: platformOk ? s.gdPlatform : def.gdPlatform,
-      quality: [128, 192, 320, 999].indexOf(Number(s.quality)) === -1 ? def.quality : Number(s.quality),
-      proxy: String(s.proxy || "").trim(),
+      prefix: String(s.prefix || s.proxy || "").trim(),
       volume: clampNum(s.volume, 0, 1, def.volume),
       repeat: REPEAT_ORDER.indexOf(s.repeat) === -1 ? def.repeat : s.repeat,
       shuffle: bool(s.shuffle, def.shuffle)
@@ -593,6 +574,90 @@
     };
   }
 
+  // src/core/sourceMaps.js
+  function parseInterval(input) {
+    if (input == null) return 0;
+    if (typeof input === "number") {
+      return input > 1e4 ? Math.round(input) : Math.round(input * 1e3);
+    }
+    var text = String(input).trim();
+    if (!text) return 0;
+    var cn = /^(\d+)\s*分\s*(\d+)\s*秒?$/.exec(text);
+    if (cn) return (Number(cn[1]) * 60 + Number(cn[2])) * 1e3;
+    var clock = /^(\d+):(\d{1,2})(?::(\d{1,2}))?$/.exec(text);
+    if (clock) {
+      var a = Number(clock[1]);
+      var b = Number(clock[2]);
+      var c = clock[3] ? Number(clock[3]) : 0;
+      return clock[3] ? ((a * 60 + b) * 60 + c) * 1e3 : (a * 60 + b) * 1e3;
+    }
+    var num = Number(text.replace(/[^\d.]/g, ""));
+    if (!Number.isFinite(num) || num <= 0) return 0;
+    return num > 1e4 ? Math.round(num) : Math.round(num * 1e3);
+  }
+  function preferHttps(url) {
+    var s = String(url || "").trim();
+    if (!s) return "";
+    if (s.indexOf("//") === 0) return "https:" + s;
+    return s.replace(/^http:\/\//i, "https://");
+  }
+  function neteaseOuterUrl(id) {
+    if (!id) return "";
+    return "https://music.163.com/song/media/outer/url?id=" + encodeURIComponent(String(id)) + ".mp3";
+  }
+  function isSimilarName(a, b) {
+    function norm2(text) {
+      return String(text || "").toLowerCase().replace(/[（(【\[].*?[)）】\]]/g, "").replace(/[\s\-_·.,，。!！?？'"“”‘’]/g, "");
+    }
+    var x = norm2(a);
+    var y = norm2(b);
+    if (!x || !y) return false;
+    if (x === y) return true;
+    return x.indexOf(y) !== -1 || y.indexOf(x) !== -1;
+  }
+  function mapTencentTracks(list) {
+    return (list || []).map(function(item) {
+      return normalizeTrack({
+        source: "tencent",
+        platform: "qq",
+        id: item.id != null ? item.id : item.mid,
+        name: item.song || item.name || item.title,
+        artist: item.singer || item.singerName,
+        album: item.album,
+        cover: item.cover,
+        duration: parseInterval(item.interval)
+      }, "tencent");
+    }).filter(Boolean);
+  }
+  function mapItunesTracks(results) {
+    return (results || []).map(function(item) {
+      return normalizeTrack({
+        source: "itunes",
+        platform: "itunes",
+        id: item.trackId,
+        name: item.trackName,
+        artist: item.artistName,
+        album: item.collectionName,
+        cover: String(item.artworkUrl100 || "").replace(/\/\d+x\d+bb\./, "/300x300bb."),
+        duration: item.trackTimeMillis,
+        url: item.previewUrl
+      }, "itunes");
+    }).filter(Boolean);
+  }
+  function pickNeteaseMatches(list, track, max) {
+    var limit = Number(max) || 3;
+    var ids = [];
+    (list || []).forEach(function(item) {
+      if (ids.length >= limit) return;
+      var name = item.song || item.name || item.title || "";
+      if (!item.id) return;
+      if (track && track.name && !isSimilarName(name, track.name)) return;
+      if (ids.indexOf(String(item.id)) !== -1) return;
+      ids.push(String(item.id));
+    });
+    return ids;
+  }
+
   // src/core/search.js
   function mergeResults(groups, opts) {
     var o = opts || {};
@@ -641,22 +706,22 @@
   }
 
   // src/services/sources.js
-  var GD_BASE = "https://music-api.gdstudio.xyz/api.php";
-  var ITUNES_BASE = "https://itunes.apple.com/search";
+  var VKEYS = "https://api.vkeys.cn/v2/music";
+  var ITUNES = "https://itunes.apple.com/search";
   var TIMEOUT_MS = 12e3;
-  function applyProxy(url, proxy) {
-    var p = String(proxy || "").trim();
+  function applyProxy(url, prefix) {
+    var p = String(prefix || "").trim();
     if (!p) return url;
     if (p.indexOf("{url}") !== -1) return p.replace("{url}", encodeURIComponent(url));
     return p + encodeURIComponent(url);
   }
-  async function fetchJson(url, proxy) {
+  async function fetchJson(url, prefix) {
     var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = controller ? setTimeout(function() {
       controller.abort();
     }, TIMEOUT_MS) : null;
     try {
-      var res = await fetch(applyProxy(url, proxy), {
+      var res = await fetch(applyProxy(url, prefix), {
         method: "GET",
         cache: "no-store",
         signal: controller ? controller.signal : void 0
@@ -673,88 +738,67 @@
       if (timer) clearTimeout(timer);
     }
   }
-  function pickArray(data) {
-    if (Array.isArray(data)) return data;
-    if (data && Array.isArray(data.data)) return data.data;
-    if (data && Array.isArray(data.result)) return data.result;
-    if (data && Array.isArray(data.results)) return data.results;
-    return [];
+  async function tencentSearch(keyword, settings, limit) {
+    var url = VKEYS + "/tencent?word=" + encodeURIComponent(keyword) + "&page=1&num=" + limit;
+    var data = await fetchJson(url, settings.prefix);
+    if (!data) return [];
+    if (Number(data.code) !== 200 && !Array.isArray(data.data)) {
+      throw new Error(data.message || "接口返回异常");
+    }
+    return mapTencentTracks(data.data);
   }
-  async function gdSearch(keyword, settings, limit) {
-    var url = GD_BASE + "?types=search&source=" + encodeURIComponent(settings.gdPlatform) + "&name=" + encodeURIComponent(keyword) + "&count=" + limit + "&pages=1";
-    var data = await fetchJson(url, settings.proxy);
-    var platform = settings.gdPlatform;
-    return pickArray(data).map(function(item) {
-      return normalizeTrack({
-        source: "gd",
-        platform,
-        id: item.id,
-        name: item.name,
-        artist: item.artist,
-        album: item.album,
-        picId: item.pic_id,
-        lyricId: item.lyric_id,
-        duration: Number(item.duration || item.interval || 0) * (Number(item.duration) > 1e3 ? 1 : 1e3)
-      }, "gd");
-    }).filter(Boolean);
+  async function tencentUrl(track, settings) {
+    var url = VKEYS + "/tencent?id=" + encodeURIComponent(track.id) + "&quality=8";
+    var data = await fetchJson(url, settings.prefix);
+    var item = data && data.data;
+    var url2 = item && (item.url || item.playUrl);
+    return preferHttps(url2 || "");
   }
-  async function gdUrl(track, settings) {
-    var url = GD_BASE + "?types=url&source=" + encodeURIComponent(track.platform || settings.gdPlatform) + "&id=" + encodeURIComponent(track.id) + "&br=" + (Number(settings.quality) || 320);
-    var data = await fetchJson(url, settings.proxy);
-    var first = Array.isArray(data) ? data[0] : data;
-    return String(first && (first.url || first.link) || "");
-  }
-  async function gdCover(track, settings) {
-    if (!track.picId) return "";
-    var url = GD_BASE + "?types=pic&source=" + encodeURIComponent(track.platform || settings.gdPlatform) + "&id=" + encodeURIComponent(track.picId) + "&size=300";
-    var data = await fetchJson(url, settings.proxy);
-    var first = Array.isArray(data) ? data[0] : data;
-    return String(first && (first.url || first.link) || "");
-  }
-  function itunesCover(url) {
-    return String(url || "").replace(/\/\d+x\d+bb\./, "/300x300bb.");
+  async function neteaseIds(track, settings) {
+    var keyword = [track.name, track.artist].filter(Boolean).join(" ");
+    var url = VKEYS + "/netease?word=" + encodeURIComponent(keyword) + "&page=1&num=10";
+    var data = await fetchJson(url, settings.prefix);
+    if (!data || !Array.isArray(data.data)) return [];
+    return pickNeteaseMatches(data.data, track, 3).map(neteaseOuterUrl);
   }
   async function itunesSearch(keyword, settings, limit) {
-    var base = ITUNES_BASE + "?term=" + encodeURIComponent(keyword) + "&entity=song&limit=" + limit + "&country=cn&lang=zh_cn";
-    var data = await fetchJson(base, settings.proxy);
-    var list = pickArray(data);
+    var base = ITUNES + "?term=" + encodeURIComponent(keyword) + "&entity=song&limit=" + limit + "&country=cn&lang=zh_cn";
+    var data = await fetchJson(base, settings.prefix);
+    var list = data && data.results || [];
     if (!list.length) {
-      var fallback = await fetchJson(base.replace("country=cn", "country=us"), settings.proxy);
-      list = pickArray(fallback);
+      var fallback = await fetchJson(base.replace("country=cn", "country=us"), settings.prefix);
+      list = fallback && fallback.results || [];
     }
-    return list.map(function(item) {
-      return normalizeTrack({
-        source: "itunes",
-        platform: "itunes",
-        id: item.trackId,
-        name: item.trackName,
-        artist: item.artistName,
-        album: item.collectionName,
-        cover: itunesCover(item.artworkUrl100),
-        duration: item.trackTimeMillis,
-        url: item.previewUrl
-      }, "itunes");
-    }).filter(Boolean);
+    return mapItunesTracks(list);
+  }
+  async function itunesPreview(track, settings) {
+    var keyword = [track.name, track.artist].filter(Boolean).join(" ");
+    var list = await itunesSearch(keyword, settings, 5);
+    if (!list.length) return "";
+    var same = list.filter(function(t) {
+      return t.name.toLowerCase().indexOf(String(track.name).toLowerCase()) !== -1;
+    });
+    var picked = same[0] || list[0];
+    return preferHttps(picked.url);
   }
   function createSources() {
-    var coverCache = /* @__PURE__ */ Object.create(null);
     async function search(keyword, settings, opts) {
       var kw = String(keyword || "").trim();
       if (!kw) return { tracks: [], errors: [], counts: {} };
       var limit = opts && opts.limit || 25;
       var tasks = [];
-      if (settings.sources.gd) {
+      if (settings.sources.tencent) {
         tasks.push(
-          gdSearch(kw, settings, limit).then(function(tracks) {
-            return { source: "gd", tracks };
+          tencentSearch(kw, settings, limit).then(function(tracks) {
+            return { source: "tencent", tracks };
           }).catch(function(err) {
-            return { source: "gd", tracks: [], error: String(err && err.message || err) };
+            return { source: "tencent", tracks: [], error: String(err && err.message || err) };
           })
         );
       }
       if (settings.sources.itunes) {
         tasks.push(
-          itunesSearch(kw, settings, limit).then(function(tracks) {
+          itunesSearch(kw, settings, Math.min(limit, 15)).then(function(tracks) {
             return { source: "itunes", tracks };
           }).catch(function(err) {
             return { source: "itunes", tracks: [], error: String(err && err.message || err) };
@@ -770,35 +814,95 @@
         keyword: kw
       };
     }
-    async function resolveUrl(track, settings) {
-      if (!track) return "";
-      if (track.url) return track.url;
-      if (track.source === "gd") {
-        try {
-          return await gdUrl(track, settings);
-        } catch (err) {
-          return "";
+    function createResolver(track, settings) {
+      var queue = [];
+      var filled = { qq: false, netease: false, itunes: false };
+      var steps = [];
+      if (track.source === "tencent") steps = ["qq", "netease", "itunes"];
+      else if (track.source === "itunes") steps = ["itunes"];
+      else steps = ["netease", "itunes"];
+      if (track.url) queue.push(preferHttps(track.url));
+      async function fill(kind) {
+        if (kind === "qq") {
+          if (filled.qq) return;
+          filled.qq = true;
+          var direct = await tencentUrl(track, settings);
+          if (direct) queue.push(direct);
+          return;
+        }
+        if (kind === "netease") {
+          if (filled.netease || !settings.sources.netease) return;
+          filled.netease = true;
+          var list = await neteaseIds(track, settings);
+          list.forEach(function(u) {
+            if (u) queue.push(u);
+          });
+          return;
+        }
+        if (kind === "itunes") {
+          if (filled.itunes || !settings.sources.itunes) return;
+          filled.itunes = true;
+          var preview = await itunesPreview(track, settings);
+          if (preview) queue.push(preview);
         }
       }
-      return "";
+      var stepIndex = 0;
+      return async function nextUrl() {
+        for (; ; ) {
+          if (queue.length) return queue.shift();
+          if (stepIndex >= steps.length) return "";
+          var kind = steps[stepIndex++];
+          try {
+            await fill(kind);
+          } catch (err) {
+          }
+        }
+      };
     }
-    async function resolveCover(track, settings) {
-      if (!track) return "";
-      if (track.cover) return track.cover;
-      var key = track.source + ":" + track.id;
-      if (coverCache[key]) return coverCache[key];
-      if (track.source === "gd" && track.picId) {
+    async function selfTest(settings) {
+      var results = [];
+      var keyword = "晴天";
+      async function run(name, fn) {
+        var started = Date.now();
         try {
-          var url = await gdCover(track, settings);
-          if (url) coverCache[key] = url;
-          return url;
+          var detail = await fn();
+          results.push({ name, ok: true, ms: Date.now() - started, detail: detail || "正常" });
         } catch (err) {
-          return "";
+          results.push({ name, ok: false, ms: Date.now() - started, detail: String(err && err.message || err) });
         }
       }
-      return "";
+      if (settings.sources.tencent) {
+        await run("QQ 音乐 · 搜索", async function() {
+          var list = await tencentSearch(keyword, settings, 3);
+          if (!list.length) throw new Error("能连上但没返回歌曲");
+          return list.length + " 首，第一首《" + list[0].name + "》";
+        });
+        await run("QQ 音乐 · 播放地址", async function() {
+          var list = await tencentSearch(keyword, settings, 1);
+          if (!list.length) throw new Error("搜索不到歌曲，无法解析");
+          var url = await tencentUrl(list[0], settings);
+          if (!url) throw new Error("没有返回播放地址（可能被限流）");
+          return "已拿到 " + url.slice(0, 46) + "…";
+        });
+      }
+      if (settings.sources.netease) {
+        await run("网易云 · 兜底接口", async function() {
+          var probe = normalizeTrack({ source: "tencent", platform: "qq", id: "0", name: keyword, artist: "周杰伦" }, "tencent");
+          var list = await neteaseIds(probe, settings);
+          if (!list.length) throw new Error("没找到同名歌曲");
+          return "可兜底 " + list.length + " 个地址";
+        });
+      }
+      if (settings.sources.itunes) {
+        await run("iTunes · 试听", async function() {
+          var list = await itunesSearch(keyword, settings, 3);
+          if (!list.length) throw new Error("没返回结果");
+          return list.length + " 首（30 秒试听）";
+        });
+      }
+      return results;
     }
-    return { search, resolveUrl, resolveCover };
+    return { search, createResolver, selfTest };
   }
 
   // src/services/player.js
@@ -816,6 +920,7 @@
       volume: typeof opts.volume === "number" ? opts.volume : 0.8
     };
     audio.volume = state.volume;
+    var attemptToken = 0;
     function emit() {
       if (typeof opts.onChange === "function") opts.onChange(getState());
     }
@@ -845,7 +950,7 @@
       emit();
     });
     audio.addEventListener("pause", function() {
-      if (state.status !== "error") state.status = "paused";
+      if (state.status !== "error" && state.status !== "loading") state.status = "paused";
       emit();
     });
     audio.addEventListener("ended", function() {
@@ -854,35 +959,72 @@
       emit();
       if (typeof opts.onEnded === "function") opts.onEnded();
     });
-    audio.addEventListener("error", function() {
-      state.status = "error";
-      state.error = "音频加载失败";
-      emit();
-    });
-    async function load(track, url) {
-      if (!url) {
-        state.status = "error";
-        state.error = "拿不到播放地址";
-        state.track = track;
-        emit();
-        return false;
-      }
+    function tryUrl(url) {
+      return new Promise(function(resolve) {
+        var settled = false;
+        var timer = setTimeout(function() {
+          finish(false);
+        }, 12e3);
+        function cleanup() {
+          clearTimeout(timer);
+          audio.removeEventListener("error", onError);
+          audio.removeEventListener("canplay", onCanPlay);
+          audio.removeEventListener("playing", onCanPlay);
+        }
+        function finish(ok) {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(ok);
+        }
+        function onError() {
+          finish(false);
+        }
+        function onCanPlay() {
+          finish(true);
+        }
+        audio.addEventListener("error", onError);
+        audio.addEventListener("canplay", onCanPlay);
+        audio.addEventListener("playing", onCanPlay);
+        audio.src = url;
+        var playing = audio.play();
+        if (playing && playing.catch) {
+          playing.catch(function() {
+          });
+        }
+      });
+    }
+    async function load(track, nextUrl) {
+      var token = ++attemptToken;
       state.track = track;
+      state.status = "loading";
+      state.error = "";
       state.time = 0;
       state.duration = track && track.duration || 0;
-      state.error = "";
-      state.status = "loading";
-      audio.src = url;
       emit();
-      try {
-        await audio.play();
-        return true;
-      } catch (err) {
-        state.status = "error";
-        state.error = "播放被拒绝或地址失效";
-        emit();
-        return false;
+      if (typeof nextUrl !== "function") return false;
+      for (var i = 0; i < 6; i++) {
+        var url = "";
+        try {
+          url = await nextUrl();
+        } catch (err) {
+          url = "";
+        }
+        if (token !== attemptToken) return false;
+        if (!url) break;
+        var ok = await tryUrl(url);
+        if (token !== attemptToken) return false;
+        if (ok) {
+          state.status = "playing";
+          state.error = "";
+          emit();
+          return true;
+        }
       }
+      state.status = "error";
+      state.error = "所有音源都放不了这首";
+      emit();
+      return false;
     }
     async function toggle() {
       if (!state.track) return false;
@@ -917,6 +1059,7 @@
       return vol;
     }
     function stop() {
+      attemptToken += 1;
       try {
         audio.pause();
         audio.removeAttribute("src");
@@ -931,6 +1074,7 @@
       emit();
     }
     function dispose() {
+      attemptToken += 1;
       try {
         audio.pause();
         audio.removeAttribute("src");
@@ -940,9 +1084,18 @@
       state.status = "idle";
       state.track = null;
     }
-    return { load, toggle, seek, setVolume, stop, dispose, getState, isPlaying: function() {
-      return state.status === "playing";
-    } };
+    return {
+      load,
+      toggle,
+      seek,
+      setVolume,
+      stop,
+      dispose,
+      getState,
+      isPlaying: function() {
+        return state.status === "playing";
+      }
+    };
   }
 
   // src/ui/dom.js
@@ -1254,14 +1407,11 @@
       input,
       clearBtn
     ]);
-    function runSearch() {
-      ctx.searchNow(input.value);
-    }
     input.addEventListener("keydown", function(e) {
       if (e.key === "Enter") {
         e.preventDefault();
         input.blur();
-        runSearch();
+        ctx.searchNow(input.value);
       }
     });
     clearBtn.addEventListener("click", function() {
@@ -1280,37 +1430,37 @@
     }
     var header = h("div", { class: "mp-header" }, [
       h("div", { class: "mp-header__title", text: "搜索" }),
-      h("div", { class: "mp-header__sub", text: "多音源" })
+      h("div", { class: "mp-header__sub", text: "QQ 音乐 · iTunes" })
     ].concat(headerRight));
     var chips = h("div", { class: "mp-chips" });
+    function toggleSource(key, label) {
+      var sources = Object.assign({}, state.settings.sources);
+      sources[key] = !sources[key];
+      if (!sources.tencent && !sources.itunes) return;
+      ctx.updateSettings({ sources }).then(function() {
+        if (state.search.keyword) ctx.searchNow(state.search.keyword);
+      });
+    }
     function renderChips() {
       clear(chips);
-      GD_PLATFORMS.forEach(function(p) {
-        var active = state.settings.gdPlatform === p.id;
-        var chip = h("button", {
-          class: "mp-chip" + (active ? " is-active" : ""),
-          type: "button",
-          text: p.name
-        });
-        chip.addEventListener("click", function() {
-          if (state.settings.gdPlatform === p.id) return;
-          ctx.updateSettings({ gdPlatform: p.id }).then(function() {
-            if (state.search.keyword) ctx.searchNow(state.search.keyword);
-          });
-        });
-        chips.appendChild(chip);
+      var qq = h("button", {
+        class: "mp-chip" + (state.settings.sources.tencent ? " is-active" : ""),
+        type: "button",
+        text: "QQ 音乐"
       });
-      var itunesChip = h("button", {
+      qq.addEventListener("click", function() {
+        toggleSource("tencent", "QQ 音乐");
+      });
+      var itunes = h("button", {
         class: "mp-chip" + (state.settings.sources.itunes ? " is-active" : ""),
         type: "button",
-        text: "iTunes" + (state.settings.sources.itunes ? "" : "(关)")
+        text: "iTunes 30s"
       });
-      itunesChip.addEventListener("click", function() {
-        ctx.updateSettings({ sources: Object.assign({}, state.settings.sources, { itunes: !state.settings.sources.itunes }) }).then(function() {
-          if (state.search.keyword) ctx.searchNow(state.search.keyword);
-        });
+      itunes.addEventListener("click", function() {
+        toggleSource("itunes", "iTunes");
       });
-      chips.appendChild(itunesChip);
+      chips.appendChild(qq);
+      chips.appendChild(itunes);
     }
     function renderResults() {
       clear(resultsBox);
@@ -1322,35 +1472,33 @@
       if (!s.at) {
         resultsBox.appendChild(emptyHint(
           "搜点什么吧",
-          "网易云 / 酷我 / QQ / iTunes 同时搜\n点歌曲右侧 ▶ 直接播放"
+          "QQ 音乐搜完整歌曲，iTunes 兜底 30 秒试听\n点歌曲右侧 ▶ 直接播放"
         ));
         return;
       }
       (s.errors || []).forEach(function(err) {
-        var label = err.source === "gd" ? "GD 音乐台" : "iTunes";
+        var label = err.source === "itunes" ? "iTunes" : "QQ 音乐";
         resultsBox.appendChild(h("div", { class: "mp-error", text: label + " 搜索失败：" + err.error }));
       });
       if (!s.tracks.length) {
-        resultsBox.appendChild(emptyHint("没有找到歌曲", "换个关键词，或在设置里切换音源"));
+        resultsBox.appendChild(emptyHint("没有找到歌曲", "换个关键词，或在设置里打开音源"));
         return;
       }
       var counts = [];
-      if (s.counts.gd) counts.push("GD " + s.counts.gd);
+      if (s.counts.tencent) counts.push("QQ " + s.counts.tencent);
       if (s.counts.itunes) counts.push("iTunes " + s.counts.itunes);
       resultsBox.appendChild(h("div", {
         class: "mp-section",
         text: "找到 " + s.tracks.length + " 首" + (counts.length ? "（" + counts.join(" · ") + "）" : "")
       }));
-      var playing = s.tracks.some(function(t) {
-        return ctx.isCurrent(t);
-      });
+      var playing = ctx.state.player.status === "playing";
       s.tracks.forEach(function(track, i) {
         resultsBox.appendChild(songRow({
           track,
           coverUrl: ctx.coverOf(track),
           coverKey: trackKey(track),
           current: ctx.isCurrent(track),
-          playing: playing && ctx.state.player.status === "playing",
+          playing: playing && ctx.isCurrent(track),
           tag: track.source === "itunes" ? "试听" : "",
           onPlay: function() {
             if (ctx.isCurrent(track)) ctx.togglePlay();
@@ -1375,8 +1523,6 @@
       refresh: function() {
         renderChips();
         renderResults();
-      },
-      destroy: function() {
       }
     };
   }
@@ -1651,54 +1797,87 @@
     });
     return btn;
   }
-  function selectEl(options, value, onChange) {
-    var sel = h("select", { class: "mp-select" });
-    options.forEach(function(opt) {
-      var o = h("option", { value: String(opt.id), text: opt.name });
-      if (String(opt.id) === String(value)) o.selected = true;
-      sel.appendChild(o);
-    });
-    sel.addEventListener("change", function() {
-      onChange(sel.value);
-    });
-    return sel;
-  }
   function mount5(host, ctx) {
     var state = ctx.state;
     var body = h("div", { class: "mp-body" });
     var header = h("div", { class: "mp-header" }, [
       h("div", { class: "mp-header__title", text: "设置" })
     ]);
+    function setSource(key, value) {
+      var sources = Object.assign({}, state.settings.sources);
+      sources[key] = value;
+      if (key !== "netease" && !sources.tencent && !sources.itunes) return;
+      ctx.updateSettings({ sources });
+    }
+    function runSelfTest() {
+      ctx.openSheet({
+        title: "音源自检",
+        items: [{ label: "正在检查…", icon: "music", hint: "" }]
+      });
+      ctx.sources.selfTest(state.settings).then(function(results) {
+        ctx.openSheet({
+          title: "音源自检结果",
+          items: results.map(function(r) {
+            return {
+              label: r.name + " · " + (r.ok ? "正常" : "失败"),
+              icon: r.ok ? "check" : "close",
+              hint: r.ok ? r.ms + "ms" : r.detail.slice(0, 40)
+            };
+          }).concat([{
+            label: "关闭",
+            icon: "close",
+            onClick: function() {
+            }
+          }])
+        });
+      }).catch(function(err) {
+        ctx.toast("自检失败：" + (err && err.message));
+      });
+    }
     function render2() {
       clear(body);
       var s = state.settings;
       var sourceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "音源" }),
-        field("GD 音乐台", switchEl(s.sources.gd, function(v) {
-          ctx.updateSettings({ sources: Object.assign({}, s.sources, { gd: v }) });
-        }), "聚合网易云 / 酷我 / QQ / 酷狗 / 咪咕"),
-        field("iTunes", switchEl(s.sources.itunes, function(v) {
-          ctx.updateSettings({ sources: Object.assign({}, s.sources, { itunes: v }) });
-        }), "官方接口，只能试听 30 秒"),
-        field("GD 平台", selectEl(GD_PLATFORMS, s.gdPlatform, function(v) {
-          ctx.updateSettings({ gdPlatform: v });
-        })),
-        field("音质", selectEl(QUALITY_OPTIONS, s.quality, function(v) {
-          ctx.updateSettings({ quality: Number(v) });
-        }), "越高越吃流量，部分歌源没有高音质")
+        field(
+          "QQ 音乐",
+          switchEl(s.sources.tencent, function(v) {
+            setSource("tencent", v);
+          }),
+          "搜索并播放完整歌曲（经公开接口解析）"
+        ),
+        field(
+          "iTunes",
+          switchEl(s.sources.itunes, function(v) {
+            setSource("itunes", v);
+          }),
+          "苹果官方接口，只有 30 秒试听"
+        ),
+        field(
+          "网易云兜底",
+          switchEl(s.sources.netease, function(v) {
+            setSource("netease", v);
+          }),
+          "QQ 放不了时，自动找网易云同名歌曲再试"
+        )
       ]);
-      var proxyInput = h("input", {
+      var prefixInput = h("input", {
         class: "mp-input",
         type: "text",
         placeholder: "留空 = 直连",
-        value: s.proxy
+        value: s.prefix
       });
-      proxyInput.addEventListener("change", function() {
-        ctx.updateSettings({ proxy: proxyInput.value.trim() });
+      prefixInput.addEventListener("change", function() {
+        ctx.updateSettings({ prefix: prefixInput.value.trim() });
       });
       var netGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "网络" }),
-        field("自定义反代", proxyInput, "GD 被跨域拦住时，填自己的代理前缀；含 {url} 会被替换，否则把编码后的地址接在后面")
+        field("请求前缀", prefixInput, "接口访问不了时填代理前缀；含 {url} 会替换，否则把编码后的地址接在后面"),
+        field("音源自检", (function() {
+          var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "运行" });
+          btn.addEventListener("click", runSelfTest);
+          return btn;
+        })(), "逐个真实请求，告诉你哪个源在这台设备上能用")
       ]);
       var volume = h("input", {
         class: "mp-slider",
@@ -2093,13 +2272,7 @@
       return !!track2 && !!state.player.track && trackKey(state.player.track) === trackKey(track2);
     }
     async function ensureCover(track2) {
-      if (!track2) return;
-      var key = trackKey(track2);
-      if (state.covers[key] || track2.cover) return;
-      var url = await sources.resolveCover(track2, state.settings);
-      if (!url) return;
-      state.covers[key] = url;
-      if (shell) shell.applyCover(key, url);
+      return track2;
     }
     function refresh() {
       if (shell) {
@@ -2112,21 +2285,13 @@
       if (!track2) return false;
       state.player = Object.assign({}, state.player, { status: "loading", track: track2, error: "" });
       if (shell) shell.renderPlayer();
-      var url = await sources.resolveUrl(track2, state.settings);
-      if (!url) {
-        state.player = Object.assign({}, state.player, { status: "error", error: "拿不到播放地址" });
-        if (shell) shell.renderPlayer();
-        toast("这首歌拿不到播放地址，换个平台或音源试试");
-        return false;
-      }
-      var ok = await player.load(track2, url);
+      var ok = await player.load(track2, sources.createResolver(track2, state.settings));
       if (ok) {
         state.recent = pushRecent(state.recent, track2, MAX_RECENT);
         await store.saveRecent(state.recent);
-        ensureCover(track2);
-        if (state.route === "now") shell.refreshPage();
-      } else if (shell) {
-        shell.renderPlayer();
+        if (state.route === "now" && shell) shell.refreshPage();
+      } else {
+        toast("这首放不了（音源可能没版权），换一首试试");
       }
       refresh();
       return ok;
@@ -2603,12 +2768,7 @@
     if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
   }
   async function sendCard(roche, ctx, track, settings) {
-    var sources = createSources();
-    var cover = "";
-    try {
-      cover = await sources.resolveCover(track, settings);
-    } catch (err) {
-    }
+    var cover = track.cover || "";
     var line = "我邀请你一起听《" + track.name + "》- " + track.artist + "。";
     try {
       await roche.chat.createCard({
@@ -2732,7 +2892,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.1.0" });
+    app = await createApp({ container, roche, version: "0.2.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -2748,7 +2908,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.1.0",
+    version: "0.2.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
