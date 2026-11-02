@@ -1,8 +1,8 @@
 {
   "id": "music-player",
   "name": "音乐播放器",
-  "version": "0.1.0",
-  "description": "多音源搜歌、播放、歌单与收藏，可在聊天里发起「一起听」。",
+  "version": "0.2.0",
+  "description": "QQ 音乐搜歌播放、歌单与收藏，可在聊天里发起「一起听」。",
   "author": "chu-bing-yu",
   "entry": "https://raw.githubusercontent.com/chu-bing-yu/music-player/main/plugin.js",
   "hash": "",
