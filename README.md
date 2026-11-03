@@ -4,7 +4,7 @@
 
 - 插件 id：`music-player`
 - App id：`music-player-home`
-- 当前版本：`0.5.0`
+- 当前版本：`0.6.0`
 
 ## 安装 / 更新
 
@@ -48,6 +48,33 @@ https://cdn.jsdelivr.net/gh/chu-bing-yu/music-player@main/manifest.json
 - 角色「同意 / 拒绝」一起听邀请的决策（要接 `roche.ai.chat` 与提示词）
 - 本地文件导入、歌单封面自定义、下载、后台播放（宿主暂停 WebView 时无法保证）
 
+## 一起听 · 主聊天联动（0.6.0）
+
+**为什么不用「解析模型回复的特殊格式」**：宿主没有「模型回复之后」的钩子，只能 `memory.getShortTerm` 轮询聊天记录，延迟 1–3 秒、还会被模型改格式搞挂。
+所以改成给主聊天注册**工具**（`chat.tools`）：模型想点歌时直接调用工具 → 宿主把参数交给插件执行 → 结果回填给模型 → 模型用自然语言回一句。
+这等于「拿到了模型的意图」，比解析文本更准更快，也不需要猜格式。
+
+`contextProvider` 每轮往 system prompt 里注入当前状态（设置里关掉「一起听」就返回 `null`，完全不注入）：
+
+```
+【音乐插件】当前正在播放《晴天》- 周杰伦（已暂停），队列 25 首。
+你可以直接调用音乐工具帮用户操作：music_play 点歌、music_next 下一首……
+```
+
+| 工具 id | 作用 |
+|---|---|
+| `music_play` | 按歌名/歌手搜索并播放（参数 `keyword`） |
+| `music_next` / `music_previous` | 切歌 |
+| `music_pause` / `music_resume` | 暂停 / 继续 |
+| `music_status` | 查当前播放与队列 |
+| `music_favorite` | 收藏当前这首 |
+
+联动细节：
+
+- 播放成功会以**角色身份**发一张「一起听」卡片（单聊，`isMe: false`），点卡片回到 App 继续听。
+- App 没打开时，切歌/暂停/继续 直接调原生 `BackgroundAudio`，照样能控制。
+- 开关在「设置 → 聊天 → 一起听（主聊天）」，默认开。
+
 ## 系统状态栏播放控制（0.5.0）
 
 WebView 里的 `<audio>` 只能让浏览器自己造媒体会话，在 Roche 的 APK 里通常不可用。
@@ -77,6 +104,8 @@ p.addListener('statusChange', function (e) { /* e.status */ });
 - 歌词只有 QQ 音乐源有；iTunes 试听与网易云兜底的歌没有歌词。
 - 原生播放器没有音量接口，设置里的音量会显示「跟随系统音量」，用手机音量键调。
 - 安全区用 `env(safe-area-inset-*)` 实现，桌面浏览器为 0；真机刘海 / 手势条的避让效果需在手机上确认。
+- 一起听依赖宿主的 `chat.tools` / `contextProvider`；宿主版本过旧时这两个字段会被忽略，卡片和播放不受影响。
+- 点歌类工具需要音乐 App 已打开过（要往队列里塞歌）；纯切歌/暂停在 App 关闭时也能用。
 
 ## 目录结构
 
@@ -117,7 +146,10 @@ music-player/
 │   │   ├── style.js     样式注入与深色模式跟随
 │   │   ├── dom.js / icons.js / components.js
 │   │   └── views/       search / playlists / playlistDetail / favorites / settings / now
-│   └── chat/card.js     一起听卡片 + 加号面板选歌
+│   └── chat/
+│       ├── card.js      一起听卡片 + 加号面板选歌
+│       ├── bridge.js    App → 主聊天工具的动作注册表
+│       └── chatLink.js  contextProvider + 音乐工具（点歌/切歌/暂停/状态/收藏）
 ├── tests/               node:test 纯逻辑单测
 └── dev/
     ├── preview.html     浏览器预览（假宿主）
@@ -174,6 +206,7 @@ npm run deploy
 | **QQ 音乐**（`api.vkeys.cn/v2/music/tencent`） | 搜索 + 播放完整歌曲 | 公开接口，无需 Key；搜索和解析地址实测都可用，返回的 `ws.stream.qqmusic.qq.com` 直链能直接播（会自动改 https 防混合内容） |
 | **网易云兜底** | QQ 放不了时自动再试 | 用同名搜索拿 id，再走 `music.163.com/song/media/outer/url` 外链音频；`<audio>` 播放不需要 CORS，实测能救回一部分 QQ 没版权的歌 |
 | **iTunes**（官方） | 兜底 30 秒试听 | 无 Key、CORS 开放，冷门/外语歌的最后兜底 |
+| **Audius**（免费曲库） | 搜索 + 完整播放 | 去中心化音乐平台，无版权/CC 内容为主，CORS 开放；播放地址可直接拼 `/v1/tracks/{id}/stream`，不用二次解析。中文歌很少，适合英文/电音/lofi |
 
 - 一次点播最多串 6 个候选地址（QQ → 网易云 ×3 → iTunes），全部放不了才提示「这首放不了」。
 - 三个源都能在设置里单独开关；至少保留一个搜索源。
