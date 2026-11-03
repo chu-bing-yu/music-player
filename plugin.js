@@ -1,4 +1,4 @@
-/* music-player v0.10.0 | built 2026-11-03T06:18:46.643Z */
+/* music-player v0.11.0 | built 2026-11-03T06:30:28.418Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -373,7 +373,9 @@
       floating: true,
       floatLyric: true,
       chatListen: true,
-      chatPrompt: DEFAULT_CHAT_PROMPT
+      chatPrompt: DEFAULT_CHAT_PROMPT,
+      // 极简模式：完全不轮询、不干预原生播放器，用来排查控制栏问题
+      nativeMinimal: false
     };
   }
   function bool(v, fallback) {
@@ -415,7 +417,8 @@
       chatPrompt: (function() {
         var text = String(s.chatPrompt == null ? "" : s.chatPrompt).trim();
         return text ? text.slice(0, 2e3) : def.chatPrompt;
-      })()
+      })(),
+      nativeMinimal: bool(s.nativeMinimal, def.nativeMinimal)
     };
   }
 
@@ -1602,6 +1605,8 @@
     var openedAt = 0;
     var retried = /* @__PURE__ */ Object.create(null);
     var edgeFiredFor = "";
+    var stats = { events: 0, queues: 0, lastEventAt: 0 };
+    var minimal = !!opts.minimal;
     var state = {
       status: "idle",
       track: null,
@@ -1710,6 +1715,7 @@
         return false;
       }
       if (token !== opToken) return false;
+      stats.queues += 1;
       openedAt = Date.now();
       startPolling();
       if (status) applyStatus(status, true);
@@ -1802,6 +1808,7 @@
       maybeAdvanceWindow(raw);
     }
     function maybeRecover(raw) {
+      if (minimal) return;
       if (!raw || !state.track || raw.isPlaying) return;
       if (Number(raw.duration) > 0 || Number(raw.currentTime) > 0) return;
       if (!openedAt || Date.now() - openedAt < PREPARE_GRACE) return;
@@ -1829,6 +1836,7 @@
       });
     }
     function maybeAdvanceWindow(raw) {
+      if (minimal) return;
       if (busy || !windowMap.length) return;
       if (windowMap.length <= 1) return;
       var nativeIndex = Number(raw.currentTrackIndex);
@@ -1864,12 +1872,25 @@
       if (status) applyStatus(status, false);
     }
     function startPolling() {
-      if (timer) return;
-      timer = setInterval(syncNow, POLL_MS);
       if (!listenerOff) {
         listenerOff = audio.addStatusListener(function(status) {
-          if (status) applyStatus(status, true);
+          if (!status) return;
+          stats.events += 1;
+          stats.lastEventAt = Date.now();
+          applyStatus(status, true);
         });
+      }
+      if (minimal || timer) return;
+      timer = setInterval(syncNow, POLL_MS);
+    }
+    function setMinimal(value) {
+      minimal = !!value;
+      if (minimal) {
+        if (timer) clearInterval(timer);
+        timer = null;
+        if (!listenerOff) startPolling();
+      } else {
+        startPolling();
       }
     }
     function stopPolling() {
@@ -1973,6 +1994,10 @@
       stop,
       dispose,
       setVolume,
+      setMinimal,
+      stats: function() {
+        return Object.assign({}, stats);
+      },
       syncNow,
       getState,
       jsIndexOf: function() {
@@ -2764,6 +2789,7 @@
   function mount5(host, ctx) {
     var state = ctx.state;
     var body = h("div", { class: "mp-body" });
+    var statsTimer = null;
     var header = h("div", { class: "mp-header" }, [
       pageTitle("设置", function() {
         ctx.exitApp();
@@ -2937,6 +2963,18 @@
       volume.addEventListener("change", function() {
         ctx.setVolume(Number(volume.value) / 100);
       });
+      var statsEl = h("div", { class: "mp-field__value", text: "—" });
+      function updateStats() {
+        var stats = ctx.engineStats();
+        if (!stats) {
+          statsEl.textContent = "无";
+          return;
+        }
+        statsEl.textContent = "事件 " + stats.events + " 次 · 换队列 " + stats.queues + " 次 · " + (stats.secondsAgo < 0 ? "还没收到过" : stats.secondsAgo + "s 前");
+      }
+      updateStats();
+      if (statsTimer) clearInterval(statsTimer);
+      statsTimer = setInterval(updateStats, 1e3);
       var playGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "播放" }),
         field(
@@ -2944,6 +2982,25 @@
           h("div", { class: "mp-field__value", text: ctx.engineLabel() }),
           ctx.isNative() ? "原生播放器；状态栏/锁屏的按钮由它负责" : "没接上原生播放器，状态栏控制不可用（需要新版宿主）"
         ),
+        field(
+          "控制栏事件",
+          statsEl,
+          "按下状态栏按钮后这个数字不涨，说明命令没到原生（宿主侧问题）；涨了但界面没变才是插件侧"
+        ),
+        field(
+          "极简模式",
+          switchEl(!!s.nativeMinimal, function(v) {
+            ctx.updateSettings({ nativeMinimal: v });
+          }),
+          "打开后插件完全不轮询、不重建，只把歌交给原生播放器；用来判断是不是插件在干扰"
+        ),
+        field("重建播放会话", (function() {
+          var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "重建" });
+          btn.addEventListener("click", function() {
+            ctx.rebuildSession();
+          });
+          return btn;
+        })(), "控制栏按钮点了没反应时按一下：重开原生服务和通知，通常能救活"),
         field(
           "音量",
           ctx.isNative() ? h("div", { class: "mp-field__value", text: "跟随系统音量" }) : volume,
@@ -2987,6 +3044,10 @@
         var active = document.activeElement;
         if (active && active.tagName === "INPUT" && view.contains(active)) return;
         render2();
+      },
+      destroy: function() {
+        if (statsTimer) clearInterval(statsTimer);
+        statsTimer = null;
       }
     };
   }
@@ -3940,11 +4001,23 @@
     var settings = normalizeSettings(await roche.storage.get("mp:settings", null));
     var recent = await roche.storage.get("mp:recent", []) || [];
     var favorites = await roche.storage.get("mp:favorites", []) || [];
+    var playlists = await roche.storage.get("mp:playlists", []) || [];
     var sources = createSources();
+    var bridge = getBridge();
+    var snap = getSnapshot();
+    var live = bridge && bridge.ready() ? bridge.queue() : null;
+    var queueTracks = live && live.length ? live.map(function(x) {
+      return x.track;
+    }).filter(Boolean) : snap && snap.queue && snap.queue.tracks ? snap.queue.tracks.slice() : [];
+    var nowPlaying = bridge && bridge.ready() && bridge.status().playing || snap && snap.track || null;
     var listBox = h("div", { class: "mp-modal__body" });
+    var tabs = h("div", { class: "mp-listen__tabs" });
+    var tab = queueTracks.length ? "queue" : recent.length ? "recent" : "playlists";
+    var searchTracks = [];
     var input = h("input", {
       class: "mp-modal__input",
-      type: "search",
+      type: "text",
+      inputmode: "search",
       placeholder: "搜歌名 / 歌手，或从下面直接选"
     });
     var modal = h("div", { class: "mp-modal" });
@@ -3953,7 +4026,8 @@
     }
     function rowFor(track) {
       var row = h("button", { class: "mp-modal__row", type: "button" }, [
-        h("span", { text: track.name + " - " + track.artist })
+        h("span", { text: track.name }),
+        h("span", { class: "mp-listen__sub", text: track.artist || "" })
       ]);
       row.addEventListener("click", async function() {
         row.disabled = true;
@@ -3969,33 +4043,86 @@
         listBox.appendChild(h("div", { class: "mp-modal__hint", text: emptyText }));
         return;
       }
-      tracks.slice(0, 30).forEach(function(t) {
+      tracks.slice(0, 40).forEach(function(t) {
         listBox.appendChild(rowFor(t));
       });
     }
-    function renderDefault() {
-      var seen = /* @__PURE__ */ Object.create(null);
-      var merged = [];
-      (recent || []).concat(favorites || []).forEach(function(raw) {
-        var t = normalizeTrack(raw, "local");
-        if (!t) return;
-        var key = trackKey(t);
-        if (seen[key]) return;
-        seen[key] = true;
-        merged.push(t);
+    function renderTabs() {
+      clear(tabs);
+      [["queue", "播放列表"], ["recent", "最近"], ["playlists", "歌单"]].forEach(function(item) {
+        var btn = h("button", {
+          class: "mp-listen__tab" + (tab === item[0] ? " is-active" : ""),
+          type: "button",
+          text: item[1]
+        });
+        btn.addEventListener("click", function() {
+          tab = item[0];
+          input.value = "";
+          searchTracks = [];
+          renderTabs();
+          renderBody();
+        });
+        tabs.appendChild(btn);
       });
-      renderList(merged, "这里还没有记录，直接搜一首试试");
+    }
+    function renderPlaylists() {
+      clear(listBox);
+      if (!playlists.length) {
+        listBox.appendChild(h("div", { class: "mp-modal__hint", text: "还没有歌单，去音乐 App 里建一个" }));
+        return;
+      }
+      playlists.forEach(function(pl) {
+        var count = (pl.tracks || []).length;
+        var row = h("button", { class: "mp-modal__row", type: "button" }, [
+          h("span", { text: pl.name }),
+          h("span", { class: "mp-listen__sub", text: count + " 首" })
+        ]);
+        row.addEventListener("click", function() {
+          var tracks = (pl.tracks || []).map(function(t) {
+            return normalizeTrack(t, t && t.source);
+          }).filter(Boolean);
+          renderList(tracks, "这个歌单还是空的");
+        });
+        listBox.appendChild(row);
+      });
+    }
+    function renderBody() {
+      if (tab === "playlists") {
+        renderPlaylists();
+        return;
+      }
+      if (tab === "recent") {
+        var seen = /* @__PURE__ */ Object.create(null);
+        var merged = [];
+        (recent || []).concat(favorites || []).forEach(function(raw) {
+          var t = normalizeTrack(raw, "local");
+          if (!t) return;
+          var key = trackKey(t);
+          if (seen[key]) return;
+          seen[key] = true;
+          merged.push(t);
+        });
+        renderList(merged, "还没有播放记录，去 App 里放首歌吧");
+        return;
+      }
+      if (searchTracks.length) {
+        renderList(searchTracks, "");
+        return;
+      }
+      renderList(queueTracks, "当前播放列表还是空的");
     }
     async function doSearch() {
       var kw = String(input.value || "").trim();
       if (!kw) {
-        renderDefault();
+        searchTracks = [];
+        renderBody();
         return;
       }
       clear(listBox);
       listBox.appendChild(h("div", { class: "mp-modal__hint", text: "搜索中…" }));
       var result = await sources.search(kw, settings);
-      renderList(result.tracks, "没搜到，换个关键词");
+      searchTracks = result.tracks || [];
+      renderList(searchTracks, "没搜到，换个关键词");
     }
     input.addEventListener("keydown", function(e) {
       if (e.key === "Enter") {
@@ -4010,19 +4137,38 @@
       [h("span", { html: icon("close") })]
     );
     closeBtn.addEventListener("click", close);
-    var panel = h("div", { class: "mp-modal__panel" }, [
+    var nowRow = null;
+    if (nowPlaying) {
+      var cover = h("div", { class: "mp-listen__cover" });
+      fillCover(cover, nowPlaying.cover || "");
+      nowRow = h("div", { class: "mp-listen__now" }, [
+        cover,
+        h("div", { class: "mp-listen__meta" }, [
+          h("div", { class: "mp-listen__name", text: "正在播放：" + nowPlaying.name }),
+          h("div", { class: "mp-listen__artist", text: [nowPlaying.artist, queueTracks.length ? "列表 " + queueTracks.length + " 首" : ""].filter(Boolean).join(" · ") })
+        ])
+      ]);
+    }
+    var panel = h("div", { class: "mp-modal__panel mp-listen" }, [
       h("div", { class: "mp-modal__head" }, [
-        input,
+        h("div", { class: "mp-modal__title", text: "一起听" }),
         closeBtn
       ]),
+      nowRow,
+      h("div", { class: "mp-modal__head" }, [
+        h("span", { html: icon("search"), class: "mp-listen__searchicon" }),
+        input
+      ]),
+      tabs,
       listBox
-    ]);
+    ].filter(Boolean));
     modal.appendChild(panel);
     modal.addEventListener("click", function(e) {
       if (e.target === modal) close();
     });
     document.body.appendChild(modal);
-    renderDefault();
+    renderTabs();
+    renderBody();
     setTimeout(function() {
       input.focus();
     }, 30);
@@ -4626,6 +4772,24 @@
     function exitApp() {
       host.ui.closeApp();
     }
+    async function rebuildSession() {
+      if (!engine) {
+        toast("当前没有原生播放器");
+        return;
+      }
+      var q = state.queue;
+      if (!q || !q.tracks.length) {
+        toast("播放列表是空的");
+        return;
+      }
+      var index = q.order[q.pos];
+      if (!(index >= 0)) index = 0;
+      var track2 = q.tracks[index];
+      await engine.stop();
+      var started = await engine.playList(q.tracks, index, state.settings);
+      if (started && track2) loadLyrics(track2);
+      toast(started ? "已重建播放会话" : "重建失败，换一首试试");
+    }
     async function searchNow(keyword) {
       var kw = String(keyword == null ? state.search.keyword : keyword).trim();
       state.search = Object.assign({}, state.search, { keyword: kw });
@@ -4845,7 +5009,10 @@
         state.queue = setRepeat(state.queue, state.settings.repeat);
         state.queue = setShuffle(state.queue, state.settings.shuffle);
       }
-      if (engine) engine.setMode(state.settings);
+      if (engine) {
+        engine.setMode(state.settings);
+        engine.setMinimal(!!state.settings.nativeMinimal);
+      }
       if (typeof state.settings.volume === "number") {
         if (engine) engine.setVolume(state.settings.volume);
         else if (player) player.setVolume(state.settings.volume);
@@ -4958,7 +5125,17 @@
         if (!engine) return "网页音频（无状态栏控制）";
         var size = state.queue ? state.queue.tracks.length : 0;
         var mode = state.settings.shuffle ? "random" : state.settings.repeat === REPEAT.ONE ? "one" : "loop";
-        return "原生 · 队列 " + size + " 首 · " + mode;
+        return "原生 · 队列 " + size + " 首 · " + mode + (state.settings.nativeMinimal ? " · 极简" : "");
+      },
+      rebuildSession,
+      engineStats: function() {
+        if (!engine) return null;
+        var stats = engine.stats();
+        return {
+          events: stats.events,
+          queues: stats.queues,
+          secondsAgo: stats.lastEventAt ? Math.round((Date.now() - stats.lastEventAt) / 1e3) : -1
+        };
       }
     };
     var loaded = await Promise.all([
@@ -4981,6 +5158,7 @@
     if (nativeAvailable()) {
       engine = createNativeEngine({
         sources,
+        minimal: !!state.settings.nativeMinimal,
         onChange: function(snapshot2) {
           state.player = snapshot2;
           if (shell) shell.renderPlayer();
@@ -5070,7 +5248,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.10.0" });
+    app = await createApp({ container, roche, version: "0.11.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -5086,7 +5264,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.10.0",
+    version: "0.11.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
