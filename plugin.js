@@ -1,4 +1,4 @@
-/* music-player v0.8.0 | built 2026-11-03T05:44:55.308Z */
+/* music-player v0.9.0 | built 2026-11-03T05:56:44.633Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1667,21 +1667,12 @@
       var warm = slice.slice(0, Math.min(WARM, slice.length));
       await resolveUrls(warm);
       if (token !== opToken) return false;
-      resolveUrls(slice.slice(warm.length)).catch(function() {
-      });
       var nativeTracks = [];
       var map = [];
       warm.forEach(function(track, i) {
         var url = urlOf(track);
         if (!url) return;
-        nativeTracks.push({
-          id: trackKey(track),
-          albumId: track.album || "",
-          title: track.name || "未知歌曲",
-          artist: track.artist || "",
-          cover: track.cover || "",
-          url
-        });
+        nativeTracks.push(toNativeTrack(track, url));
         map.push(start + i);
       });
       if (!nativeTracks.length) {
@@ -1695,17 +1686,85 @@
       rebuiltFor = "";
       lastNativeIndex = -1;
       edgeFiredFor = "";
-      var status = await audio.replaceQueue({
-        tracks: nativeTracks,
-        startIndex: 0,
-        mode: modeOf(settings),
-        autoplay: autoplay !== false
-      });
+      var status = null;
+      try {
+        status = await audio.replaceQueue({
+          tracks: nativeTracks,
+          startIndex: 0,
+          mode: modeOf(settings),
+          autoplay: autoplay !== false
+        });
+      } catch (err) {
+        state.status = "error";
+        state.error = "起播失败，换一首试试";
+        emit();
+        return false;
+      }
       if (token !== opToken) return false;
       openedAt = Date.now();
       startPolling();
       if (status) applyStatus(status, true);
+      var rest = slice.slice(warm.length);
+      if (rest.length) {
+        resolveUrls(rest).then(function() {
+          expandWindow(token, start, slice);
+        }).catch(function() {
+        });
+      }
       return true;
+    }
+    function toNativeTrack(track, url) {
+      return {
+        id: trackKey(track),
+        albumId: track.album || "",
+        title: track.name || "未知歌曲",
+        artist: track.artist || "",
+        cover: track.cover || "",
+        url
+      };
+    }
+    async function expandWindow(token, start, slice) {
+      if (busy || token !== opToken) return;
+      if (!state.track) return;
+      if (trackKey(state.track) !== trackKey(list[start])) return;
+      if (Date.now() - openedAt > 15e3) return;
+      var nativeTracks = [];
+      var map = [];
+      slice.forEach(function(track, i) {
+        var url = urlOf(track);
+        if (!url) return;
+        nativeTracks.push(toNativeTrack(track, url));
+        map.push(start + i);
+      });
+      if (nativeTracks.length <= windowMap.length) return;
+      var resumeAt = (state.time || 0) / 1e3;
+      var wasPlaying = state.status === "playing";
+      busy = true;
+      var status = null;
+      try {
+        status = await audio.replaceQueue({
+          tracks: nativeTracks,
+          startIndex: 0,
+          mode: modeOf(settings),
+          autoplay: wasPlaying
+        });
+      } catch (err) {
+        status = null;
+      } finally {
+        busy = false;
+      }
+      if (token !== opToken) return;
+      windowMap = map;
+      lastNativeIndex = 0;
+      edgeFiredFor = "";
+      openedAt = Date.now();
+      if (resumeAt > 1) {
+        try {
+          await audio.seekTo(resumeAt);
+        } catch (err) {
+        }
+      }
+      if (status) applyStatus(status, true);
     }
     function indexByTrackId(id) {
       if (!id) return -1;
@@ -2879,6 +2938,11 @@
       var playGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "播放" }),
         field(
+          "播放引擎",
+          h("div", { class: "mp-field__value", text: ctx.engineLabel() }),
+          ctx.isNative() ? "原生播放器；状态栏/锁屏的按钮由它负责" : "没接上原生播放器，状态栏控制不可用（需要新版宿主）"
+        ),
+        field(
           "音量",
           ctx.isNative() ? h("div", { class: "mp-field__value", text: "跟随系统音量" }) : volume,
           ctx.isNative() ? "走宿主原生播放器，音量用手机音量键调" : "循环模式和随机播放在播放页右下角的按钮里调"
@@ -3380,6 +3444,7 @@
 
   // src/chat/bridge.js
   var api = null;
+  var snapshot = null;
   function setBridge(next) {
     api = next || null;
   }
@@ -3388,6 +3453,12 @@
   }
   function getBridge() {
     return api;
+  }
+  function saveSnapshot(data) {
+    snapshot = data || null;
+  }
+  function getSnapshot() {
+    return snapshot;
   }
 
   // src/chat/listenPanel.js
@@ -3418,14 +3489,49 @@
     }
     async function currentStatus() {
       var bridge = getBridge();
-      if (bridge && bridge.ready()) return bridge.status();
+      if (bridge && bridge.ready()) {
+        var live = bridge.status();
+        if (live && live.playing) return live;
+      }
       var res = await native.getStatus();
       var st = res && res.status || {};
-      return {
-        playing: st.title ? { name: st.title, artist: st.artist } : null,
-        isPlaying: !!st.isPlaying,
-        queueSize: st.queueSize || 0
-      };
+      if (st.title) {
+        return {
+          playing: { name: st.title, artist: st.artist, cover: "" },
+          isPlaying: !!st.isPlaying,
+          queueSize: st.queueSize || 0
+        };
+      }
+      var snap = getSnapshot();
+      if (snap && snap.track) {
+        return {
+          playing: snap.track,
+          isPlaying: !!snap.isPlaying,
+          queueSize: snap.queue && snap.queue.tracks ? snap.queue.tracks.length : 0
+        };
+      }
+      return { playing: null, isPlaying: false, queueSize: 0 };
+    }
+    function queueList() {
+      var bridge = getBridge();
+      if (bridge && bridge.ready()) {
+        var live = bridge.queue();
+        if (live && live.length) return live;
+      }
+      var snap = getSnapshot();
+      var queue = snap && snap.queue;
+      if (!queue || !queue.tracks || !queue.tracks.length) return [];
+      var currentKey = snap.track ? trackKey(snap.track) : "";
+      return queue.tracks.slice(0, 60).map(function(track) {
+        return {
+          key: trackKey(track),
+          name: track.name,
+          artist: track.artist,
+          cover: track.cover || "",
+          current: currentKey && trackKey(track) === currentKey,
+          track
+        };
+      });
     }
     async function refreshNow() {
       var status = await currentStatus();
@@ -3450,16 +3556,16 @@
     async function renderQueue() {
       listMode = "queue";
       clear(rows);
-      var bridge = getBridge();
-      var list = bridge && bridge.ready() ? bridge.queue() : [];
+      var list = queueList();
       if (!list.length) {
         rows.appendChild(h("div", { class: "mp-modal__hint", text: "队列是空的，上面搜一首歌试试" }));
         return;
       }
       list.slice(0, 50).forEach(function(item) {
         rows.appendChild(row(item.name, item.artist, function() {
+          var bridge = getBridge();
           if (bridge && bridge.ready()) bridge.playKey(item.key);
-          else nativePlayList([item.track], 0);
+          else if (item.track) nativePlayList([item.track], 0);
         }, item.current));
       });
     }
@@ -4011,6 +4117,12 @@
         isPlaying: state.player.status === "playing",
         queueSize: state.queue ? state.queue.tracks.length : 0,
         chatPrompt: state.settings.chatPrompt
+      });
+      saveSnapshot({
+        track: state.player.track,
+        isPlaying: state.player.status === "playing",
+        queue: state.queue,
+        settings: state.settings
       });
     }
     function installBridge() {
@@ -4690,6 +4802,12 @@
       },
       isNative: function() {
         return !!engine;
+      },
+      engineLabel: function() {
+        if (!engine) return "网页音频（无状态栏控制）";
+        var size = state.queue ? state.queue.tracks.length : 0;
+        var mode = state.settings.shuffle ? "random" : state.settings.repeat === REPEAT.ONE ? "one" : "loop";
+        return "原生 · 队列 " + size + " 首 · " + mode;
       }
     };
     var loaded = await Promise.all([
@@ -4712,8 +4830,8 @@
     if (nativeAvailable()) {
       engine = createNativeEngine({
         sources,
-        onChange: function(snapshot) {
-          state.player = snapshot;
+        onChange: function(snapshot2) {
+          state.player = snapshot2;
           if (shell) shell.renderPlayer();
         },
         onTrackChange: function(track2) {
@@ -4728,8 +4846,8 @@
     }
     player = getPlayer({
       volume: state.settings.volume,
-      onChange: function(snapshot) {
-        state.player = snapshot;
+      onChange: function(snapshot2) {
+        state.player = snapshot2;
         if (shell) shell.renderPlayer();
       },
       onEnded: function() {
@@ -4800,7 +4918,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.8.0" });
+    app = await createApp({ container, roche, version: "0.9.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -4816,7 +4934,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.8.0",
+    version: "0.9.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
