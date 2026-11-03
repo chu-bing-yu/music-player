@@ -1,4 +1,4 @@
-/* music-player v0.17.0 | built 2026-11-03T13:57:38.523Z */
+/* music-player v0.18.0 | built 2026-11-03T14:45:05.963Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -412,6 +412,8 @@
       neteaseCookie: "",
       neteaseProfile: "",
       chatListen: true,
+      // 角色点歌时：true = 只把第一首加进队列；false = 直接替换成这首
+      chatAddToQueue: true,
       chatPrompt: DEFAULT_CHAT_PROMPT,
       /**
        * 极简模式：插件不再轮询、不重建、不自动暂停，只把队列交给原生播放器。
@@ -467,6 +469,7 @@
       neteaseCookie: String(s.neteaseCookie || "").trim(),
       neteaseProfile: String(s.neteaseProfile || "").trim(),
       chatListen: bool(s.chatListen, def.chatListen),
+      chatAddToQueue: bool(s.chatAddToQueue, def.chatAddToQueue),
       chatPrompt: (function() {
         var text = String(s.chatPrompt == null ? "" : s.chatPrompt).trim();
         return text ? text.slice(0, 2e3) : def.chatPrompt;
@@ -883,6 +886,118 @@
     }
   }
 
+  // src/services/netease.js
+  function base(settings) {
+    var url = String(settings && settings.neteaseApi ? settings.neteaseApi : "").trim();
+    return url.replace(/\/+$/, "");
+  }
+  function isReady(settings) {
+    return !!base(settings);
+  }
+  async function call(settings, path, params) {
+    var root = base(settings);
+    if (!root) throw new Error("还没有配置网易云 API 地址");
+    var query = [];
+    var merged = Object.assign({}, params || {});
+    if (settings && settings.neteaseCookie) merged.cookie = settings.neteaseCookie;
+    merged.timestamp = Date.now();
+    Object.keys(merged).forEach(function(key) {
+      if (merged[key] === void 0 || merged[key] === null || merged[key] === "") return;
+      query.push(encodeURIComponent(key) + "=" + encodeURIComponent(merged[key]));
+    });
+    var url = root + path + (query.length ? "?" + query.join("&") : "");
+    return fetchJson(url, settings.prefix);
+  }
+  async function qrKey(settings) {
+    var data = await call(settings, "/login/qr/key");
+    var unikey = data && data.data && data.data.unikey;
+    if (!unikey) throw new Error("拿不到二维码 key（检查 API 地址是否可访问）");
+    return unikey;
+  }
+  async function qrCreate(settings, key) {
+    var data = await call(settings, "/login/qr/create", { key, qrimg: "true" });
+    var item = data && data.data || {};
+    return { qrimg: item.qrimg || "", qrurl: item.qrurl || "" };
+  }
+  async function qrCheck(settings, key) {
+    var data = await call(settings, "/login/qr/check", { key, noCookie: "true" });
+    var code = Number(data && data.code);
+    var cookie = data && data.cookie || "";
+    return { code, message: data && data.message || "", cookie };
+  }
+  async function account(settings) {
+    var data = await call(settings, "/login/status");
+    var profile = data && data.data && data.data.profile;
+    if (profile && profile.nickname) return { nickname: profile.nickname, userId: profile.userId };
+    var inner = data && data.data;
+    if (inner && inner.account) return { nickname: String(inner.account.id || ""), userId: inner.account.id };
+    return null;
+  }
+  async function search(settings, keyword, limit) {
+    var data = await call(settings, "/cloudsearch", {
+      keywords: keyword,
+      type: 1,
+      limit: limit || 20
+    });
+    var songs = data && data.result && data.result.songs || [];
+    return songs.map(function(song) {
+      var artists = (song.ar || song.artists || []).map(function(a) {
+        return a.name;
+      }).join("/");
+      return {
+        source: "netease",
+        platform: "netease",
+        id: song.id,
+        name: song.name,
+        artist: artists,
+        album: song.al && song.al.name || "",
+        cover: song.al && song.al.picUrl || "",
+        duration: song.dt || 0
+      };
+    });
+  }
+  async function songUrl(settings, id, level) {
+    var data = await call(settings, "/song/url/v1", { id, level: level || "exhigh" });
+    var first = data && data.data && data.data[0] || {};
+    return first.url || "";
+  }
+  async function toplists(settings) {
+    var data = await call(settings, "/toplist");
+    var list = data && (data.list || data.data) || [];
+    return list.slice(0, 8).map(function(item) {
+      return {
+        id: item.id,
+        name: item.name,
+        cover: item.coverImgUrl || "",
+        count: item.trackCount || item.tracks && item.tracks.length || 0
+      };
+    });
+  }
+  async function playlistTracks(settings, id, limit) {
+    var data = await call(settings, "/playlist/track/all", { id, limit: limit || 30 });
+    var songs = data && data.songs || [];
+    return songs.map(function(song) {
+      var artists = (song.ar || song.artists || []).map(function(a) {
+        return a.name;
+      }).join("/");
+      return {
+        source: "netease",
+        platform: "netease",
+        id: song.id,
+        name: song.name,
+        artist: artists,
+        album: song.al && song.al.name || "",
+        cover: song.al && song.al.picUrl || "",
+        duration: song.dt || 0
+      };
+    });
+  }
+  async function lyric(settings, id) {
+    var data = await call(settings, "/lyric", { id });
+    var lrc = data && data.lrc && data.lrc.lyric || "";
+    return lrc;
+  }
+
   // src/services/sources.js
   var VKEYS = "https://api.vkeys.cn/v2/music";
   var ITUNES = "https://itunes.apple.com/search";
@@ -955,7 +1070,7 @@
     }).filter(Boolean);
   }
   function createSources() {
-    async function search(keyword, settings, opts) {
+    async function search2(keyword, settings, opts) {
       var kw = String(keyword || "").trim();
       if (!kw) return { tracks: [], errors: [], counts: {} };
       var limit = opts && opts.limit || 25;
@@ -987,6 +1102,20 @@
           })
         );
       }
+      if (settings.sources.netease && isReady(settings)) {
+        tasks.push(
+          search(settings, kw, Math.min(limit, 20)).then(function(list) {
+            return {
+              source: "netease",
+              tracks: list.map(function(item) {
+                return normalizeTrack(Object.assign({}, item, { url: "" }), "netease");
+              }).filter(Boolean)
+            };
+          }).catch(function(err) {
+            return { source: "netease", tracks: [], error: String(err && err.message || err) };
+          })
+        );
+      }
       var groups = await Promise.all(tasks);
       var merged = mergeResults(groups);
       return {
@@ -1002,9 +1131,20 @@
       var steps = [];
       if (track.source === "tencent") steps = ["qq", "netease", "itunes"];
       else if (track.source === "itunes") steps = ["itunes"];
+      else if (track.source === "netease") steps = isReady(settings) ? ["neapi", "netease", "itunes"] : ["netease", "itunes"];
       else steps = ["netease", "itunes"];
       if (track.url) queue.push(preferHttps(track.url));
       async function fill(kind) {
+        if (kind === "neapi") {
+          var apiUrl = "";
+          try {
+            apiUrl = await songUrl(settings, track.id);
+          } catch (err) {
+            apiUrl = "";
+          }
+          if (apiUrl) queue.push(preferHttps(apiUrl));
+          return;
+        }
         if (kind === "qq") {
           if (filled.qq) return;
           filled.qq = true;
@@ -1091,7 +1231,7 @@
       }
       return results;
     }
-    return { search, createResolver, selfTest };
+    return { search: search2, createResolver, selfTest };
   }
 
   // src/core/lrc.js
@@ -1158,6 +1298,10 @@
     var cache = /* @__PURE__ */ Object.create(null);
     async function load(track, settings) {
       if (!track) return [];
+      if (track.source === "netease" && track.id && isReady(settings)) {
+        var lrc = await lyric(settings, track.id);
+        return lrc ? parseLrc(lrc) : [];
+      }
       if (track.source !== "tencent" || !track.id) return [];
       var url = VKEYS2 + "/tencent/lyric?id=" + encodeURIComponent(track.id);
       var data = await fetchJson(url, settings.prefix);
@@ -2156,7 +2300,7 @@
   var theme_default = '/* 主题变量：只在插件根容器内生效 */\n.mp-root {\n  --mp-bg: #ffffff;\n  --mp-bg-2: #f7f7f9;\n  --mp-soft: #f2f3f5;\n  --mp-soft-2: #e9eaee;\n  --mp-line: #ededf0;\n  --mp-line-strong: #dfe0e4;\n  --mp-ink: #1b1c1f;\n  --mp-ink-2: #4f5259;\n  --mp-muted: #9299a3;\n  --mp-accent: #e14b4b;\n  --mp-accent-soft: rgba(225, 75, 75, 0.1);\n  --mp-on-accent: #ffffff;\n\n  --mp-r-lg: 16px;\n  --mp-r-md: 10px;\n  --mp-r-sm: 8px;\n  --mp-r-full: 999px;\n\n  --mp-shadow: 0 10px 30px rgba(17, 18, 20, 0.08);\n  --mp-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;\n}\n\n/* 主色调：与日夜模式正交，放在 dark 之后保证优先级 */\n.mp-root[data-accent="blue"] {\n  --mp-accent: #3b82f6;\n  --mp-accent-soft: rgba(59, 130, 246, 0.14);\n}\n\n.mp-root[data-accent="green"] {\n  --mp-accent: #2f9e44;\n  --mp-accent-soft: rgba(47, 158, 68, 0.14);\n}\n\n.mp-root[data-accent="purple"] {\n  --mp-accent: #8b5cf6;\n  --mp-accent-soft: rgba(139, 92, 246, 0.14);\n}\n\n.mp-root[data-accent="amber"] {\n  --mp-accent: #e8850c;\n  --mp-accent-soft: rgba(232, 133, 12, 0.16);\n}\n\n.mp-root[data-theme="dark"] {\n  --mp-bg: #141518;\n  --mp-bg-2: #1a1c20;\n  --mp-soft: #22242a;\n  --mp-soft-2: #2b2e35;\n  --mp-line: #262930;\n  --mp-line-strong: #34383f;\n  --mp-ink: #f1f2f4;\n  --mp-ink-2: #c3c7cd;\n  --mp-muted: #868c96;\n  --mp-accent: #f0645f;\n  --mp-accent-soft: rgba(240, 100, 95, 0.16);\n  --mp-on-accent: #ffffff;\n  --mp-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);\n}\n\n/* 深色下的主色调：提亮一点，避免压得太沉 */\n.mp-root[data-theme="dark"][data-accent="blue"] { --mp-accent: #6ba4ff; }\n.mp-root[data-theme="dark"][data-accent="green"] { --mp-accent: #4ec46a; }\n.mp-root[data-theme="dark"][data-accent="purple"] { --mp-accent: #a78bfa; }\n.mp-root[data-theme="dark"][data-accent="amber"] { --mp-accent: #ffb347; }\n.mp-root[data-theme="dark"][data-accent="red"] { --mp-accent: #f0645f; }\n';
 
   // src/ui/base.css
-  var base_default = '/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */\n\n.mp-root,\n.mp-root * {\n  box-sizing: border-box;\n}\n\n/* 全屏：背景铺到屏幕边缘，再把安全区内边距加回自己的 header / 底栏 */\n.mp-root {\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  width: calc(100% + env(safe-area-inset-left) + env(safe-area-inset-right));\n  height: calc(100% + env(safe-area-inset-top) + env(safe-area-inset-bottom));\n  margin: calc(0px - env(safe-area-inset-top)) calc(0px - env(safe-area-inset-right)) calc(0px - env(safe-area-inset-bottom)) calc(0px - env(safe-area-inset-left));\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--mp-bg);\n  color: var(--mp-ink);\n  font-family: var(--mp-font);\n  font-size: 14px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\n.mp-root button {\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.mp-root button:disabled {\n  opacity: 0.45;\n  cursor: default;\n}\n\n/* ---------- 页面骨架 ---------- */\n\n.mp-view-host {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-view {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-header {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));\n}\n\n.mp-header__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 21px;\n  font-weight: 700;\n  letter-spacing: -0.2px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-header__sub {\n  font-size: 12px;\n  color: var(--mp-muted);\n  font-weight: 400;\n}\n\n.mp-body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  padding-bottom: 12px;\n}\n\n.mp-icon-btn {\n  flex: 0 0 auto;\n  width: 34px;\n  height: 34px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink-2);\n  padding: 0;\n}\n\n.mp-icon-btn:active {\n  background: var(--mp-soft);\n}\n\n.mp-icon-btn svg {\n  width: 21px;\n  height: 21px;\n}\n\n.mp-icon-btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 歌曲行 ---------- */\n\n.mp-row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  border: 0;\n  background: transparent;\n  width: 100%;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-row:active {\n  background: var(--mp-soft);\n}\n\n.mp-row__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: var(--mp-r-sm);\n  object-fit: cover;\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-row__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-row__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-row__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-row__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row.is-current .mp-row__name {\n  color: var(--mp-accent);\n}\n\n.mp-row.is-selected {\n  background: var(--mp-accent-soft);\n}\n\n.mp-row__check {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  border-radius: 50%;\n  border: 1.5px solid var(--mp-line-strong);\n  display: grid;\n  place-items: center;\n  color: #fff;\n}\n\n.mp-row__check.is-on {\n  border-color: var(--mp-accent);\n  background: var(--mp-accent);\n}\n\n.mp-row__check svg {\n  width: 13px;\n  height: 13px;\n}\n\n.mp-select-bar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 16px 8px;\n}\n\n.mp-select-bar__count {\n  flex: 1 1 auto;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n}\n\n.mp-row__sub {\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row__tag {\n  display: inline-block;\n  margin-right: 5px;\n  padding: 0 5px;\n  border-radius: 4px;\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n  font-size: 10px;\n  line-height: 15px;\n  vertical-align: 1px;\n}\n\n.mp-row__btn {\n  flex: 0 0 auto;\n  width: 32px;\n  height: 32px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-muted);\n}\n\n.mp-row__btn:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-row__btn svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-row__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 迷你播放条 ---------- */\n\n.mp-player {\n  position: relative;\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 14px 10px;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n}\n\n.mp-player__bar {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  background: var(--mp-line);\n  cursor: pointer;\n}\n\n.mp-player__bar i {\n  display: block;\n  height: 100%;\n  width: 0;\n  background: var(--mp-accent);\n}\n\n.mp-player__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  overflow: hidden;\n  color: var(--mp-muted);\n}\n\n.mp-player__cover svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-player__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-player__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-player__hit {\n  display: block;\n  border: 0;\n  background: transparent;\n  padding: 0;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-player__name {\n  font-size: 13.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__sub {\n  font-size: 11px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__play {\n  flex: 0 0 auto;\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink);\n}\n\n.mp-player__play svg {\n  width: 26px;\n  height: 26px;\n}\n\n/* ---------- 悬浮歌词 ---------- */\n\n.mp-float-lyric {\n  flex: 0 0 auto;\n  display: none;\n  margin: 0 10px 6px;\n  padding: 5px 12px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-bg-2);\n  font-size: 11.5px;\n  line-height: 1.5;\n  color: var(--mp-ink-2);\n  text-align: center;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.mp-float-lyric.is-fresh {\n  animation: mp-lyric-in 0.28s ease-out;\n}\n\n@keyframes mp-lyric-in {\n  from { opacity: 0.25; transform: translateY(3px); }\n  to { opacity: 1; transform: none; }\n}\n\n/* 键盘弹出时把播放条、悬浮歌词、底栏全部让出去，屏幕留给搜索结果 */\n.mp-root.is-keyboard .mp-player,\n.mp-root.is-keyboard .mp-float-lyric,\n.mp-root.is-keyboard .mp-dock {\n  display: none !important;\n}\n\n/* ---------- 四按钮底栏 ---------- */\n\n.mp-dock {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: stretch;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));\n}\n\n.mp-dock__btn {\n  flex: 1 1 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n  padding: 5px 0 3px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 10.5px;\n  line-height: 1.2;\n}\n\n.mp-dock__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-dock__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 底部弹层（挂在插件根内） ---------- */\n\n.mp-mask {\n  position: absolute;\n  inset: 0;\n  z-index: 40;\n  display: flex;\n  align-items: flex-end;\n  background: rgba(0, 0, 0, 0.35);\n}\n\n.mp-sheet {\n  width: 100%;\n  max-height: 74%;\n  display: flex;\n  flex-direction: column;\n  background: var(--mp-bg);\n  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;\n  padding-bottom: calc(6px + env(safe-area-inset-bottom));\n  animation: mp-rise 0.18s ease-out;\n}\n\n@keyframes mp-rise {\n  from { transform: translateY(12px); opacity: 0.6; }\n  to { transform: translateY(0); opacity: 1; }\n}\n\n.mp-sheet__head {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-sheet__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  padding-bottom: 6px;\n}\n\n.mp-sheet__item {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 12px 16px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14.5px;\n  text-align: left;\n}\n\n.mp-sheet__item:active {\n  background: var(--mp-soft);\n}\n\n.mp-sheet__item svg {\n  width: 19px;\n  height: 19px;\n  color: var(--mp-muted);\n}\n\n.mp-editor {\n  display: block;\n  width: calc(100% - 32px);\n  margin: 4px 16px 10px;\n  min-height: 150px;\n  padding: 12px;\n  border: 1px solid var(--mp-line-strong);\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  color: var(--mp-ink);\n  font-family: inherit;\n  font-size: 13px;\n  line-height: 1.65;\n  resize: vertical;\n  outline: none;\n}\n\n.mp-editor:focus {\n  border-color: var(--mp-accent);\n}\n\n.mp-sheet__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__x {\n  flex: 0 0 auto;\n  width: 28px;\n  height: 28px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-sheet__x:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-sheet__x svg {\n  width: 15px;\n  height: 15px;\n}\n\n.mp-sheet__item.is-danger {\n  color: var(--mp-accent);\n}\n\n/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */\n\n.mp-card {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 11px;\n  border-radius: 12px;\n  background: var(--mp-bg, #fff);\n  color: var(--mp-ink, #1b1c1f);\n  border: 1px solid var(--mp-line, #ededf0);\n  /* 两种卡（我发的 / 角色发的）宽度一致：都填满宿主给的那一栏 */\n  width: 100%;\n  box-sizing: border-box;\n  max-width: 100%;\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  white-space: nowrap;\n}\n\n.mp-card__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: 8px;\n  background: var(--mp-soft-2, #e9eaee);\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-card__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-card__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__name {\n  font-size: 13.5px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__sub {\n  margin-top: 1px;\n  font-size: 11px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  border: 0;\n  background: rgba(225, 75, 75, 0.1);\n  color: #e14b4b;\n  font-size: 12px;\n  font-weight: 600;\n  padding: 6px 11px;\n  border-radius: 999px;\n}\n\n/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */\n\n.mp-modal {\n  position: fixed;\n  inset: 0;\n  z-index: 9999;\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  background: rgba(0, 0, 0, 0.4);\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-modal__panel {\n  width: 100%;\n  max-width: 480px;\n  max-height: 76vh;\n  display: flex;\n  flex-direction: column;\n  background: #fff;\n  color: #1b1c1f;\n  border-radius: 18px 18px 0 0;\n  padding-bottom: calc(8px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-modal__head {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 10px;\n  border-bottom: 1px solid #ededf0;\n}\n\n.mp-modal__title {\n  flex: 1 1 auto;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.mp-modal__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  font-size: 14.5px;\n  background: transparent;\n  color: inherit;\n}\n\n.mp-modal__body {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 56vh;\n  overflow-y: auto;\n}\n\n.mp-modal__row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 10px 16px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-size: 14px;\n}\n\n.mp-modal__row:active {\n  background: #f2f3f5;\n}\n\n.mp-modal__row span {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__hint {\n  padding: 14px 16px;\n  font-size: 12.5px;\n  color: #9299a3;\n  text-align: center;\n}\n\n/* ---------- 聊天里的「一起听」面板 ---------- */\n\n.mp-listen {\n  max-height: 68vh;\n}\n\n.mp-listen__now {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 4px 16px 12px;\n}\n\n.mp-listen__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: 8px;\n  background: #eef0f3;\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-listen__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-listen__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-listen__meta {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-listen__name {\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__artist {\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__ctrl {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n}\n\n.mp-listen__btn {\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  background: transparent;\n  color: #1b1c1f;\n  padding: 0;\n}\n\n.mp-listen__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-listen__list {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 32vh;\n  overflow-y: auto;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__sub {\n  /* 固定宽度 + 右对齐，多行列表里歌手名才能对齐成一条线 */\n  flex: 0 0 auto;\n  width: 42%;\n  text-align: right;\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__row.is-active span:first-child {\n  color: #e14b4b;\n  font-weight: 600;\n}\n\n.mp-listen__searchicon {\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n}\n\n.mp-listen__searchicon svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-listen__foot {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  padding: 6px 16px;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__open {\n  flex: 1 1 auto;\n  border: 0;\n  background: transparent;\n  color: #6b7280;\n  font-size: 12.5px;\n  padding: 8px 0;\n}\n\n.mp-listen__stop {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: #d5544e;\n  font-size: 12.5px;\n  padding: 8px 0 8px 14px;\n}\n\n.mp-listen__tabs {\n  display: flex;\n  gap: 6px;\n  padding: 0 16px 8px;\n}\n\n.mp-listen__tab {\n  flex: 1 1 0;\n  padding: 6px 0;\n  border: 0;\n  border-radius: 999px;\n  background: #f2f3f5;\n  color: #6b7280;\n  font-size: 12.5px;\n}\n\n.mp-listen__tab.is-active {\n  background: #ffeceb;\n  color: #e14b4b;\n  font-weight: 600;\n}\n';
+  var base_default = '/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */\n\n.mp-root,\n.mp-root * {\n  box-sizing: border-box;\n}\n\n/* 全屏：背景铺到屏幕边缘，再把安全区内边距加回自己的 header / 底栏 */\n.mp-root {\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  width: calc(100% + env(safe-area-inset-left) + env(safe-area-inset-right));\n  height: calc(100% + env(safe-area-inset-top) + env(safe-area-inset-bottom));\n  margin: calc(0px - env(safe-area-inset-top)) calc(0px - env(safe-area-inset-right)) calc(0px - env(safe-area-inset-bottom)) calc(0px - env(safe-area-inset-left));\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--mp-bg);\n  color: var(--mp-ink);\n  font-family: var(--mp-font);\n  font-size: 14px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\n.mp-root button {\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.mp-root button:disabled {\n  opacity: 0.45;\n  cursor: default;\n}\n\n/* ---------- 页面骨架 ---------- */\n\n.mp-view-host {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-view {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-header {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));\n}\n\n.mp-header__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 21px;\n  font-weight: 700;\n  letter-spacing: -0.2px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-header__sub {\n  font-size: 12px;\n  color: var(--mp-muted);\n  font-weight: 400;\n}\n\n.mp-body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  padding-bottom: 12px;\n}\n\n.mp-icon-btn {\n  flex: 0 0 auto;\n  width: 34px;\n  height: 34px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink-2);\n  padding: 0;\n}\n\n.mp-icon-btn:active {\n  background: var(--mp-soft);\n}\n\n.mp-icon-btn svg {\n  width: 21px;\n  height: 21px;\n}\n\n.mp-icon-btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 歌曲行 ---------- */\n\n.mp-row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  border: 0;\n  background: transparent;\n  width: 100%;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-row:active {\n  background: var(--mp-soft);\n}\n\n.mp-row__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: var(--mp-r-sm);\n  object-fit: cover;\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-row__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-row__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-row__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-row__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row.is-current .mp-row__name {\n  color: var(--mp-accent);\n}\n\n.mp-row.is-selected {\n  background: var(--mp-accent-soft);\n}\n\n.mp-row__check {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  border-radius: 50%;\n  border: 1.5px solid var(--mp-line-strong);\n  display: grid;\n  place-items: center;\n  color: #fff;\n}\n\n.mp-row__check.is-on {\n  border-color: var(--mp-accent);\n  background: var(--mp-accent);\n}\n\n.mp-row__check svg {\n  width: 13px;\n  height: 13px;\n}\n\n.mp-select-bar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 16px 8px;\n}\n\n.mp-select-bar__count {\n  flex: 1 1 auto;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n}\n\n.mp-row__sub {\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row__tag {\n  display: inline-block;\n  margin-right: 5px;\n  padding: 0 5px;\n  border-radius: 4px;\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n  font-size: 10px;\n  line-height: 15px;\n  vertical-align: 1px;\n}\n\n.mp-row__btn {\n  flex: 0 0 auto;\n  width: 32px;\n  height: 32px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-muted);\n}\n\n.mp-row__btn:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-row__btn svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-row__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 迷你播放条 ---------- */\n\n.mp-player {\n  position: relative;\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 14px 10px;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n}\n\n.mp-player__bar {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  background: var(--mp-line);\n  cursor: pointer;\n}\n\n.mp-player__bar i {\n  display: block;\n  height: 100%;\n  width: 0;\n  background: var(--mp-accent);\n}\n\n.mp-player__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  overflow: hidden;\n  color: var(--mp-muted);\n}\n\n.mp-player__cover svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-player__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-player__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-player__hit {\n  display: block;\n  border: 0;\n  background: transparent;\n  padding: 0;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-player__name {\n  font-size: 13.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__sub {\n  font-size: 11px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__play {\n  flex: 0 0 auto;\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink);\n}\n\n.mp-player__play svg {\n  width: 26px;\n  height: 26px;\n}\n\n/* ---------- 悬浮歌词 ---------- */\n\n.mp-float-lyric {\n  flex: 0 0 auto;\n  display: none;\n  margin: 0 10px 6px;\n  padding: 5px 12px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-bg-2);\n  font-size: 11.5px;\n  line-height: 1.5;\n  color: var(--mp-ink-2);\n  text-align: center;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.mp-float-lyric.is-fresh {\n  animation: mp-lyric-in 0.28s ease-out;\n}\n\n@keyframes mp-lyric-in {\n  from { opacity: 0.25; transform: translateY(3px); }\n  to { opacity: 1; transform: none; }\n}\n\n/* 键盘弹出时把播放条、悬浮歌词、底栏全部让出去，屏幕留给搜索结果 */\n.mp-root.is-keyboard .mp-player,\n.mp-root.is-keyboard .mp-float-lyric,\n.mp-root.is-keyboard .mp-dock {\n  display: none !important;\n}\n\n/* ---------- 四按钮底栏 ---------- */\n\n.mp-dock {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: stretch;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));\n}\n\n.mp-dock__btn {\n  flex: 1 1 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n  padding: 5px 0 3px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 10.5px;\n  line-height: 1.2;\n}\n\n.mp-dock__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-dock__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 底部弹层（挂在插件根内） ---------- */\n\n.mp-mask {\n  position: absolute;\n  inset: 0;\n  z-index: 40;\n  display: flex;\n  align-items: flex-end;\n  background: rgba(0, 0, 0, 0.35);\n}\n\n.mp-sheet {\n  width: 100%;\n  max-height: 74%;\n  display: flex;\n  flex-direction: column;\n  background: var(--mp-bg);\n  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;\n  padding-bottom: calc(6px + env(safe-area-inset-bottom));\n  animation: mp-rise 0.18s ease-out;\n}\n\n@keyframes mp-rise {\n  from { transform: translateY(12px); opacity: 0.6; }\n  to { transform: translateY(0); opacity: 1; }\n}\n\n.mp-sheet__head {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-sheet__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  padding-bottom: 6px;\n}\n\n.mp-sheet__item {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 12px 16px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14.5px;\n  text-align: left;\n}\n\n.mp-sheet__item:active {\n  background: var(--mp-soft);\n}\n\n.mp-sheet__item svg {\n  width: 19px;\n  height: 19px;\n  color: var(--mp-muted);\n}\n\n.mp-editor {\n  display: block;\n  width: calc(100% - 32px);\n  margin: 4px 16px 10px;\n  min-height: 150px;\n  padding: 12px;\n  border: 1px solid var(--mp-line-strong);\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  color: var(--mp-ink);\n  font-family: inherit;\n  font-size: 13px;\n  line-height: 1.65;\n  resize: vertical;\n  outline: none;\n}\n\n.mp-editor:focus {\n  border-color: var(--mp-accent);\n}\n\n.mp-sheet__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__x {\n  flex: 0 0 auto;\n  width: 28px;\n  height: 28px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-sheet__x:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-sheet__x svg {\n  width: 15px;\n  height: 15px;\n}\n\n.mp-sheet__item.is-danger {\n  color: var(--mp-accent);\n}\n\n/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */\n\n.mp-card {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 11px;\n  border-radius: 12px;\n  background: var(--mp-bg, #fff);\n  color: var(--mp-ink, #1b1c1f);\n  border: 1px solid var(--mp-line, #ededf0);\n  /* 两种卡（我发的 / 角色发的）宽度一致：都填满宿主给的那一栏 */\n  width: 100%;\n  min-width: 248px;\n  box-sizing: border-box;\n  max-width: 100%;\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  white-space: nowrap;\n}\n\n.mp-card__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: 8px;\n  background: var(--mp-soft-2, #e9eaee);\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-card__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-card__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__name {\n  font-size: 13.5px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__sub {\n  margin-top: 1px;\n  font-size: 11px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  border: 0;\n  background: rgba(225, 75, 75, 0.1);\n  color: #e14b4b;\n  font-size: 12px;\n  font-weight: 600;\n  padding: 6px 11px;\n  border-radius: 999px;\n}\n\n/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */\n\n.mp-modal {\n  position: fixed;\n  inset: 0;\n  z-index: 9999;\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  background: rgba(0, 0, 0, 0.4);\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-modal__panel {\n  width: 100%;\n  max-width: 480px;\n  max-height: 76vh;\n  display: flex;\n  flex-direction: column;\n  background: #fff;\n  color: #1b1c1f;\n  border-radius: 18px 18px 0 0;\n  padding-bottom: calc(8px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-modal__head {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 10px;\n  border-bottom: 1px solid #ededf0;\n}\n\n.mp-modal__title {\n  flex: 1 1 auto;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.mp-modal__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  font-size: 14.5px;\n  background: transparent;\n  color: inherit;\n}\n\n.mp-modal__body {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 56vh;\n  overflow-y: auto;\n}\n\n.mp-modal__row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 10px 16px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-size: 14px;\n}\n\n.mp-modal__row:active {\n  background: #f2f3f5;\n}\n\n.mp-modal__row span {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__hint {\n  padding: 14px 16px;\n  font-size: 12.5px;\n  color: #9299a3;\n  text-align: center;\n}\n\n/* ---------- 聊天里的「一起听」面板 ---------- */\n\n.mp-listen {\n  max-height: 68vh;\n}\n\n.mp-listen__now {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 10px 16px 14px;\n}\n\n.mp-listen__cover {\n  flex: 0 0 auto;\n  width: 52px;\n  height: 52px;\n  border-radius: 12px;\n  background: #eef0f3;\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-listen__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-listen__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-listen__meta {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-listen__name {\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__artist {\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__ctrl {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n}\n\n.mp-listen__btn {\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  background: transparent;\n  color: #1b1c1f;\n  padding: 0;\n}\n\n.mp-listen__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-listen__list {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 32vh;\n  overflow-y: auto;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__sub {\n  /* 固定宽度 + 右对齐，多行列表里歌手名才能对齐成一条线 */\n  flex: 0 0 auto;\n  width: 42%;\n  text-align: right;\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__row.is-active span:first-child {\n  color: #e14b4b;\n  font-weight: 600;\n}\n\n.mp-listen__searchicon {\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n}\n\n.mp-listen__searchicon svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-listen__foot {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  padding: 6px 16px;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__open {\n  flex: 1 1 auto;\n  border: 0;\n  background: transparent;\n  color: #6b7280;\n  font-size: 12.5px;\n  padding: 8px 0;\n}\n\n.mp-listen__stop {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: #d5544e;\n  font-size: 12.5px;\n  padding: 8px 0 8px 14px;\n}\n\n.mp-listen__tabs {\n  display: flex;\n  gap: 10px;\n  padding: 2px 16px 10px;\n}\n\n.mp-listen__tab {\n  flex: 1 1 0;\n  padding: 8px 0;\n  border: 0;\n  border-radius: 999px;\n  background: #f2f3f5;\n  color: #6b7280;\n  font-size: 13px;\n}\n\n.mp-listen__tab.is-active {\n  background: #ffeceb;\n  color: #e14b4b;\n  font-weight: 600;\n}\n';
 
   // src/ui/views.css
   var views_default = '/* 各页面专属样式 */\n\n/* ---------- 搜索 ---------- */\n\n.mp-search {\n  flex: 0 0 auto;\n  padding: 0 16px 8px;\n}\n\n.mp-search__box {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  height: 38px;\n  padding: 0 12px;\n  border-radius: var(--mp-r-full);\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n}\n\n.mp-search__box svg {\n  width: 17px;\n  height: 17px;\n  flex: 0 0 auto;\n}\n\n.mp-search__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14px;\n  -webkit-appearance: none;\n  appearance: none;\n}\n\n/* 去掉 WebView 自带的搜索框装饰（那个多余的 × 和小图标） */\n.mp-search__input::-webkit-search-cancel-button,\n.mp-search__input::-webkit-search-decoration,\n.mp-search__input::-webkit-search-results-button {\n  -webkit-appearance: none;\n  display: none;\n}\n\n.mp-search__clear {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-soft-2);\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-search__clear svg {\n  width: 12px;\n  height: 12px;\n}\n\n.mp-chips {\n  display: flex;\n  gap: 8px;\n  overflow-x: auto;\n  padding: 6px 16px 2px;\n  scrollbar-width: none;\n}\n\n.mp-chips::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-chip {\n  flex: 0 0 auto;\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 4px 12px;\n  font-size: 12.5px;\n}\n\n.mp-chip.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n/* ---------- 通用段落 ---------- */\n\n.mp-section {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 14px 16px 6px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-section__act {\n  margin-left: auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 12px;\n  font-weight: 400;\n  padding: 2px 0;\n}\n\n/* ---------- 搜索推荐 ---------- */\n\n.mp-rec {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n  padding: 2px 16px 10px;\n}\n\n.mp-rec-chip {\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 6px 13px;\n  font-size: 13px;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-rec-chip:active {\n  background: var(--mp-soft);\n}\n\n.mp-rec__hint {\n  padding: 0 16px 8px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n}\n\n.mp-rec__foot {\n  padding-top: 8px;\n  padding-bottom: 4px;\n}\n\n.mp-hint {\n  padding: 22px 24px;\n  text-align: center;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.7;\n}\n\n.mp-error {\n  margin: 8px 16px;\n  padding: 9px 12px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-size: 12px;\n}\n\n/* ---------- 歌单列表 ---------- */\n\n.mp-list {\n  padding: 4px 10px 8px;\n}\n\n.mp-pl {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  width: 100%;\n  padding: 9px 6px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  border-radius: var(--mp-r-md);\n}\n\n.mp-pl:active {\n  background: var(--mp-soft);\n}\n\n.mp-pl__cover {\n  flex: 0 0 auto;\n  width: 54px;\n  height: 54px;\n  border-radius: var(--mp-r-md);\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-pl__cover svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-pl__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-pl__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-pl__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-pl__sub {\n  margin-top: 3px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */\n\n.mp-actions {\n  display: flex;\n  gap: 10px;\n  padding: 4px 16px 10px;\n}\n\n.mp-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 6px;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  background: var(--mp-soft);\n  color: var(--mp-ink);\n  /* 在设置行里被压缩时不要变成竖排文字 */\n  flex: 0 0 auto;\n  white-space: nowrap;\n  writing-mode: horizontal-tb;\n  min-width: 68px;\n}\n\n.mp-btn svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-btn--primary {\n  background: var(--mp-accent);\n  color: var(--mp-on-accent);\n}\n\n.mp-btn--ghost {\n  background: transparent;\n  border: 1px solid var(--mp-line-strong);\n  color: var(--mp-ink-2);\n  font-weight: 500;\n}\n\n.mp-actions .mp-btn {\n  flex: 1 1 0;\n}\n\n.mp-field__actions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  flex: 0 0 auto;\n}\n\n/* 网易云扫码登录弹层 */\n.mp-qr {\n  padding-bottom: 18px;\n}\n\n.mp-qr__img {\n  display: block;\n  width: 200px;\n  height: 200px;\n  margin: 10px auto 6px;\n  border-radius: 12px;\n  background: #fff;\n  object-fit: contain;\n}\n\n.mp-qr__tip {\n  padding: 4px 20px 0;\n  text-align: center;\n  font-size: 12.5px;\n  color: #9299a3;\n  line-height: 1.6;\n}\n\n/* ---------- 正在播放页 ---------- */\n\n.mp-now {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  padding: calc(4px + env(safe-area-inset-top)) 26px calc(18px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-now__head {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 0 8px;\n}\n\n.mp-now__from {\n  flex: 1 1 auto;\n  text-align: center;\n  font-size: 12px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__stage {\n  flex: 1 1 auto;\n  min-height: 0;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n\n.mp-now__cover {\n  flex: 0 0 auto;\n  width: min(76vw, 300px);\n  height: min(76vw, 300px);\n  margin: auto 0;\n  border-radius: 50%;\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n  box-shadow: var(--mp-shadow);\n}\n\n.mp-now__cover svg {\n  width: 54px;\n  height: 54px;\n}\n\n.mp-now__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-now__meta {\n  flex: 0 0 auto;\n  width: 100%;\n  text-align: center;\n  margin-top: 18px;\n}\n\n.mp-now__name {\n  font-size: 18px;\n  font-weight: 700;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__artist {\n  margin-top: 4px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__progress {\n  flex: 0 0 auto;\n  width: 100%;\n  margin-top: 16px;\n}\n\n.mp-now__track {\n  height: 4px;\n  border-radius: 999px;\n  background: var(--mp-soft-2);\n  cursor: pointer;\n  position: relative;\n}\n\n.mp-now__track i {\n  display: block;\n  height: 100%;\n  width: 0;\n  border-radius: 999px;\n  background: var(--mp-accent);\n}\n\n.mp-now__times {\n  display: flex;\n  justify-content: space-between;\n  margin-top: 5px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  font-variant-numeric: tabular-nums;\n}\n\n.mp-now__ctrl {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: 14px;\n}\n\n.mp-now__ctrl .mp-icon-btn {\n  width: 42px;\n  height: 42px;\n}\n\n.mp-now__ctrl .mp-icon-btn svg {\n  width: 23px;\n  height: 23px;\n}\n\n.mp-now__play {\n  width: 58px;\n  height: 58px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-ink);\n  color: var(--mp-bg);\n}\n\n.mp-now__play svg {\n  width: 28px;\n  height: 28px;\n}\n\n.mp-now__extras {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  justify-content: space-around;\n  margin-top: 14px;\n  padding-bottom: 4px;\n}\n\n/* 正在播放：滚动歌词 */\n\n.mp-now__lyric {\n  flex: 1 1 auto;\n  align-self: stretch;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  text-align: center;\n  padding: 4px 0 8px;\n  scrollbar-width: none;\n}\n\n.mp-now__lyric::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-lyric__line {\n  padding: 7px 10px;\n  font-size: 13.5px;\n  line-height: 1.5;\n  color: var(--mp-muted);\n  transition: color 0.15s, transform 0.15s, opacity 0.15s;\n  opacity: 0.7;\n}\n\n.mp-lyric__line.is-active {\n  color: var(--mp-accent);\n  font-weight: 600;\n  opacity: 1;\n  transform: scale(1.05);\n}\n\n.mp-lyric__empty {\n  padding: 46px 24px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n\n/* ---------- 设置 ---------- */\n\n.mp-group {\n  margin: 6px 16px 14px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  overflow: hidden;\n}\n\n.mp-group__title {\n  padding: 12px 14px 6px;\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-field {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 11px 14px;\n  border-top: 1px solid var(--mp-line);\n}\n\n/* 右侧控件永远不被压扁，说明文字可换行 */\n.mp-field > .mp-btn,\n.mp-field > .mp-switch,\n.mp-field > .mp-field__value,\n.mp-field > .mp-dots,\n.mp-field > .mp-theme-row {\n  flex: 0 0 auto;\n  margin-left: auto;\n}\n\n.mp-group__title + .mp-field {\n  border-top: 0;\n}\n\n.mp-field__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n}\n\n.mp-field__desc {\n  margin-top: 2px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  line-height: 1.5;\n}\n\n.mp-field__value {\n  flex: 0 0 auto;\n  font-size: 13px;\n  color: var(--mp-muted);\n  max-width: 55%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-input {\n  flex: 0 0 auto;\n  width: 55%;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 13px;\n  text-align: right;\n}\n\n.mp-switch {\n  flex: 0 0 auto;\n  width: 46px;\n  height: 27px;\n  border-radius: 999px;\n  border: 0;\n  background: var(--mp-soft-2);\n  position: relative;\n  transition: background 0.15s;\n  padding: 0;\n}\n\n.mp-switch::after {\n  content: "";\n  position: absolute;\n  top: 3px;\n  left: 3px;\n  width: 21px;\n  height: 21px;\n  border-radius: 50%;\n  background: #fff;\n  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);\n  transition: transform 0.15s;\n}\n\n.mp-switch.is-on {\n  background: var(--mp-accent);\n}\n\n.mp-switch.is-on::after {\n  transform: translateX(19px);\n}\n\n.mp-select {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 13px;\n  text-align: right;\n  outline: none;\n}\n\n.mp-slider {\n  flex: 0 0 auto;\n  width: 55%;\n  accent-color: var(--mp-accent);\n}\n\n.mp-theme-row {\n  display: flex;\n  gap: 8px;\n  padding: 11px 14px;\n}\n\n.mp-theme-btn {\n  flex: 1 1 0;\n  padding: 8px 2px;\n  border-radius: var(--mp-r-sm);\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  font-size: 12.5px;\n  white-space: nowrap;\n}\n\n.mp-theme-btn.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n.mp-dots {\n  display: flex;\n  gap: 10px;\n}\n\n.mp-dot {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border-radius: 50%;\n  border: 2px solid transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);\n}\n\n.mp-dot.is-active {\n  border-color: var(--mp-ink);\n}\n\n.mp-about {\n  padding: 6px 24px 28px;\n  text-align: center;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n';
@@ -2929,54 +3073,6 @@
     return { refresh: renderList };
   }
 
-  // src/services/netease.js
-  function base(settings) {
-    var url = String(settings && settings.neteaseApi ? settings.neteaseApi : "").trim();
-    return url.replace(/\/+$/, "");
-  }
-  function isReady(settings) {
-    return !!base(settings);
-  }
-  async function call(settings, path, params) {
-    var root = base(settings);
-    if (!root) throw new Error("还没有配置网易云 API 地址");
-    var query = [];
-    var merged = Object.assign({}, params || {});
-    if (settings && settings.neteaseCookie) merged.cookie = settings.neteaseCookie;
-    merged.timestamp = Date.now();
-    Object.keys(merged).forEach(function(key) {
-      if (merged[key] === void 0 || merged[key] === null || merged[key] === "") return;
-      query.push(encodeURIComponent(key) + "=" + encodeURIComponent(merged[key]));
-    });
-    var url = root + path + (query.length ? "?" + query.join("&") : "");
-    return fetchJson(url, settings.prefix);
-  }
-  async function qrKey(settings) {
-    var data = await call(settings, "/login/qr/key");
-    var unikey = data && data.data && data.data.unikey;
-    if (!unikey) throw new Error("拿不到二维码 key（检查 API 地址是否可访问）");
-    return unikey;
-  }
-  async function qrCreate(settings, key) {
-    var data = await call(settings, "/login/qr/create", { key, qrimg: "true" });
-    var item = data && data.data || {};
-    return { qrimg: item.qrimg || "", qrurl: item.qrurl || "" };
-  }
-  async function qrCheck(settings, key) {
-    var data = await call(settings, "/login/qr/check", { key, noCookie: "true" });
-    var code = Number(data && data.code);
-    var cookie = data && data.cookie || "";
-    return { code, message: data && data.message || "", cookie };
-  }
-  async function account(settings) {
-    var data = await call(settings, "/login/status");
-    var profile = data && data.data && data.data.profile;
-    if (profile && profile.nickname) return { nickname: profile.nickname, userId: profile.userId };
-    var inner = data && data.data;
-    if (inner && inner.account) return { nickname: String(inner.account.id || ""), userId: inner.account.id };
-    return null;
-  }
-
   // src/ui/views/settings.js
   function field(label, node, desc) {
     var left = h("div", { class: "mp-field__label" }, [
@@ -3181,6 +3277,13 @@
           "开启后主聊天的模型能看到当前在听什么，并可直接点歌、切歌、暂停"
         ),
         field(
+          "角色点歌加入队列",
+          switchEl(!!s.chatAddToQueue, function(v) {
+            ctx.updateSettings({ chatAddToQueue: v });
+          }),
+          "开：只把搜到的第一首加进当前列表；关：直接用它替换列表"
+        ),
+        field(
           "一起听提示词",
           editPromptBtn,
           "每轮注入给主聊天的说明；占位符 {{title}} {{artist}} {{state}} {{queue}} 会自动替换"
@@ -3258,6 +3361,13 @@
           h("div", { class: "mp-field__value", text: s.neteaseCookie ? s.neteaseProfile || "已登录" : "未登录" }),
           s.neteaseCookie ? "登录后可用自己账号的曲库/歌单" : "填好地址后扫码登录"
         ),
+        field("排行榜", (function() {
+          var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "查看" });
+          btn.addEventListener("click", function() {
+            ctx.openNeteaseToplist();
+          });
+          return btn;
+        })(), "从网易云拉官方榜单，点一个直接播该榜前 30 首"),
         field(
           s.neteaseCookie ? "重新登录" : "扫码登录",
           h("div", { class: "mp-field__actions" }, [
@@ -3895,11 +4005,6 @@
       if (modal.parentNode) modal.parentNode.removeChild(modal);
     }
     async function currentStatus() {
-      var bridge = getBridge();
-      if (bridge && bridge.ready()) {
-        var live = bridge.status();
-        if (live && live.playing) return live;
-      }
       var res = await native.getStatus();
       var st = res && res.status || {};
       if (st.title) {
@@ -3908,6 +4013,11 @@
           isPlaying: !!st.isPlaying,
           queueSize: st.queueSize || 0
         };
+      }
+      var bridge = getBridge();
+      if (bridge && bridge.ready()) {
+        var live = bridge.status();
+        if (live && live.playing) return live;
       }
       var snap = getSnapshot();
       if (snap && snap.track) {
@@ -4255,9 +4365,11 @@
     var cover = h("div", { class: "mp-card__cover" });
     fillCover(cover, coverUrl);
     var name = h("div", { class: "mp-card__name", text: track.name || data.title || "一起听" });
+    var artistText = String(track.artist || "");
+    if (artistText.length > 6) artistText = artistText.slice(0, 6) + "…";
     var sub = h("div", {
       class: "mp-card__sub",
-      text: [track.artist, statusText(data.status)].filter(Boolean).join(" · ")
+      text: [artistText, statusText(data.status)].filter(Boolean).join(" · ")
     });
     var act = h("button", { class: "mp-card__act", type: "button", text: data.status === "listening" ? "打开" : "一起听" });
     act.addEventListener("click", function(e) {
@@ -4508,6 +4620,7 @@
     artist: "",
     isPlaying: false,
     queueSize: 0,
+    chatAddToQueue: true,
     chatPrompt: DEFAULT_CHAT_PROMPT
   };
   function setChatRuntime(patch) {
@@ -4670,15 +4783,21 @@
         }
         var found = await bridge.search(keyword, 8);
         if (!found || !found.length) return { ok: false, reason: "没搜到这首歌" };
-        var result = await bridge.addTracks(found.slice(0, 3));
-        if (!result || !result.ok) return { ok: false, reason: result && result.reason || "没找到歌" };
         var first = found[0];
+        var result;
+        if (runtime.chatAddToQueue) {
+          result = await bridge.addTracks([first]);
+        } else {
+          result = await bridge.playList([first], 0);
+          result = { ok: !!result, started: true };
+        }
+        if (!result || !result.ok) return { ok: false, reason: result && result.reason || "没找到歌" };
         await pushCard(ctx, roche, first, "listening");
         return {
           ok: true,
           started: !!result.started,
-          added: result.added || found.length,
-          playing: result.started ? first.name : result.nowPlaying || "",
+          added: 1,
+          playing: first.name,
           artist: first.artist,
           candidates: found.slice(0, 5).map(function(t) {
             return t.name + " - " + t.artist;
@@ -4781,6 +4900,7 @@
         artist: state.player.track ? state.player.track.artist : "",
         isPlaying: state.player.status === "playing",
         queueSize: state.queue ? state.queue.tracks.length : 0,
+        chatAddToQueue: !!state.settings.chatAddToQueue,
         chatPrompt: state.settings.chatPrompt
       });
       saveSnapshot({
@@ -5178,6 +5298,52 @@
       }
       refresh();
     }
+    async function openNeteaseToplist() {
+      if (!shell) return;
+      if (!state.settings.neteaseApi) {
+        toast("先在设置里填网易云 API 地址");
+        return;
+      }
+      toast("正在拉取榜单…");
+      try {
+        var list = await toplists(state.settings);
+        if (!list.length) {
+          toast("没拿到榜单，检查 API 地址是否可访问");
+          return;
+        }
+        shell.openSheet({
+          title: "网易云排行榜",
+          items: list.map(function(item) {
+            return {
+              label: item.name,
+              hint: item.count ? item.count + " 首" : "",
+              icon: "queue",
+              onClick: function() {
+                playNeteasePlaylist(item);
+              }
+            };
+          })
+        });
+      } catch (err) {
+        toast("拉取失败：" + (err && err.message || "网络错误"));
+      }
+    }
+    async function playNeteasePlaylist(item) {
+      try {
+        var songs = await playlistTracks(state.settings, item.id, 30);
+        if (!songs.length) {
+          toast("这个榜单没有歌");
+          return;
+        }
+        var tracks = songs.map(function(s) {
+          return normalizeTrack(s, "netease");
+        }).filter(Boolean);
+        await playTracks(tracks, 0);
+        toast("正在播放：" + item.name);
+      } catch (err) {
+        toast("播放失败：" + (err && err.message || "网络错误"));
+      }
+    }
     function openPlayModeSheet() {
       if (!shell) return;
       var current2 = state.settings.playMode;
@@ -5533,6 +5699,7 @@
       },
       openQueueSheet,
       openPlayModeSheet,
+      openNeteaseToplist,
       removeFromQueue,
       setPlayMode,
       playQueueAt,
@@ -5712,7 +5879,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.17.0" });
+    app = await createApp({ container, roche, version: "0.18.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -5728,7 +5895,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.17.0",
+    version: "0.18.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
