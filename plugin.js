@@ -1,4 +1,4 @@
-/* music-player v0.11.0 | built 2026-11-03T06:30:28.418Z */
+/* music-player v0.12.0 | built 2026-11-03T06:54:24.947Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -374,8 +374,11 @@
       floatLyric: true,
       chatListen: true,
       chatPrompt: DEFAULT_CHAT_PROMPT,
-      // 极简模式：完全不轮询、不干预原生播放器，用来排查控制栏问题
-      nativeMinimal: false
+      /**
+       * 极简模式：插件不再轮询、不重建、不自动暂停，只把队列交给原生播放器。
+       * v0.5.0 能让状态栏按钮生效的正是这条路径，所以默认开着。
+       */
+      nativeMinimal: true
     };
   }
   function bool(v, fallback) {
@@ -2389,7 +2392,7 @@
     var headerRight = [];
     if (ctx.canMinimize()) {
       headerRight.push(iconBtn("down", {
-        label: "最小化",
+        label: ctx.minimizeLabel ? ctx.minimizeLabel() : "最小化",
         onClick: function() {
           ctx.minimizeApp();
         }
@@ -2859,11 +2862,11 @@
         field("主题", themeRow, "跟随系统 / 白天白色 / 夜间深色"),
         field("主色调", dotRow),
         field(
-          "悬浮播放",
+          "悬浮窗",
           switchEl(!!s.floating, function(v) {
             ctx.updateSettings({ floating: v });
           }),
-          "允许把 App 缩成悬浮按钮，边聊边听"
+          s.floating ? "开：点右上角最小化会缩成悬浮球" : "关：点右上角直接退出 App，不显示悬浮球，音乐继续在后台播放"
         ),
         field(
           "悬浮歌词",
@@ -3001,6 +3004,13 @@
           });
           return btn;
         })(), "控制栏按钮点了没反应时按一下：重开原生服务和通知，通常能救活"),
+        field("彻底停止", (function() {
+          var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "停止并清除通知" });
+          btn.addEventListener("click", function() {
+            ctx.hardStop();
+          });
+          return btn;
+        })(), "不想听的时候按这个：停止播放 + 清空队列 + 状态栏通知一起消失"),
         field(
           "音量",
           ctx.isNative() ? h("div", { class: "mp-field__value", text: "跟随系统音量" }) : volume,
@@ -3774,6 +3784,10 @@
     async function playFrom(tracks, index) {
       var bridge = getBridge();
       if (bridge && bridge.ready()) {
+        if (typeof bridge.addAndPlay === "function") {
+          await bridge.addAndPlay(tracks, index);
+          return;
+        }
         await bridge.playList(tracks, index);
         return;
       }
@@ -4225,6 +4239,39 @@
     }
     return nativeControl(action);
   }
+  async function headlessPlay(keyword, roche) {
+    var native = createNativeAudio();
+    if (!native.available()) {
+      return { ok: false, reason: "这台设备没有原生播放器，需要先打开音乐 App" };
+    }
+    var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+    var sources = createSources();
+    var found = await sources.search(keyword, settings, { limit: 8 });
+    if (!found.tracks.length) return { ok: false, reason: "没搜到这首歌" };
+    var list = found.tracks.slice(0, 5);
+    var nativeTracks = [];
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var resolver = sources.createResolver(list[i], settings);
+        var url = await resolver();
+        if (!url) continue;
+        nativeTracks.push({
+          id: trackKey(list[i]),
+          albumId: list[i].album || "",
+          title: list[i].name,
+          artist: list[i].artist || "",
+          cover: list[i].cover || "",
+          url
+        });
+      } catch (err) {
+      }
+    }
+    if (!nativeTracks.length) return { ok: false, reason: "拿不到播放地址" };
+    await native.replaceQueue({ tracks: nativeTracks, startIndex: 0, mode: "loop", autoplay: true });
+    return { ok: true, started: true, track: list[0], candidates: list.slice(0, 5).map(function(t) {
+      return t.name + " - " + t.artist;
+    }) };
+  }
   async function pushCard(ctx, roche, track, status) {
     if (!roche || !roche.chat || typeof roche.chat.createCard !== "function") return;
     if (!ctx || !ctx.conversationId || !ctx.contact || !ctx.contact.id) return;
@@ -4280,14 +4327,24 @@
         if (!keyword) return { ok: false, reason: "缺少 keyword" };
         var bridge = getBridge();
         if (!bridge || !bridge.ready()) {
-          return { ok: false, reason: "音乐 App 没有打开，请让用户先打开音乐 App 再点歌" };
+          var headless = await headlessPlay(keyword, roche);
+          if (!headless.ok) return headless;
+          await pushCard(ctx, roche, headless.track, "listening");
+          return {
+            ok: true,
+            started: true,
+            added: headless.track ? 1 : 0,
+            playing: headless.track.name,
+            artist: headless.track.artist,
+            candidates: headless.candidates || []
+          };
         }
         var found = await bridge.search(keyword, 8);
         if (!found || !found.length) return { ok: false, reason: "没搜到这首歌" };
         var result = await bridge.addTracks(found.slice(0, 3));
         if (!result || !result.ok) return { ok: false, reason: result && result.reason || "没找到歌" };
         var first = found[0];
-        if (result.started) await pushCard(ctx, roche, first, "listening");
+        await pushCard(ctx, roche, first, "listening");
         return {
           ok: true,
           started: !!result.started,
@@ -4438,6 +4495,18 @@
           if (!list.length) return { ok: false, reason: "没有可播放的歌" };
           await playTracks(list, index || 0);
           return { ok: true, track: list[index || 0] || list[0] };
+        },
+        /** 追加到队列末尾并立刻播其中第一首，原有列表不丢 */
+        addAndPlay: async function(tracks, index) {
+          var list = (tracks || []).filter(Boolean);
+          if (!list.length) return { ok: false, reason: "没有可播放的歌" };
+          var start = index || 0;
+          state.queue = appendTracks(state.queue, list);
+          saveQueue();
+          var target = state.queue.tracks.length - list.length + start;
+          await playQueueAt(target);
+          refresh();
+          return { ok: true, track: list[start] || list[0] };
         },
         /** 追加到当前队列，不打断正在播的歌（模型点歌默认走这里） */
         addTracks: async function(tracks) {
@@ -4706,6 +4775,11 @@
       if (!track2) return;
       state.queue = jumpTo(q, trackKey(track2));
       saveQueue();
+      if (engine) {
+        await engine.playAt(index);
+        refresh();
+        return;
+      }
       await playTrack(track2);
       refresh();
     }
@@ -4771,6 +4845,29 @@
     }
     function exitApp() {
       host.ui.closeApp();
+    }
+    async function hardStop() {
+      try {
+        if (engine) await engine.stop();
+        else if (player) player.stop();
+      } catch (err) {
+      }
+      state.queue = createQueue([]);
+      try {
+        await host.storage.delete("mp:queue");
+      } catch (err) {
+      }
+      state.player = {
+        status: "idle",
+        track: null,
+        time: 0,
+        duration: 0,
+        error: "",
+        volume: state.settings.volume
+      };
+      state.lyrics = { lines: [], loading: false, error: "" };
+      refresh();
+      toast("已彻底停止，状态栏通知也会消失");
     }
     async function rebuildSession() {
       if (!engine) {
@@ -5113,10 +5210,15 @@
         if (state.player.track) loadLyrics(state.player.track);
       },
       canMinimize: function() {
-        return !!host.caps.minimizeApp && !!state.settings.floating;
+        return !!host.caps.minimizeApp;
       },
+      // 「悬浮播放」关掉时不缩成悬浮球，而是直接退出 App——音乐照样在后台放，但界面上没有悬浮窗
       minimizeApp: function() {
-        host.ui.minimizeApp();
+        if (state.settings.floating) host.ui.minimizeApp();
+        else host.ui.closeApp();
+      },
+      minimizeLabel: function() {
+        return state.settings.floating ? "最小化" : "退出并后台播放";
       },
       isNative: function() {
         return !!engine;
@@ -5128,6 +5230,7 @@
         return "原生 · 队列 " + size + " 首 · " + mode + (state.settings.nativeMinimal ? " · 极简" : "");
       },
       rebuildSession,
+      hardStop,
       engineStats: function() {
         if (!engine) return null;
         var stats = engine.stats();
@@ -5248,7 +5351,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.11.0" });
+    app = await createApp({ container, roche, version: "0.12.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -5264,7 +5367,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.11.0",
+    version: "0.12.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
