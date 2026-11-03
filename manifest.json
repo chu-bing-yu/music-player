@@ -1,8 +1,8 @@
 {
   "id": "music-player",
   "name": "音乐播放器",
-  "version": "0.4.0",
-  "description": "QQ 音乐搜歌播放、歌单收藏、滚动歌词、系统媒体控制，可在聊天里发起「一起听」。",
+  "version": "0.5.0",
+  "description": "QQ 音乐搜歌播放、歌单收藏、滚动歌词，状态栏/锁屏可控，可在聊天里发起「一起听」。",
   "author": "chu-bing-yu",
   "entry": "https://raw.githubusercontent.com/chu-bing-yu/music-player/main/plugin.js",
   "hash": "",
