@@ -1,4 +1,4 @@
-/* music-player v0.4.0 | built 2026-11-03T04:29:43.133Z */
+/* music-player v0.5.0 | built 2026-11-03T04:58:05.841Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1418,6 +1418,353 @@
     return shared;
   }
 
+  // src/services/nativeAudio.js
+  function getPlugin() {
+    if (typeof window === "undefined") return null;
+    var cap = window.Capacitor;
+    var plugin = cap && cap.Plugins ? cap.Plugins.BackgroundAudio : null;
+    if (!plugin || typeof plugin.replaceQueue !== "function") return null;
+    return plugin;
+  }
+  function nativeAvailable() {
+    return !!getPlugin();
+  }
+  function createNativeAudio() {
+    function plugin() {
+      return getPlugin();
+    }
+    function statusOf(res) {
+      if (!res) return null;
+      return res.status || res;
+    }
+    async function call(method, payload) {
+      var p = plugin();
+      if (!p || typeof p[method] !== "function") return null;
+      try {
+        var res = await p[method](payload || {});
+        return statusOf(res);
+      } catch (err) {
+        return null;
+      }
+    }
+    return {
+      available: function() {
+        return !!plugin();
+      },
+      replaceQueue: function(payload) {
+        return call("replaceQueue", payload);
+      },
+      play: function() {
+        return call("play");
+      },
+      pause: function() {
+        return call("pause");
+      },
+      stop: function() {
+        return call("stop");
+      },
+      next: function() {
+        return call("next");
+      },
+      previous: function() {
+        return call("previous");
+      },
+      seekTo: function(positionSeconds) {
+        return call("seekTo", { positionSeconds });
+      },
+      setPlaybackMode: function(mode) {
+        return call("setPlaybackMode", { mode });
+      },
+      getStatus: function() {
+        return call("getStatus");
+      },
+      addStatusListener: function(handler) {
+        var p = plugin();
+        if (!p || typeof p.addListener !== "function") return function() {
+        };
+        var handle = null;
+        var removed = false;
+        try {
+          Promise.resolve(p.addListener("statusChange", function(event) {
+            handler(statusOf(event));
+          })).then(function(h2) {
+            handle = h2;
+            if (removed && h2 && h2.remove) h2.remove();
+          });
+        } catch (err) {
+        }
+        return function() {
+          removed = true;
+          if (handle && typeof handle.remove === "function") {
+            try {
+              handle.remove();
+            } catch (err) {
+            }
+          }
+        };
+      }
+    };
+  }
+
+  // src/services/nativeEngine.js
+  var WINDOW = 10;
+  var CONCURRENCY = 4;
+  var POLL_MS = 900;
+  function createNativeEngine(options) {
+    var opts = options || {};
+    var sources = opts.sources;
+    var onChange = typeof opts.onChange === "function" ? opts.onChange : function() {
+    };
+    var onTrackChange = typeof opts.onTrackChange === "function" ? opts.onTrackChange : function() {
+    };
+    var onEnded = typeof opts.onEnded === "function" ? opts.onEnded : function() {
+    };
+    var audio = createNativeAudio();
+    var list = [];
+    var windowTracks = [];
+    var windowMap = [];
+    var resolved = /* @__PURE__ */ Object.create(null);
+    var settings = null;
+    var timer = null;
+    var listenerOff = null;
+    var lastNativeIndex = -1;
+    var rebuiltFor = "";
+    var busy = false;
+    var state = {
+      status: "idle",
+      track: null,
+      time: 0,
+      duration: 0,
+      error: "",
+      volume: 0.8
+    };
+    function emit() {
+      onChange(getState());
+    }
+    function getState() {
+      return {
+        status: state.status,
+        track: state.track,
+        time: state.time,
+        duration: state.duration,
+        error: state.error,
+        volume: state.volume
+      };
+    }
+    function modeOf(s) {
+      if (!s) return "loop";
+      if (s.shuffle) return "random";
+      if (s.repeat === REPEAT.ONE) return "one";
+      return "loop";
+    }
+    async function resolveUrls(tracks) {
+      var pending = tracks.filter(function(t) {
+        return t && !resolved[trackKey(t)];
+      });
+      var cursor = 0;
+      async function worker() {
+        while (cursor < pending.length) {
+          var track = pending[cursor++];
+          try {
+            var next = sources.createResolver(track, settings);
+            var url = await next();
+            if (url) resolved[trackKey(track)] = url;
+          } catch (err) {
+          }
+        }
+      }
+      var workers = [];
+      for (var i = 0; i < CONCURRENCY; i++) workers.push(worker());
+      await Promise.all(workers);
+    }
+    async function openWindow(jsStart, autoplay) {
+      if (!list.length) return false;
+      var start = Math.min(Math.max(jsStart, 0), list.length - 1);
+      var slice = list.slice(start, start + WINDOW);
+      if (!slice.length) return false;
+      state.status = "loading";
+      state.error = "";
+      emit();
+      await resolveUrls(slice);
+      var nativeTracks = [];
+      var map = [];
+      slice.forEach(function(track, i) {
+        var url = resolved[trackKey(track)];
+        if (!url) return;
+        nativeTracks.push({
+          id: trackKey(track),
+          albumId: track.album || "",
+          title: track.name || "未知歌曲",
+          artist: track.artist || "",
+          cover: track.cover || "",
+          url
+        });
+        map.push(start + i);
+      });
+      if (!nativeTracks.length) {
+        state.status = "error";
+        state.error = "这首放不了";
+        emit();
+        return false;
+      }
+      windowTracks = slice;
+      windowMap = map;
+      rebuiltFor = "";
+      var status = await audio.replaceQueue({
+        tracks: nativeTracks,
+        startIndex: 0,
+        mode: modeOf(settings),
+        autoplay: autoplay !== false
+      });
+      startPolling();
+      if (status) applyStatus(status, true);
+      return true;
+    }
+    function indexByTrackId(id) {
+      if (!id) return -1;
+      for (var i = 0; i < list.length; i++) {
+        if (trackKey(list[i]) === id) return i;
+      }
+      return -1;
+    }
+    function applyStatus(raw, force) {
+      if (!raw) return;
+      var nativeIndex = Number(raw.currentTrackIndex);
+      var track = null;
+      var byId = indexByTrackId(raw.trackId);
+      if (byId >= 0) track = list[byId];
+      else if (Number.isFinite(nativeIndex) && windowMap[nativeIndex] != null) {
+        track = list[windowMap[nativeIndex]];
+      }
+      if (track && (!state.track || trackKey(state.track) !== trackKey(track))) {
+        state.track = track;
+        onTrackChange(track);
+      }
+      if (Number.isFinite(nativeIndex) && nativeIndex >= 0 && windowMap[nativeIndex] != null) {
+        if (nativeIndex !== lastNativeIndex || force) {
+          lastNativeIndex = nativeIndex;
+          maybeRebuild(nativeIndex);
+        }
+      }
+      if (typeof raw.currentTime === "number") state.time = Math.max(0, raw.currentTime) * 1e3;
+      if (typeof raw.duration === "number") state.duration = Math.max(0, raw.duration) * 1e3;
+      if (typeof raw.isPlaying === "boolean") {
+        state.status = raw.isPlaying ? "playing" : state.track ? "paused" : "idle";
+      }
+      emit();
+    }
+    function maybeRebuild(nativeIndex) {
+      if (busy) return;
+      if (nativeIndex !== windowMap.length - 1) return;
+      var jsIndex = windowMap[nativeIndex];
+      var key = String(jsIndex);
+      if (rebuiltFor === key) return;
+      rebuiltFor = key;
+      if (jsIndex >= list.length - 1 && !settings.repeat) {
+        return;
+      }
+      busy = true;
+      openWindow(jsIndex, true).then(function() {
+        busy = false;
+      }, function() {
+        busy = false;
+      });
+    }
+    async function syncNow() {
+      var status = await audio.getStatus();
+      if (status) applyStatus(status, false);
+    }
+    function startPolling() {
+      if (timer) return;
+      timer = setInterval(syncNow, POLL_MS);
+      if (!listenerOff) {
+        listenerOff = audio.addStatusListener(function(status) {
+          if (status) applyStatus(status, true);
+        });
+      }
+    }
+    function stopPolling() {
+      if (timer) clearInterval(timer);
+      timer = null;
+      if (listenerOff) listenerOff();
+      listenerOff = null;
+    }
+    async function playList(tracks, startIndex, currentSettings) {
+      list = (tracks || []).filter(Boolean).slice();
+      settings = currentSettings || settings;
+      lastNativeIndex = -1;
+      if (!list.length) return false;
+      return openWindow(startIndex || 0, true);
+    }
+    async function attach(tracks, currentSettings) {
+      list = (tracks || []).filter(Boolean).slice();
+      settings = currentSettings || settings;
+      startPolling();
+      await syncNow();
+    }
+    async function playAt(jsIndex) {
+      if (!list.length) return false;
+      return openWindow(jsIndex, true);
+    }
+    async function toggle() {
+      if (!state.track) return false;
+      var status = await (state.status === "playing" ? audio.pause() : audio.play());
+      if (status) applyStatus(status, true);
+      else emit();
+      return true;
+    }
+    async function seek(ms) {
+      var status = await audio.seekTo(Math.max(0, (Number(ms) || 0) / 1e3));
+      if (status) applyStatus(status, false);
+    }
+    async function setMode(nextSettings) {
+      settings = nextSettings;
+      await audio.setPlaybackMode(modeOf(settings));
+    }
+    async function stop() {
+      stopPolling();
+      await audio.stop();
+      list = [];
+      windowMap = [];
+      windowTracks = [];
+      state.status = "idle";
+      state.track = null;
+      state.time = 0;
+      state.duration = 0;
+      emit();
+    }
+    function dispose() {
+      stopPolling();
+      state.track = null;
+      state.status = "idle";
+    }
+    function setVolume(v) {
+      state.volume = Math.min(1, Math.max(0, Number(v) || 0));
+      return state.volume;
+    }
+    return {
+      kind: "native",
+      available: function() {
+        return audio.available();
+      },
+      playList,
+      attach,
+      playAt,
+      toggle,
+      seek,
+      setMode,
+      stop,
+      dispose,
+      setVolume,
+      syncNow,
+      getState,
+      jsIndexOf: function() {
+        var idx = windowMap[lastNativeIndex];
+        return idx == null ? -1 : idx;
+      }
+    };
+  }
+
   // src/ui/dom.js
   function h(tag, attrs, children) {
     var el = document.createElement(tag);
@@ -1541,6 +1888,16 @@
   }
 
   // src/ui/components.js
+  function pageTitle(text, onExit) {
+    var el = h("div", { class: "mp-header__title", text });
+    if (onExit) {
+      el.setAttribute("title", "点击退出");
+      el.addEventListener("click", function() {
+        onExit();
+      });
+    }
+    return el;
+  }
   function iconBtn(name, opts) {
     var o = opts || {};
     var btn = h("button", {
@@ -1753,10 +2110,9 @@
       }));
     }
     var header = h("div", { class: "mp-header" }, [
-      iconBtn("close", { label: "退出 App", onClick: function() {
+      pageTitle("搜索", function() {
         ctx.exitApp();
-      } }),
-      h("div", { class: "mp-header__title", text: "搜索" })
+      })
     ].concat(headerRight));
     function chip(label, onClick) {
       var btn = h("button", { class: "mp-rec-chip", type: "button", text: label });
@@ -1892,10 +2248,9 @@
     var state = ctx.state;
     var listBox = h("div", { class: "mp-list mp-body" });
     var header = h("div", { class: "mp-header" }, [
-      iconBtn("close", { label: "退出 App", onClick: function() {
+      pageTitle("歌单", function() {
         ctx.exitApp();
-      } }),
-      h("div", { class: "mp-header__title", text: "歌单" }),
+      }),
       iconBtn("plus", {
         label: "新建歌单",
         onClick: function() {
@@ -2070,10 +2425,9 @@
     var actions = h("div", { class: "mp-actions" });
     var subEl = h("div", { class: "mp-header__sub", text: "" });
     var header = h("div", { class: "mp-header" }, [
-      iconBtn("close", { label: "退出 App", onClick: function() {
+      pageTitle("收藏", function() {
         ctx.exitApp();
-      } }),
-      h("div", { class: "mp-header__title", text: "收藏" }),
+      }),
       subEl
     ]);
     function render2() {
@@ -2150,10 +2504,9 @@
     var state = ctx.state;
     var body = h("div", { class: "mp-body" });
     var header = h("div", { class: "mp-header" }, [
-      iconBtn("close", { label: "退出 App", onClick: function() {
+      pageTitle("设置", function() {
         ctx.exitApp();
-      } }),
-      h("div", { class: "mp-header__title", text: "设置" })
+      })
     ]);
     function setSource(key, value) {
       var sources = Object.assign({}, state.settings.sources);
@@ -2288,7 +2641,11 @@
       });
       var playGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "播放" }),
-        field("音量", volume, "循环模式和随机播放在播放页右下角的按钮里调")
+        field(
+          "音量",
+          ctx.isNative() ? h("div", { class: "mp-field__value", text: "跟随系统音量" }) : volume,
+          ctx.isNative() ? "走宿主原生播放器，音量用手机音量键调" : "循环模式和随机播放在播放页右下角的按钮里调"
+        )
       ]);
       var clearBtn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "清空数据" });
       clearBtn.addEventListener("click", function() {
@@ -2811,6 +3168,7 @@
     };
     var shell = null;
     var player = null;
+    var engine = null;
     var searchToken = 0;
     function toast(message) {
       host.ui.toast(message);
@@ -2881,6 +3239,14 @@
       if (!track2) return false;
       state.player = Object.assign({}, state.player, { status: "loading", track: track2, error: "" });
       if (shell) shell.renderPlayer();
+      if (engine) {
+        state.queue = createQueue([track2], { repeat: state.settings.repeat, shuffle: false });
+        saveQueue();
+        var started = await engine.playList(state.queue.tracks, 0, state.settings);
+        if (!started) toast("这首放不了（音源可能没版权），换一首试试");
+        refresh();
+        return started;
+      }
       var ok = await player.load(track2, sources.createResolver(track2, state.settings));
       if (ok) {
         state.recent = pushRecent(state.recent, track2, MAX_RECENT);
@@ -2905,6 +3271,12 @@
         repeat: state.settings.repeat
       });
       saveQueue();
+      if (engine) {
+        var started = await engine.playList(state.queue.tracks, startIndex || 0, state.settings);
+        if (!started) toast("这首放不了（音源可能没版权），换一首试试");
+        refresh();
+        return;
+      }
       await playTrack(current(state.queue));
       refresh();
     }
@@ -2917,6 +3289,11 @@
       }
       state.queue = res.queue;
       saveQueue();
+      if (engine) {
+        engine.playAt(res.queue.order[res.queue.pos]);
+        refresh();
+        return;
+      }
       playTrack(res.track);
       refresh();
     }
@@ -2926,7 +3303,13 @@
       state.queue = res.queue;
       saveQueue();
       if (res.restart) {
-        player.seek(0);
+        if (engine) engine.seek(0);
+        else player.seek(0);
+        return;
+      }
+      if (engine) {
+        engine.playAt(res.queue.order[res.queue.pos]);
+        refresh();
         return;
       }
       playTrack(res.track);
@@ -2944,16 +3327,25 @@
         }
         return;
       }
+      if (engine) {
+        await engine.toggle();
+        refresh();
+        return;
+      }
       var ok = await player.toggle();
       if (!ok) {
         await playTrack(st.track);
       }
     }
     function seek(ms) {
+      if (engine) {
+        engine.seek(ms);
+        return;
+      }
       player.seek(ms);
     }
     async function setVolume(v) {
-      var vol = player.setVolume(v);
+      var vol = engine ? engine.setVolume(v) : player.setVolume(v);
       state.settings = Object.assign({}, state.settings, { volume: vol });
       await store.saveSettings(state.settings);
       refresh();
@@ -2964,6 +3356,7 @@
       state.queue = setRepeat(state.queue, mode);
       await store.saveSettings(state.settings);
       saveQueue();
+      if (engine) engine.setMode(state.settings);
       refresh();
       return mode;
     }
@@ -2973,6 +3366,7 @@
       state.queue = setShuffle(state.queue, shuffle);
       await store.saveSettings(state.settings);
       saveQueue();
+      if (engine) engine.setMode(state.settings);
       refresh();
       return shuffle;
     }
@@ -3373,6 +3767,9 @@
       },
       minimizeApp: function() {
         host.ui.minimizeApp();
+      },
+      isNative: function() {
+        return !!engine;
       }
     };
     var loaded = await Promise.all([
@@ -3392,6 +3789,23 @@
       repeat: state.settings.repeat,
       shuffle: state.settings.shuffle
     });
+    if (nativeAvailable()) {
+      engine = createNativeEngine({
+        sources,
+        onChange: function(snapshot) {
+          state.player = snapshot;
+          if (shell) shell.renderPlayer();
+        },
+        onTrackChange: function(track2) {
+          state.queue = jumpTo(state.queue, trackKey(track2));
+          state.recent = pushRecent(state.recent, track2, MAX_RECENT);
+          store.saveRecent(state.recent);
+          saveQueue();
+          loadLyrics(track2);
+          if (shell) shell.renderPlayer();
+        }
+      });
+    }
     player = getPlayer({
       volume: state.settings.volume,
       onChange: function(snapshot) {
@@ -3401,7 +3815,6 @@
       onEnded: function() {
         next(true);
       },
-      // 系统状态栏 / 锁屏点上一首下一首
       onNext: function() {
         next(false);
       },
@@ -3412,6 +3825,21 @@
     state.player = player.getState();
     shell = createShell(container, ctx);
     shell.mount();
+    if (engine && state.queue.tracks.length) {
+      engine.attach(state.queue.tracks, state.settings).then(function() {
+        var nowPlaying = engine.getState().track;
+        if (nowPlaying) {
+          state.player = engine.getState();
+          var cachedLines = lyrics.getCached(nowPlaying);
+          if (cachedLines && cachedLines.length) {
+            state.lyrics = { lines: cachedLines, loading: false, error: "" };
+          } else {
+            loadLyrics(nowPlaying);
+          }
+          if (shell) shell.renderPlayer();
+        }
+      });
+    }
     if (state.player.track) {
       var cached = lyrics.getCached(state.player.track);
       if (cached && cached.length) {
@@ -3436,6 +3864,7 @@
       destroy: function() {
         searchToken += 1;
         if (player) player.setHandlers({});
+        if (engine) engine.dispose();
         if (shell) shell.destroy();
         shell = null;
         saveQueue();
@@ -3643,7 +4072,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.4.0" });
+    app = await createApp({ container, roche, version: "0.5.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -3659,7 +4088,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.4.0",
+    version: "0.5.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
