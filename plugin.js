@@ -1,4 +1,4 @@
-/* music-player v0.5.0 | built 2026-11-03T04:58:05.841Z */
+/* music-player v0.6.0 | built 2026-11-03T05:14:31.785Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -348,7 +348,7 @@
   function defaultSettings() {
     return {
       schemaVersion: SCHEMA_VERSION,
-      sources: { tencent: true, itunes: true, netease: true },
+      sources: { tencent: true, itunes: true, audius: true, netease: true },
       prefix: "",
       volume: 0.8,
       repeat: REPEAT.OFF,
@@ -356,7 +356,8 @@
       theme: "auto",
       accent: "red",
       floating: true,
-      floatLyric: true
+      floatLyric: true,
+      chatListen: true
     };
   }
   function bool(v, fallback) {
@@ -383,6 +384,7 @@
       sources: {
         tencent,
         itunes: bool(sources.itunes, def.sources.itunes),
+        audius: bool(sources.audius, def.sources.audius),
         netease: bool(sources.netease, def.sources.netease)
       },
       prefix: String(s.prefix || s.proxy || "").trim(),
@@ -392,7 +394,8 @@
       theme: pickId(THEMES, s.theme, def.theme),
       accent: pickId(ACCENTS, s.accent, def.accent),
       floating: bool(s.floating, def.floating),
-      floatLyric: bool(s.floatLyric, def.floatLyric)
+      floatLyric: bool(s.floatLyric, def.floatLyric),
+      chatListen: bool(s.chatListen, def.chatListen)
     };
   }
 
@@ -807,6 +810,8 @@
   // src/services/sources.js
   var VKEYS = "https://api.vkeys.cn/v2/music";
   var ITUNES = "https://itunes.apple.com/search";
+  var AUDIUS = "https://api.audius.co";
+  var AUDIUS_APP = "RocheMusic";
   async function tencentSearch(keyword, settings, limit) {
     var url = VKEYS + "/tencent?word=" + encodeURIComponent(keyword) + "&page=1&num=" + limit;
     var data = await fetchJson(url, settings.prefix);
@@ -850,6 +855,29 @@
     var picked = same[0] || list[0];
     return preferHttps(picked.url);
   }
+  async function audiusSearch(keyword, settings, limit) {
+    var url = AUDIUS + "/v1/tracks/search?query=" + encodeURIComponent(keyword) + "&app_name=" + AUDIUS_APP + "&limit=" + limit;
+    var data = await fetchJson(url, settings.prefix);
+    var list = data && data.data || [];
+    return list.filter(function(item) {
+      if (item.is_streamable === false) return false;
+      if (item.access && item.access.stream === false) return false;
+      return true;
+    }).map(function(item) {
+      return normalizeTrack({
+        source: "audius",
+        platform: "audius",
+        id: item.id,
+        name: item.title,
+        artist: item.user && item.user.name || "Audius",
+        album: "",
+        cover: item.artwork && (item.artwork["480x480"] || item.artwork["150x150"]) || "",
+        duration: (Number(item.duration) || 0) * 1e3,
+        // 这个地址可以直接拼，不用二次解析，原生队列也能直接用
+        url: AUDIUS + "/v1/tracks/" + item.id + "/stream?app_name=" + AUDIUS_APP
+      }, "audius");
+    }).filter(Boolean);
+  }
   function createSources() {
     async function search(keyword, settings, opts) {
       var kw = String(keyword || "").trim();
@@ -871,6 +899,15 @@
             return { source: "itunes", tracks };
           }).catch(function(err) {
             return { source: "itunes", tracks: [], error: String(err && err.message || err) };
+          })
+        );
+      }
+      if (settings.sources.audius) {
+        tasks.push(
+          audiusSearch(kw, settings, Math.min(limit, 12)).then(function(tracks) {
+            return { source: "audius", tracks };
+          }).catch(function(err) {
+            return { source: "audius", tracks: [], error: String(err && err.message || err) };
           })
         );
       }
@@ -967,6 +1004,13 @@
           var list = await itunesSearch(keyword, settings, 3);
           if (!list.length) throw new Error("没返回结果");
           return list.length + " 首（30 秒试听）";
+        });
+      }
+      if (settings.sources.audius) {
+        await run("Audius · 免费曲库", async function() {
+          var list = await audiusSearch("lofi", settings, 3);
+          if (!list.length) throw new Error("没返回结果");
+          return list.length + " 首，第一首《" + list[0].name + "》";
         });
       }
       return results;
@@ -1510,6 +1554,8 @@
   var WINDOW = 10;
   var CONCURRENCY = 4;
   var POLL_MS = 900;
+  var URL_TTL = 3 * 60 * 1e3;
+  var PREPARE_GRACE = 3e3;
   function createNativeEngine(options) {
     var opts = options || {};
     var sources = opts.sources;
@@ -1530,6 +1576,9 @@
     var lastNativeIndex = -1;
     var rebuiltFor = "";
     var busy = false;
+    var opToken = 0;
+    var openedAt = 0;
+    var retried = /* @__PURE__ */ Object.create(null);
     var state = {
       status: "idle",
       track: null,
@@ -1557,20 +1606,35 @@
       if (s.repeat === REPEAT.ONE) return "one";
       return "loop";
     }
+    function urlOf(track) {
+      var key = trackKey(track);
+      var item = resolved[key];
+      if (!item) return "";
+      if (Date.now() - item.at > URL_TTL) {
+        delete resolved[key];
+        return "";
+      }
+      return item.url;
+    }
+    async function resolveOne(track) {
+      var key = trackKey(track);
+      try {
+        var next2 = sources.createResolver(track, settings);
+        var url = await next2();
+        if (url) resolved[key] = { url, at: Date.now() };
+        else delete resolved[key];
+      } catch (err) {
+        delete resolved[key];
+      }
+    }
     async function resolveUrls(tracks) {
-      var pending = tracks.filter(function(t) {
-        return t && !resolved[trackKey(t)];
+      var pending = (tracks || []).filter(function(t) {
+        return t && !urlOf(t);
       });
       var cursor = 0;
       async function worker() {
         while (cursor < pending.length) {
-          var track = pending[cursor++];
-          try {
-            var next = sources.createResolver(track, settings);
-            var url = await next();
-            if (url) resolved[trackKey(track)] = url;
-          } catch (err) {
-          }
+          await resolveOne(pending[cursor++]);
         }
       }
       var workers = [];
@@ -1579,6 +1643,7 @@
     }
     async function openWindow(jsStart, autoplay) {
       if (!list.length) return false;
+      var token = ++opToken;
       var start = Math.min(Math.max(jsStart, 0), list.length - 1);
       var slice = list.slice(start, start + WINDOW);
       if (!slice.length) return false;
@@ -1586,10 +1651,11 @@
       state.error = "";
       emit();
       await resolveUrls(slice);
+      if (token !== opToken) return false;
       var nativeTracks = [];
       var map = [];
       slice.forEach(function(track, i) {
-        var url = resolved[trackKey(track)];
+        var url = urlOf(track);
         if (!url) return;
         nativeTracks.push({
           id: trackKey(track),
@@ -1610,12 +1676,15 @@
       windowTracks = slice;
       windowMap = map;
       rebuiltFor = "";
+      lastNativeIndex = -1;
       var status = await audio.replaceQueue({
         tracks: nativeTracks,
         startIndex: 0,
         mode: modeOf(settings),
         autoplay: autoplay !== false
       });
+      if (token !== opToken) return false;
+      openedAt = Date.now();
       startPolling();
       if (status) applyStatus(status, true);
       return true;
@@ -1652,6 +1721,32 @@
         state.status = raw.isPlaying ? "playing" : state.track ? "paused" : "idle";
       }
       emit();
+      maybeRecover(raw);
+    }
+    function maybeRecover(raw) {
+      if (!raw || !state.track || raw.isPlaying) return;
+      if (Number(raw.duration) > 0 || Number(raw.currentTime) > 0) return;
+      if (!openedAt || Date.now() - openedAt < PREPARE_GRACE) return;
+      if (busy) return;
+      var key = trackKey(state.track);
+      var tries = retried[key] || 0;
+      if (tries >= 2) {
+        state.status = "error";
+        state.error = "播放失败，换一首试试";
+        emit();
+        return;
+      }
+      retried[key] = tries + 1;
+      delete resolved[key];
+      var jsIndex = indexByTrackId(raw.trackId);
+      if (jsIndex < 0) return;
+      busy = true;
+      openedAt = Date.now();
+      openWindow(jsIndex, true).then(function() {
+        busy = false;
+      }, function() {
+        busy = false;
+      });
     }
     function maybeRebuild(nativeIndex) {
       if (busy) return;
@@ -1706,6 +1801,32 @@
       if (!list.length) return false;
       return openWindow(jsIndex, true);
     }
+    async function next() {
+      if (!list.length) return false;
+      if (lastNativeIndex >= 0 && lastNativeIndex + 1 < windowMap.length) {
+        var advanced = await audio.next();
+        if (advanced) {
+          applyStatus(advanced, true);
+          return true;
+        }
+      }
+      var jsIndex = lastNativeIndex >= 0 ? windowMap[lastNativeIndex] + 1 : 0;
+      if (!list[jsIndex]) jsIndex = 0;
+      return openWindow(jsIndex, true);
+    }
+    async function previous() {
+      if (!list.length) return false;
+      if (lastNativeIndex > 0) {
+        var moved = await audio.previous();
+        if (moved) {
+          applyStatus(moved, true);
+          return true;
+        }
+      }
+      var jsIndex = lastNativeIndex >= 0 ? windowMap[lastNativeIndex] - 1 : 0;
+      if (jsIndex < 0) jsIndex = 0;
+      return openWindow(jsIndex, true);
+    }
     async function toggle() {
       if (!state.track) return false;
       var status = await (state.status === "playing" ? audio.pause() : audio.play());
@@ -1750,6 +1871,8 @@
       playList,
       attach,
       playAt,
+      next,
+      previous,
       toggle,
       seek,
       setMode,
@@ -2203,7 +2326,7 @@
           coverKey: trackKey(track),
           current: ctx.isCurrent(track),
           playing: playing && ctx.isCurrent(track),
-          tag: track.source === "itunes" ? "试听" : "",
+          tag: track.source === "itunes" ? "试听" : track.source === "audius" ? "免费" : "",
           onPlay: function() {
             if (ctx.isCurrent(track)) ctx.togglePlay();
             else ctx.playTracks(s.tracks, i);
@@ -2586,6 +2709,16 @@
           "在其他页面底部显示当前歌词"
         )
       ]);
+      var chatGroup = h("div", { class: "mp-group" }, [
+        h("div", { class: "mp-group__title", text: "聊天" }),
+        field(
+          "一起听（主聊天）",
+          switchEl(!!s.chatListen, function(v) {
+            ctx.updateSettings({ chatListen: v });
+          }),
+          "开启后主聊天的模型能看到当前在听什么，并可直接点歌、切歌、暂停"
+        )
+      ]);
       var sourceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "音源" }),
         field(
@@ -2601,6 +2734,13 @@
             setSource("itunes", v);
           }),
           "苹果官方接口，只有 30 秒试听"
+        ),
+        field(
+          "免费曲库 Audius",
+          switchEl(s.sources.audius, function(v) {
+            setSource("audius", v);
+          }),
+          "无版权/CC 音乐，能完整播放；以欧美电音为主，中文歌很少"
         ),
         field(
           "网易云兜底",
@@ -2669,6 +2809,7 @@
         h("div", { text: "歌曲版权归各平台与版权方所有" })
       ]);
       body.appendChild(appearanceGroup);
+      body.appendChild(chatGroup);
       body.appendChild(sourceGroup);
       body.appendChild(netGroup);
       body.appendChild(playGroup);
@@ -3137,6 +3278,365 @@
     };
   }
 
+  // src/chat/bridge.js
+  var api = null;
+  function setBridge(next) {
+    api = next || null;
+  }
+  function clearBridge() {
+    api = null;
+  }
+  function getBridge() {
+    return api;
+  }
+
+  // src/chat/card.js
+  var MESSAGE_TYPE = "mp-listen";
+  var PENDING_KEY = "mp:pending";
+  function statusText(status) {
+    if (status === "listening") return "正在一起听";
+    if (status === "ended") return "一起听已结束";
+    return "邀请你一起听";
+  }
+  function openAppWithTrack(roche, track) {
+    try {
+      if (track && roche && roche.storage) roche.storage.set(PENDING_KEY, track);
+    } catch (err) {
+    }
+    try {
+      if (roche && roche.ui && typeof roche.ui.openApp === "function") {
+        roche.ui.openApp("music-player-home");
+      }
+    } catch (err) {
+    }
+  }
+  function render(container, message, roche) {
+    ensureStyle();
+    var data = message.cardData || {};
+    var track = normalizeTrack(data.track, "local") || {};
+    var coverUrl = data.cover || track.cover || "";
+    var cover = h("div", { class: "mp-card__cover" });
+    fillCover(cover, coverUrl);
+    var name = h("div", { class: "mp-card__name", text: track.name || data.title || "一起听" });
+    var sub = h("div", {
+      class: "mp-card__sub",
+      text: [track.artist, statusText(data.status)].filter(Boolean).join(" · ")
+    });
+    var act = h("button", { class: "mp-card__act", type: "button", text: data.status === "listening" ? "打开" : "一起听" });
+    act.addEventListener("click", function(e) {
+      e.stopPropagation();
+      try {
+        if (roche && roche.chat && typeof roche.chat.dispatchCardAction === "function") {
+          roche.chat.dispatchCardAction({
+            conversationId: message.conversationId,
+            messageId: message.id,
+            action: "open",
+            payload: { trackKey: trackKey(track) }
+          });
+        } else {
+          openAppWithTrack(roche, track);
+        }
+      } catch (err) {
+        openAppWithTrack(roche, track);
+      }
+    });
+    var card = h("div", { class: "mp-card" }, [
+      cover,
+      h("div", { class: "mp-card__main" }, [name, sub]),
+      act
+    ]);
+    clear(container);
+    container.appendChild(card);
+  }
+  function mountCard(container, message, roche) {
+    render(container, message, roche);
+  }
+  function updateCard(container, message, roche) {
+    render(container, message, roche);
+  }
+  function unmountCard() {
+  }
+  async function onCardAction(message, action, payload, roche) {
+    if (action !== "open") return;
+    var data = message.cardData || {};
+    var track = normalizeTrack(data.track, "local");
+    openAppWithTrack(roche, track);
+  }
+  function closeModal(modal) {
+    if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
+  }
+  async function sendCard(roche, ctx, track, settings) {
+    var cover = track.cover || "";
+    var line = "我邀请你一起听《" + track.name + "》- " + track.artist + "。";
+    try {
+      await roche.chat.createCard({
+        conversationId: ctx.conversationId,
+        messageType: MESSAGE_TYPE,
+        isMe: true,
+        cardData: {
+          track,
+          cover,
+          status: "invite",
+          at: Date.now()
+        },
+        modelText: line
+      });
+      if (roche.ui && roche.ui.toast) roche.ui.toast("邀请卡片已发出");
+      return true;
+    } catch (err) {
+      if (roche.ui && roche.ui.toast) roche.ui.toast("发卡片失败：宿主版本可能不支持");
+      return false;
+    }
+  }
+  async function openPlusAction(ctx, roche) {
+    ensureStyle();
+    if (!roche || !roche.chat || typeof roche.chat.createCard !== "function") {
+      if (roche && roche.ui && roche.ui.toast) roche.ui.toast("当前宿主不支持发卡片");
+      return;
+    }
+    var settings = normalizeSettings(await roche.storage.get("mp:settings", null));
+    var recent = await roche.storage.get("mp:recent", []) || [];
+    var favorites = await roche.storage.get("mp:favorites", []) || [];
+    var sources = createSources();
+    var listBox = h("div", { class: "mp-modal__body" });
+    var input = h("input", {
+      class: "mp-modal__input",
+      type: "search",
+      placeholder: "搜歌名 / 歌手，或从下面直接选"
+    });
+    var modal = h("div", { class: "mp-modal" });
+    function close() {
+      closeModal(modal);
+    }
+    function rowFor(track) {
+      var row = h("button", { class: "mp-modal__row", type: "button" }, [
+        h("span", { text: track.name + " - " + track.artist })
+      ]);
+      row.addEventListener("click", async function() {
+        row.disabled = true;
+        var ok = await sendCard(roche, ctx, track, settings);
+        row.disabled = false;
+        if (ok) close();
+      });
+      return row;
+    }
+    function renderList(tracks, emptyText) {
+      clear(listBox);
+      if (!tracks.length) {
+        listBox.appendChild(h("div", { class: "mp-modal__hint", text: emptyText }));
+        return;
+      }
+      tracks.slice(0, 30).forEach(function(t) {
+        listBox.appendChild(rowFor(t));
+      });
+    }
+    function renderDefault() {
+      var seen = /* @__PURE__ */ Object.create(null);
+      var merged = [];
+      (recent || []).concat(favorites || []).forEach(function(raw) {
+        var t = normalizeTrack(raw, "local");
+        if (!t) return;
+        var key = trackKey(t);
+        if (seen[key]) return;
+        seen[key] = true;
+        merged.push(t);
+      });
+      renderList(merged, "这里还没有记录，直接搜一首试试");
+    }
+    async function doSearch() {
+      var kw = String(input.value || "").trim();
+      if (!kw) {
+        renderDefault();
+        return;
+      }
+      clear(listBox);
+      listBox.appendChild(h("div", { class: "mp-modal__hint", text: "搜索中…" }));
+      var result = await sources.search(kw, settings);
+      renderList(result.tracks, "没搜到，换个关键词");
+    }
+    input.addEventListener("keydown", function(e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        input.blur();
+        doSearch();
+      }
+    });
+    var closeBtn = h(
+      "button",
+      { class: "mp-icon-btn", type: "button", "aria-label": "关闭" },
+      [h("span", { html: icon("close") })]
+    );
+    closeBtn.addEventListener("click", close);
+    var panel = h("div", { class: "mp-modal__panel" }, [
+      h("div", { class: "mp-modal__head" }, [
+        input,
+        closeBtn
+      ]),
+      listBox
+    ]);
+    modal.appendChild(panel);
+    modal.addEventListener("click", function(e) {
+      if (e.target === modal) close();
+    });
+    document.body.appendChild(modal);
+    renderDefault();
+    setTimeout(function() {
+      input.focus();
+    }, 30);
+  }
+
+  // src/chat/chatLink.js
+  var runtime = {
+    chatListen: true,
+    title: "",
+    artist: "",
+    isPlaying: false,
+    queueSize: 0
+  };
+  function setChatRuntime(patch) {
+    if (!patch) return;
+    Object.keys(patch).forEach(function(key) {
+      runtime[key] = patch[key];
+    });
+  }
+  function nativePlugin() {
+    if (typeof window === "undefined") return null;
+    var cap = window.Capacitor;
+    var plugin = cap && cap.Plugins ? cap.Plugins.BackgroundAudio : null;
+    return plugin && typeof plugin.getStatus === "function" ? plugin : null;
+  }
+  function playingLine() {
+    if (!runtime.title) return "现在没有在放歌。";
+    return "当前正在播放《" + runtime.title + "》" + (runtime.artist ? " - " + runtime.artist : "") + (runtime.isPlaying ? "" : "（已暂停）") + (runtime.queueSize ? "，队列 " + runtime.queueSize + " 首" : "") + "。";
+  }
+  async function nativeControl(action) {
+    var plugin = nativePlugin();
+    if (!plugin) return { ok: false, reason: "没有可控制的播放器" };
+    try {
+      var methods = { next: "next", previous: "previous", pause: "pause", resume: "play" };
+      var method = methods[action];
+      if (!method) return { ok: false, reason: "不支持的动作" };
+      var res = await plugin[method]();
+      var status = res && res.status;
+      return {
+        ok: true,
+        isPlaying: status ? !!status.isPlaying : null,
+        title: status ? status.title : "",
+        artist: status ? status.artist : ""
+      };
+    } catch (err) {
+      return { ok: false, reason: "播放器调用失败" };
+    }
+  }
+  async function doControl(action) {
+    var bridge = getBridge();
+    if (bridge && bridge.ready()) {
+      try {
+        return await bridge.control(action);
+      } catch (err) {
+        return { ok: false, reason: "App 内部执行失败" };
+      }
+    }
+    return nativeControl(action);
+  }
+  async function pushCard(ctx, roche, track, status) {
+    if (!roche || !roche.chat || typeof roche.chat.createCard !== "function") return;
+    if (!ctx || !ctx.conversationId || !ctx.contact || !ctx.contact.id) return;
+    try {
+      await roche.chat.createCard({
+        conversationId: ctx.conversationId,
+        messageType: MESSAGE_TYPE,
+        isMe: false,
+        senderId: ctx.contact.id,
+        cardData: { track, status: status || "listening", at: Date.now() },
+        modelText: "我点开了《" + track.name + "》" + (track.artist ? " - " + track.artist : "") + "，和你一起听。"
+      });
+    } catch (err) {
+    }
+  }
+  function chatContextProvider() {
+    if (!runtime.chatListen) return null;
+    return [
+      "【音乐插件】" + playingLine(),
+      "你可以直接调用音乐工具帮用户操作：music_play 点歌、music_next 下一首、music_previous 上一首、",
+      "music_pause 暂停、music_resume 继续、music_status 查当前播放、music_favorite 收藏当前这首。",
+      "用户想听歌时优先调用工具，不要编造歌名；工具返回失败就照实说，不要假装已经放了。"
+    ].join("");
+  }
+  function tool(id, description, parameters, run) {
+    return {
+      id,
+      description,
+      parameters: parameters || {},
+      async execute(args, ctx, roche) {
+        if (!runtime.chatListen) {
+          return { ok: false, reason: "用户关闭了音乐插件的一起听功能，不要执行任何音乐操作" };
+        }
+        try {
+          return await run(args || {}, ctx || {}, roche);
+        } catch (err) {
+          return { ok: false, reason: String(err && err.message || err) };
+        }
+      }
+    };
+  }
+  var chatTools = [
+    tool(
+      "music_play",
+      "按歌名或歌手搜索并开始播放，用户说“放xx”时调用。",
+      { keyword: "string" },
+      async function(args, ctx, roche) {
+        var keyword = String(args.keyword || "").trim();
+        if (!keyword) return { ok: false, reason: "缺少 keyword" };
+        var bridge = getBridge();
+        if (!bridge || !bridge.ready()) {
+          return { ok: false, reason: "音乐 App 没有打开，请让用户先打开音乐 App 再点歌" };
+        }
+        var result = await bridge.playKeyword(keyword);
+        if (!result || !result.ok) return { ok: false, reason: result && result.reason || "没找到歌" };
+        await pushCard(ctx, roche, result.track, "listening");
+        return {
+          ok: true,
+          playing: result.track.name,
+          artist: result.track.artist,
+          candidates: result.candidates || []
+        };
+      }
+    ),
+    tool("music_next", "切到下一首。", {}, async function() {
+      var res = await doControl("next");
+      return res.ok ? { ok: true, playing: res.title || "", artist: res.artist || "" } : res;
+    }),
+    tool("music_previous", "切到上一首。", {}, async function() {
+      var res = await doControl("previous");
+      return res.ok ? { ok: true, playing: res.title || "", artist: res.artist || "" } : res;
+    }),
+    tool("music_pause", "暂停播放。", {}, async function() {
+      return doControl("pause");
+    }),
+    tool("music_resume", "继续播放。", {}, async function() {
+      return doControl("resume");
+    }),
+    tool("music_status", "查看当前播放的歌和队列。", {}, async function() {
+      var bridge = getBridge();
+      if (bridge && bridge.ready()) {
+        var status = bridge.status();
+        return Object.assign({ ok: true }, status);
+      }
+      var plugin = nativePlugin();
+      if (!plugin) return { ok: false, reason: "没有播放器" };
+      var res = await plugin.getStatus();
+      var st = res && res.status || {};
+      return { ok: true, playing: st.title || "", artist: st.artist || "", isPlaying: !!st.isPlaying, queueSize: st.queueSize || 0 };
+    }),
+    tool("music_favorite", "把当前播放的歌加入收藏。", {}, async function() {
+      var bridge = getBridge();
+      if (!bridge || !bridge.ready()) return { ok: false, reason: "音乐 App 没有打开" };
+      var res = await bridge.favoriteCurrent();
+      return res || { ok: false };
+    })
+  ];
+
   // src/app/container.js
   var TABS2 = ["search", "playlists", "favorites", "settings"];
   function uid() {
@@ -3189,6 +3689,72 @@
         shell.renderDock();
         shell.refreshPage();
       }
+      syncChatRuntime();
+    }
+    function syncChatRuntime() {
+      setChatRuntime({
+        chatListen: !!state.settings.chatListen,
+        title: state.player.track ? state.player.track.name : "",
+        artist: state.player.track ? state.player.track.artist : "",
+        isPlaying: state.player.status === "playing",
+        queueSize: state.queue ? state.queue.tracks.length : 0
+      });
+    }
+    function installBridge() {
+      setBridge({
+        ready: function() {
+          return !!shell;
+        },
+        status: function() {
+          return {
+            playing: state.player.track ? { name: state.player.track.name, artist: state.player.track.artist } : null,
+            isPlaying: state.player.status === "playing",
+            queueSize: state.queue ? state.queue.tracks.length : 0
+          };
+        },
+        search: async function(keyword, limit) {
+          var res = await sources.search(keyword, state.settings, { limit: limit || 5 });
+          return res.tracks;
+        },
+        playKeyword: async function(keyword) {
+          var res = await sources.search(keyword, state.settings, { limit: 10 });
+          if (!res.tracks.length) return { ok: false, reason: "没搜到这首歌" };
+          var list = res.tracks.slice(0, 10);
+          await playTracks(list, 0);
+          return {
+            ok: true,
+            track: list[0],
+            candidates: list.slice(0, 5).map(function(t) {
+              return t.name + " - " + t.artist;
+            })
+          };
+        },
+        control: async function(action) {
+          if (action === "next") {
+            next(false);
+            return { ok: true };
+          }
+          if (action === "previous") {
+            prev();
+            return { ok: true };
+          }
+          if (action === "pause") {
+            if (state.player.status === "playing") await togglePlay();
+            return { ok: true };
+          }
+          if (action === "resume") {
+            if (state.player.status !== "playing") await togglePlay();
+            return { ok: true };
+          }
+          return { ok: false, reason: "不支持的动作" };
+        },
+        favoriteCurrent: async function() {
+          if (!state.player.track) return { ok: false, reason: "没有正在播放的歌" };
+          var name = state.player.track.name;
+          await toggleFavorite2(state.player.track);
+          return { ok: true, favorite: name };
+        }
+      });
     }
     async function saveQueue() {
       var q = state.queue;
@@ -3281,6 +3847,12 @@
       refresh();
     }
     function next(auto) {
+      if (engine) {
+        engine.next().then(function() {
+          refresh();
+        });
+        return;
+      }
       var res = advance(state.queue, { auto: !!auto });
       if (res.ended || !res.track) {
         state.queue = res.queue;
@@ -3289,27 +3861,22 @@
       }
       state.queue = res.queue;
       saveQueue();
-      if (engine) {
-        engine.playAt(res.queue.order[res.queue.pos]);
-        refresh();
-        return;
-      }
       playTrack(res.track);
       refresh();
     }
     function prev() {
+      if (engine) {
+        engine.previous().then(function() {
+          refresh();
+        });
+        return;
+      }
       var res = back(state.queue);
       if (!res.track) return;
       state.queue = res.queue;
       saveQueue();
       if (res.restart) {
-        if (engine) engine.seek(0);
-        else player.seek(0);
-        return;
-      }
-      if (engine) {
-        engine.playAt(res.queue.order[res.queue.pos]);
-        refresh();
+        player.seek(0);
         return;
       }
       playTrack(res.track);
@@ -3825,6 +4392,8 @@
     state.player = player.getState();
     shell = createShell(container, ctx);
     shell.mount();
+    installBridge();
+    syncChatRuntime();
     if (engine && state.queue.tracks.length) {
       engine.attach(state.queue.tracks, state.settings).then(function() {
         var nowPlaying = engine.getState().track;
@@ -3865,6 +4434,7 @@
         searchToken += 1;
         if (player) player.setHandlers({});
         if (engine) engine.dispose();
+        clearBridge();
         if (shell) shell.destroy();
         shell = null;
         saveQueue();
@@ -3872,207 +4442,12 @@
     };
   }
 
-  // src/chat/card.js
-  var MESSAGE_TYPE = "mp-listen";
-  var PENDING_KEY = "mp:pending";
-  function statusText(status) {
-    if (status === "listening") return "正在一起听";
-    if (status === "ended") return "一起听已结束";
-    return "邀请你一起听";
-  }
-  function openAppWithTrack(roche, track) {
-    try {
-      if (track && roche && roche.storage) roche.storage.set(PENDING_KEY, track);
-    } catch (err) {
-    }
-    try {
-      if (roche && roche.ui && typeof roche.ui.openApp === "function") {
-        roche.ui.openApp("music-player-home");
-      }
-    } catch (err) {
-    }
-  }
-  function render(container, message, roche) {
-    ensureStyle();
-    var data = message.cardData || {};
-    var track = normalizeTrack(data.track, "local") || {};
-    var coverUrl = data.cover || track.cover || "";
-    var cover = h("div", { class: "mp-card__cover" });
-    fillCover(cover, coverUrl);
-    var name = h("div", { class: "mp-card__name", text: track.name || data.title || "一起听" });
-    var sub = h("div", {
-      class: "mp-card__sub",
-      text: [track.artist, statusText(data.status)].filter(Boolean).join(" · ")
-    });
-    var act = h("button", { class: "mp-card__act", type: "button", text: data.status === "listening" ? "打开" : "一起听" });
-    act.addEventListener("click", function(e) {
-      e.stopPropagation();
-      try {
-        if (roche && roche.chat && typeof roche.chat.dispatchCardAction === "function") {
-          roche.chat.dispatchCardAction({
-            conversationId: message.conversationId,
-            messageId: message.id,
-            action: "open",
-            payload: { trackKey: trackKey(track) }
-          });
-        } else {
-          openAppWithTrack(roche, track);
-        }
-      } catch (err) {
-        openAppWithTrack(roche, track);
-      }
-    });
-    var card = h("div", { class: "mp-card" }, [
-      cover,
-      h("div", { class: "mp-card__main" }, [name, sub]),
-      act
-    ]);
-    clear(container);
-    container.appendChild(card);
-  }
-  function mountCard(container, message, roche) {
-    render(container, message, roche);
-  }
-  function updateCard(container, message, roche) {
-    render(container, message, roche);
-  }
-  function unmountCard() {
-  }
-  async function onCardAction(message, action, payload, roche) {
-    if (action !== "open") return;
-    var data = message.cardData || {};
-    var track = normalizeTrack(data.track, "local");
-    openAppWithTrack(roche, track);
-  }
-  function closeModal(modal) {
-    if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
-  }
-  async function sendCard(roche, ctx, track, settings) {
-    var cover = track.cover || "";
-    var line = "我邀请你一起听《" + track.name + "》- " + track.artist + "。";
-    try {
-      await roche.chat.createCard({
-        conversationId: ctx.conversationId,
-        messageType: MESSAGE_TYPE,
-        isMe: true,
-        cardData: {
-          track,
-          cover,
-          status: "invite",
-          at: Date.now()
-        },
-        modelText: line
-      });
-      if (roche.ui && roche.ui.toast) roche.ui.toast("邀请卡片已发出");
-      return true;
-    } catch (err) {
-      if (roche.ui && roche.ui.toast) roche.ui.toast("发卡片失败：宿主版本可能不支持");
-      return false;
-    }
-  }
-  async function openPlusAction(ctx, roche) {
-    ensureStyle();
-    if (!roche || !roche.chat || typeof roche.chat.createCard !== "function") {
-      if (roche && roche.ui && roche.ui.toast) roche.ui.toast("当前宿主不支持发卡片");
-      return;
-    }
-    var settings = normalizeSettings(await roche.storage.get("mp:settings", null));
-    var recent = await roche.storage.get("mp:recent", []) || [];
-    var favorites = await roche.storage.get("mp:favorites", []) || [];
-    var sources = createSources();
-    var listBox = h("div", { class: "mp-modal__body" });
-    var input = h("input", {
-      class: "mp-modal__input",
-      type: "search",
-      placeholder: "搜歌名 / 歌手，或从下面直接选"
-    });
-    var modal = h("div", { class: "mp-modal" });
-    function close() {
-      closeModal(modal);
-    }
-    function rowFor(track) {
-      var row = h("button", { class: "mp-modal__row", type: "button" }, [
-        h("span", { text: track.name + " - " + track.artist })
-      ]);
-      row.addEventListener("click", async function() {
-        row.disabled = true;
-        var ok = await sendCard(roche, ctx, track, settings);
-        row.disabled = false;
-        if (ok) close();
-      });
-      return row;
-    }
-    function renderList(tracks, emptyText) {
-      clear(listBox);
-      if (!tracks.length) {
-        listBox.appendChild(h("div", { class: "mp-modal__hint", text: emptyText }));
-        return;
-      }
-      tracks.slice(0, 30).forEach(function(t) {
-        listBox.appendChild(rowFor(t));
-      });
-    }
-    function renderDefault() {
-      var seen = /* @__PURE__ */ Object.create(null);
-      var merged = [];
-      (recent || []).concat(favorites || []).forEach(function(raw) {
-        var t = normalizeTrack(raw, "local");
-        if (!t) return;
-        var key = trackKey(t);
-        if (seen[key]) return;
-        seen[key] = true;
-        merged.push(t);
-      });
-      renderList(merged, "这里还没有记录，直接搜一首试试");
-    }
-    async function doSearch() {
-      var kw = String(input.value || "").trim();
-      if (!kw) {
-        renderDefault();
-        return;
-      }
-      clear(listBox);
-      listBox.appendChild(h("div", { class: "mp-modal__hint", text: "搜索中…" }));
-      var result = await sources.search(kw, settings);
-      renderList(result.tracks, "没搜到，换个关键词");
-    }
-    input.addEventListener("keydown", function(e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        input.blur();
-        doSearch();
-      }
-    });
-    var closeBtn = h(
-      "button",
-      { class: "mp-icon-btn", type: "button", "aria-label": "关闭" },
-      [h("span", { html: icon("close") })]
-    );
-    closeBtn.addEventListener("click", close);
-    var panel = h("div", { class: "mp-modal__panel" }, [
-      h("div", { class: "mp-modal__head" }, [
-        input,
-        closeBtn
-      ]),
-      listBox
-    ]);
-    modal.appendChild(panel);
-    modal.addEventListener("click", function(e) {
-      if (e.target === modal) close();
-    });
-    document.body.appendChild(modal);
-    renderDefault();
-    setTimeout(function() {
-      input.focus();
-    }, 30);
-  }
-
   // src/main.js
   var app = null;
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.5.0" });
+    app = await createApp({ container, roche, version: "0.6.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -4088,7 +4463,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.5.0",
+    version: "0.6.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
@@ -4110,6 +4485,10 @@
     ],
     chat: {
       scope: { conversationTypes: ["direct", "group"] },
+      // 每轮注入「当前在听什么」+ 可用动作；设置里关掉一起听后返回 null，不注入
+      contextProvider: chatContextProvider,
+      // 模型可直接调用的音乐工具（点歌 / 切歌 / 暂停 / 查状态 / 收藏）
+      tools: chatTools,
       messageTypes: [
         {
           id: MESSAGE_TYPE,
