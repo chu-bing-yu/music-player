@@ -4,7 +4,7 @@
 
 - 插件 id：`music-player`
 - App id：`music-player-home`
-- 当前版本：`0.4.0`
+- 当前版本：`0.5.0`
 
 ## 安装 / 更新
 
@@ -27,7 +27,7 @@ https://cdn.jsdelivr.net/gh/chu-bing-yu/music-player@main/manifest.json
 - **全屏**：根元素向外吃掉安全区，背景铺到屏幕边缘，标题栏和底栏再把状态栏 / 手势区内边距加回来
 - **搜索**：QQ 音乐（走公开接口 api.vkeys.cn）＋ iTunes，一次同时搜，结果合并去重；空白状态显示最近搜索 / 猜你喜欢（按最近播放与收藏的歌手）/ 热门推荐
 - **播放**：单曲播放、上一首 / 下一首、拖动进度、音量；暂停后被别的 App 抢了音频会话也能点回来（内部会重建 Audio）
-- **系统媒体控制**：接 `navigator.mediaSession`，锁屏 / 通知栏 / 控制中心的播放、暂停、上一首、下一首、拖动进度都能用
+- **系统媒体控制**：走宿主原生 `BackgroundAudio` 插件（Capacitor 的 `MediaSessionCompat` + 前台通知），状态栏 / 锁屏 / 控制中心显示歌名歌手封面，播放、暂停、上一首、下一首、进度都可用；退出 App、切到别的插件也继续放
 - **队列**：顺序播放 / 列表循环 / 单曲循环，随机播放；播放页左边按钮看播放列表，右边按钮调播放模式
 - **歌单**：新建、重命名、删除、加歌去重、移除、上移下移、播放全部 / 随机播放
 - **收藏**：收藏 / 取消收藏，收藏页播放全部 / 随机
@@ -36,7 +36,7 @@ https://cdn.jsdelivr.net/gh/chu-bing-yu/music-player@main/manifest.json
 - **悬浮歌词**：在其他页面底部显示当前一句，可在设置或正在播放页开关
 - **白天 / 夜间**：主题可跟随系统，也能手动锁白天或夜间；另有 5 种主色调
 - **迷你播放条**：常驻底部，点一下进正在播放页
-- **退出**：各主页面左上角 × 退出 App（音乐会继续放）；设置里也有「退出 App」
+- **退出**：点击页面标题（搜索 / 歌单 / 收藏 / 设置）即退出 App，不放额外按钮；设置里也有「退出 App」
 - **四按钮底栏**：搜索 / 歌单 / 收藏 / 设置
 - **最小化**：可缩成悬浮按钮边聊边听，设置里能整体关掉
 - **不中断**：播放器是模块级单例，切到别的插件 / 重开 App 音乐继续放，队列存 `mp:queue`
@@ -48,12 +48,34 @@ https://cdn.jsdelivr.net/gh/chu-bing-yu/music-player@main/manifest.json
 - 角色「同意 / 拒绝」一起听邀请的决策（要接 `roche.ai.chat` 与提示词）
 - 本地文件导入、歌单封面自定义、下载、后台播放（宿主暂停 WebView 时无法保证）
 
+## 系统状态栏播放控制（0.5.0）
+
+WebView 里的 `<audio>` 只能让浏览器自己造媒体会话，在 Roche 的 APK 里通常不可用。
+Roche 的安卓工程注册了一个 Capacitor 插件 `BackgroundAudio`（原生 `MediaSessionCompat` + 前台通知），
+插件页面直接调用它就能让状态栏/锁屏/控制中心显示并控制播放：
+
+```js
+var p = window.Capacitor.Plugins.BackgroundAudio;
+p.replaceQueue({ tracks: [{ id, title, artist, cover, url }], startIndex: 0, mode: 'loop', autoplay: true });
+p.play(); p.pause(); p.next(); p.previous(); p.seekTo({ positionSeconds: 12 });
+p.setPlaybackMode({ mode: 'one' }); // loop | one | random
+p.addListener('statusChange', function (e) { /* e.status */ });
+```
+
+实现要点（`src/services/nativeEngine.js`）：
+
+- 原生 `replaceQueue` 不能追加，所以一次只交 **10 首**（窗口）；播到窗口最后一首时，用「当前这首 + 后面 9 首」重建，无缝续上。
+- `statusChange` 事件 + 900ms 轮询双保险，同步歌名、进度、播放状态到界面和歌词。
+- 窗口按需解析播放地址（并发 4），不预先解析整条长列表，避免地址过期。
+- 重开 App / 换插件回来时只 `attach` 接管状态，不会从头重新起播。
+- 拿不到原生插件时（桌面浏览器、旧 APK）自动退回 WebView `<audio>`，功能不变但状态栏控制不到。
+
 ## 已知限制
 
 - 悬浮歌词画在插件 App 自己的页面上；App 被宿主最小化成悬浮按钮后，宿主外壳里画不了自定义内容。
 - 「悬浮播放」开关只控制是否显示最小化入口，`minimize` 本身是注册时声明的静态能力。
 - 歌词只有 QQ 音乐源有；iTunes 试听与网易云兜底的歌没有歌词。
-- 系统媒体控制依赖 WebView 支持 `navigator.mediaSession`（安卓 5.0+ 的 Chromium 内核都支持）；若宿主没开这个能力，锁屏面板不会出现歌词信息和按钮，App 内播放不受影响。
+- 原生播放器没有音量接口，设置里的音量会显示「跟随系统音量」，用手机音量键调。
 - 安全区用 `env(safe-area-inset-*)` 实现，桌面浏览器为 0；真机刘海 / 手势条的避让效果需在手机上确认。
 
 ## 目录结构
@@ -87,7 +109,9 @@ music-player/
 │   │   ├── http.js      统一请求（超时 / 请求前缀）
 │   │   ├── sources.js   音源适配（QQ 音乐 / 网易云兜底 / iTunes）
 │   │   ├── lyrics.js    歌词拉取与缓存
-│   │   └── player.js    唯一的 Audio 实例（模块级单例，不随 App 卸载销毁）
+│   │   ├── nativeAudio.js  宿主原生 BackgroundAudio 插件封装
+│   │   ├── nativeEngine.js 原生播放引擎（10 首窗口 + 状态同步）
+│   │   └── player.js    兜底的 Audio 实例（模块级单例）
 │   ├── ui/
 │   │   ├── theme.css / base.css / views.css
 │   │   ├── style.js     样式注入与深色模式跟随
