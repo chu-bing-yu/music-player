@@ -1,4 +1,4 @@
-/* music-player v0.25.0 | built 2026-11-04T10:17:52.357Z */
+/* music-player v0.26.0 | built 2026-11-04T10:37:07.996Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -430,7 +430,8 @@
       shuffle: false,
       theme: "auto",
       accent: "red",
-      accentColor: "#e14b4b",
+      // 空 = 用预设色块；有值 = 用户自选色（优先级更高）
+      accentColor: "",
       floating: true,
       floatLyric: true,
       // 网易云：自己部署的 NeteaseCloudMusicApi 地址 + 扫码登录后的 cookie
@@ -490,7 +491,7 @@
       theme: pickId(THEMES, s.theme, def.theme),
       // custom = 用户自选颜色
       accent: s.accent === "custom" ? "custom" : pickId(ACCENTS, s.accent, def.accent),
-      accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || "")) ? s.accentColor : def.accentColor,
+      accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || "")) ? String(s.accentColor) : "",
       floating: bool(s.floating, def.floating),
       floatLyric: bool(s.floatLyric, def.floatLyric),
       neteaseApi: String(s.neteaseApi || "").trim().replace(/\/+$/, ""),
@@ -2491,43 +2492,54 @@
     var o = opts || {};
     var mask = h("div", { class: "mp-mask" });
     var body = h("div", { class: "mp-sheet__body" });
+    var titleEl = h("div", { class: "mp-sheet__title", text: typeof o.title === "string" ? o.title : "" });
     function close() {
       if (mask.parentNode) mask.parentNode.removeChild(mask);
     }
-    (o.items || []).forEach(function(item) {
-      var row = h("div", {
-        class: "mp-sheet__item" + (item.danger ? " is-danger" : ""),
-        role: "button",
-        tabindex: "0"
-      }, [
-        h("span", { html: icon(item.icon || "music") }),
-        h("span", { class: "mp-sheet__label", text: item.label }),
-        item.hint ? h("span", { class: "mp-field__value", text: item.hint }) : null
-      ]);
-      row.addEventListener("click", function() {
-        close();
-        if (item.onClick) item.onClick();
-      });
-      if (item.onRemove) {
-        var remove = h(
-          "button",
-          { class: "mp-sheet__x", type: "button", "aria-label": "移除" },
-          [h("span", { html: icon("close") })]
-        );
-        remove.addEventListener("click", function(e) {
-          e.stopPropagation();
-          if (item.onRemove) item.onRemove();
-        });
-        row.appendChild(remove);
-      }
-      body.appendChild(row);
-    });
-    if (!(o.items || []).length) {
-      body.appendChild(h("div", { class: "mp-hint", text: o.empty || "这里还没有内容" }));
+    function currentItems() {
+      return typeof o.items === "function" ? o.items() || [] : o.items || [];
     }
+    function renderItems() {
+      body.replaceChildren();
+      if (typeof o.title === "function") titleEl.textContent = o.title() || "";
+      var items = currentItems();
+      items.forEach(function(item) {
+        var row = h("div", {
+          class: "mp-sheet__item" + (item.danger ? " is-danger" : ""),
+          role: "button",
+          tabindex: "0"
+        }, [
+          h("span", { html: icon(item.icon || "music") }),
+          h("span", { class: "mp-sheet__label", text: item.label }),
+          item.hint ? h("span", { class: "mp-field__value", text: item.hint }) : null
+        ]);
+        row.addEventListener("click", function() {
+          close();
+          if (item.onClick) item.onClick();
+        });
+        if (item.onRemove) {
+          var remove = h(
+            "button",
+            { class: "mp-sheet__x", type: "button", "aria-label": "移除" },
+            [h("span", { html: icon("close") })]
+          );
+          remove.addEventListener("click", function(e) {
+            e.stopPropagation();
+            if (item.onRemove) item.onRemove();
+            renderItems();
+          });
+          row.appendChild(remove);
+        }
+        body.appendChild(row);
+      });
+      if (!items.length) {
+        body.appendChild(h("div", { class: "mp-hint", text: o.empty || "这里还没有内容" }));
+      }
+    }
+    renderItems();
     var sheet = h("div", { class: "mp-sheet" }, [
       h("div", { class: "mp-sheet__head" }, [
-        h("div", { class: "mp-sheet__title", text: o.title || "" }),
+        titleEl,
         iconBtn("close", { label: "关闭", onClick: close })
       ]),
       body
@@ -2537,6 +2549,7 @@
     });
     mask.appendChild(sheet);
     rootEl.appendChild(mask);
+    close.refresh = renderItems;
     return close;
   }
   function openEditor(rootEl, opts) {
@@ -3297,7 +3310,7 @@
           style: "background:" + a.color
         });
         dot.addEventListener("click", function() {
-          ctx.updateSettings({ accent: a.id });
+          ctx.updateSettings({ accent: a.id, accentColor: "" });
         });
         dotRow.appendChild(dot);
       });
@@ -3307,10 +3320,10 @@
         value: /^#[0-9a-fA-F]{6}$/.test(s.accentColor || "") ? s.accentColor : "#e14b4b"
       });
       var customDot = h("button", {
-        class: "mp-dot mp-dot--custom" + (s.accent === "custom" ? " is-active" : ""),
+        class: "mp-dot mp-dot--custom" + (s.accentColor ? " is-active" : ""),
         type: "button",
         "aria-label": "自定义颜色",
-        style: "background:" + (/^#[0-9a-fA-F]{6}$/.test(s.accentColor || "") ? s.accentColor : "#e14b4b")
+        style: "background:" + (s.accentColor || "#e14b4b")
       });
       customDot.appendChild(colorInput);
       colorInput.addEventListener("input", function() {
@@ -3800,7 +3813,7 @@
     function applyAppearance() {
       var s = ctx.state.settings;
       root.dataset.accent = s.accent || "red";
-      if (s.accent === "custom" && s.accentColor) {
+      if (s.accentColor) {
         root.style.setProperty("--mp-accent", s.accentColor);
         root.style.setProperty("--mp-accent-soft", hexToRgba(s.accentColor, 0.16));
       } else {
@@ -4182,9 +4195,9 @@
         rows.appendChild(h("div", { class: "mp-modal__hint", text: "输入歌名或歌手，回车搜索" }));
         return;
       }
-      searchTracks.forEach(function(track, i) {
+      searchTracks.forEach(function(track) {
         rows.appendChild(row(track.name, track.artist, function() {
-          playFrom(searchTracks, i);
+          playFrom([track], 0);
           setTab("queue");
         }));
       });
@@ -5382,22 +5395,29 @@
         toast("播放队列还是空的");
         return;
       }
-      var items = q.tracks.slice(0, 200).map(function(track2, i) {
-        return {
-          label: track2.name,
-          hint: track2.artist,
-          icon: isCurrent(track2) ? "pause" : "play",
-          onClick: function() {
-            playQueueAt(i);
-          },
-          onRemove: function() {
-            if (queueSheetClose) queueSheetClose();
-            queueSheetClose = null;
-            removeFromQueue(i);
-          }
-        };
+      function buildItems() {
+        var now = state.queue;
+        if (!now) return [];
+        return now.tracks.slice(0, 200).map(function(track2, i) {
+          return {
+            label: track2.name,
+            hint: track2.artist,
+            icon: isCurrent(track2) ? "pause" : "play",
+            onClick: function() {
+              playQueueAt(i);
+            },
+            onRemove: function() {
+              removeFromQueue(i);
+            }
+          };
+        });
+      }
+      queueSheetClose = shell.openSheet({
+        title: function() {
+          return "播放列表 · " + (state.queue ? state.queue.tracks.length : 0) + " 首";
+        },
+        items: buildItems
       });
-      queueSheetClose = shell.openSheet({ title: "播放列表 · " + q.tracks.length + " 首", items });
     }
     async function removeFromQueue(index) {
       var q = state.queue;
@@ -6050,7 +6070,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.25.0" });
+    app = await createApp({ container, roche, version: "0.26.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6066,7 +6086,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.25.0",
+    version: "0.26.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
