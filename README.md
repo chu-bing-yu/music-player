@@ -4,7 +4,7 @@
 
 - 插件 id：`music-player`
 - App id：`music-player-home`
-- 当前版本：`0.21.0`
+- 当前版本：`0.22.0`
 
 ## 安装 / 更新
 
