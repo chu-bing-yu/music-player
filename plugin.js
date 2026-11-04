@@ -1,4 +1,4 @@
-/* music-player v0.22.0 | built 2026-11-04T09:40:56.717Z */
+/* music-player v0.23.0 | built 2026-11-04T09:53:09.814Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -2027,6 +2027,24 @@
       if (byId >= 0) track = list[byId];
       else if (Number.isFinite(nativeIndex) && windowMap[nativeIndex] != null) {
         track = list[windowMap[nativeIndex]];
+      }
+      if (!track && raw.title) {
+        if (state.track && state.track.name === raw.title) {
+          track = state.track;
+        } else {
+          track = {
+            source: "native",
+            platform: "local",
+            id: String(raw.trackId || raw.title),
+            name: raw.title,
+            artist: raw.artist || "",
+            album: raw.albumId || "",
+            cover: raw.cover || "",
+            duration: (Number(raw.duration) || 0) * 1e3
+          };
+          list = list.concat([track]);
+          windowMap[nativeIndex] = list.length - 1;
+        }
       }
       if (track && (!state.track || trackKey(state.track) !== trackKey(track))) {
         state.track = track;
@@ -4772,14 +4790,21 @@
       var order = merged.map(function(_, i2) {
         return i2;
       });
-      await roche.storage.set("mp:queue", {
+      var payload = {
         tracks: merged.slice(0, 200),
         order: order.slice(0, 200),
         pos: dup ? Math.max(0, existing.length - 1) : Math.max(0, existing.length),
         shuffle: false,
         repeat: "off",
         at: Date.now()
-      });
+      };
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("mp:mirror:mp:queue", JSON.stringify(payload));
+        }
+      } catch (err) {
+      }
+      await roche.storage.set("mp:queue", payload);
     } catch (err) {
     }
     return { ok: true, started: true, track: list[0], candidates: list.slice(0, 5).map(function(t) {
@@ -5886,6 +5911,13 @@
           if (shell) shell.renderPlayer();
         },
         onTrackChange: function(track2) {
+          var inList = state.queue && state.queue.tracks.some(function(t) {
+            return trackKey(t) === trackKey(track2);
+          });
+          if (!inList) {
+            state.queue = appendTracks(state.queue, [track2]);
+            if (engine) engine.setList(state.queue.tracks, state.settings);
+          }
           state.queue = jumpTo(state.queue, trackKey(track2));
           state.recent = pushRecent(state.recent, track2, MAX_RECENT);
           store.saveRecent(state.recent);
@@ -5993,7 +6025,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.22.0" });
+    app = await createApp({ container, roche, version: "0.23.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6009,7 +6041,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.22.0",
+    version: "0.23.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
