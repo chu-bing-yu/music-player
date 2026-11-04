@@ -1,4 +1,4 @@
-/* music-player v0.23.0 | built 2026-11-04T09:53:09.814Z */
+/* music-player v0.24.0 | built 2026-11-04T09:58:29.478Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -5949,7 +5949,7 @@
     installBridge();
     hydrate(await host.storage.get("mp:listen", null));
     syncChatRuntime();
-    if (engine && state.queue.tracks.length) {
+    if (engine) {
       engine.attach(state.queue.tracks, state.settings).then(function() {
         var nowPlaying = engine.getState().track;
         if (nowPlaying) {
@@ -6025,7 +6025,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.23.0" });
+    app = await createApp({ container, roche, version: "0.24.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6041,7 +6041,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.23.0",
+    version: "0.24.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
