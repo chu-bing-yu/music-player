@@ -1,4 +1,4 @@
-/* music-player v0.26.0 | built 2026-11-04T10:37:07.996Z */
+/* music-player v0.27.0 | built 2026-11-04T11:07:09.912Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -391,10 +391,27 @@
   var SCHEMA_VERSION = 4;
   var DEFAULT_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
-    "可用工具：music_play（点歌）、music_next、music_previous、music_pause、music_resume、music_status、music_favorite。",
-    "规则：用户说「放/加/换一首某某」时，必须真的调用 music_play，不能只在文字里说「加好了」「已经在播」。",
-    "没有调用工具就等于什么都没发生，不要假装已经完成。工具返回失败就照实说。"
-  ].join("");
+    "",
+    "你能操作音乐。需要操作时，在回复最后单独一行写指令：",
+    "点歌 / 加歌：[[mp:play:歌名]]",
+    "上一首：[[mp:prev]]　下一首：[[mp:next]]　暂停：[[mp:pause]]　继续：[[mp:resume]]",
+    "把当前这首收进你的歌单：[[mp:add]]",
+    "给当前这首写一句评价：[[mp:comment:一句话评价]]",
+    "新建歌单：[[mp:new:歌单名]]　给我挑几首：[[mp:recommend]]",
+    "",
+    "规则：",
+    "1. 指令必须单独占一行，不要放进代码块，不加标点、不加解释；",
+    "2. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；",
+    "3. 用户让你放歌时必须写 [[mp:play:歌名]]；",
+    "4. 切歌或换歌时，可以顺带自然地说一句你对这首歌的感受。"
+  ].join("\n");
+  var TOOL_CHAT_PROMPT = [
+    "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
+    "可用工具：music_play（点歌）、music_next、music_previous、music_pause、music_resume、",
+    "music_add_to_playlist（把当前歌收进你的歌单）、music_comment（给当前歌写评价）、",
+    "music_recommend（给别人挑歌）、music_status、music_favorite。",
+    "规则：用户让你放歌时必须真的调用工具，不能只在文字里说「加好了」；工具返回失败就照实说。"
+  ].join("\n");
   var THEMES = [
     { id: "auto", name: "跟随系统" },
     { id: "light", name: "白天" },
@@ -441,6 +458,10 @@
       chatListen: true,
       // 角色点歌时：true = 只把第一首加进队列；false = 直接替换成这首
       chatAddToQueue: true,
+      // 指令通道：mark = 模型写标记（省一次模型调用）；tool = 调用工具（多一次但稳）
+      chatCommandMode: "mark",
+      // 推荐歌单的搜索种子
+      chatRecommendSeed: "华语流行",
       chatPrompt: DEFAULT_CHAT_PROMPT,
       /**
        * 极简模式：插件不再轮询、不重建、不自动暂停，只把队列交给原生播放器。
@@ -499,6 +520,8 @@
       neteaseProfile: String(s.neteaseProfile || "").trim(),
       chatListen: bool(s.chatListen, def.chatListen),
       chatAddToQueue: bool(s.chatAddToQueue, def.chatAddToQueue),
+      chatCommandMode: s.chatCommandMode === "tool" ? "tool" : "mark",
+      chatRecommendSeed: String(s.chatRecommendSeed || def.chatRecommendSeed).trim().slice(0, 20),
       chatPrompt: (function() {
         var text = String(s.chatPrompt == null ? "" : s.chatPrompt).trim();
         return text ? text.slice(0, 2e3) : def.chatPrompt;
@@ -530,26 +553,36 @@
     var out = [];
     raw.slice(0, MAX_PLAYLISTS).forEach(function(p) {
       if (!p || !p.id) return;
-      out.push({
+      var item = {
         id: String(p.id),
         name: cleanName(p.name, "未命名歌单"),
         tracks: dedupeTracks(Array.isArray(p.tracks) ? p.tracks : []).slice(0, MAX_TRACKS_PER_PLAYLIST),
         createdAt: Number(p.createdAt) || 0,
         updatedAt: Number(p.updatedAt) || Number(p.createdAt) || 0
-      });
+      };
+      if (p.owner === "char") {
+        item.owner = "char";
+        item.ownerId = String(p.ownerId || "");
+      }
+      out.push(item);
     });
     return out;
   }
-  function createPlaylist(list, name, id, now) {
+  function createPlaylist(list, name, id, now, options) {
+    var o = options || {};
     var arr = (list || []).slice();
     if (arr.length >= MAX_PLAYLISTS) return { list: arr, playlist: null, reason: "limit" };
     var playlist = {
       id: String(id),
-      name: cleanName(name, "未命名歌单"),
+      name: cleanName(name, o.owner === "char" ? "TA 的歌" : "未命名歌单"),
       tracks: [],
       createdAt: Number(now) || 0,
       updatedAt: Number(now) || 0
     };
+    if (o.owner === "char") {
+      playlist.owner = "char";
+      playlist.ownerId = String(o.ownerId || "");
+    }
     arr.unshift(playlist);
     return { list: arr, playlist };
   }
@@ -667,6 +700,8 @@
     favorites: "mp:favorites",
     recent: "mp:recent",
     searches: "mp:searches",
+    comments: "mp:comments",
+    cmd: "mp:cmd",
     queue: "mp:queue"
   };
   var MAX_SEARCHES = 12;
@@ -680,7 +715,7 @@
       await host.storage.set(KEYS.settings, clean);
       return clean;
     }
-    async function loadPlaylists() {
+    async function loadPlaylists2() {
       return normalizePlaylists(await host.storage.get(KEYS.playlists, []));
     }
     async function savePlaylists(list) {
@@ -726,6 +761,24 @@
       await host.storage.set(KEYS.searches, clean);
       return clean;
     }
+    async function loadComments2() {
+      var raw = await host.storage.get(KEYS.comments, null);
+      return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    }
+    async function saveComments(map2) {
+      var safe = map2 && typeof map2 === "object" ? map2 : {};
+      await host.storage.set(KEYS.comments, safe);
+      return safe;
+    }
+    async function loadCommands() {
+      var raw = await host.storage.get(KEYS.cmd, []);
+      return Array.isArray(raw) ? raw.slice(-200) : [];
+    }
+    async function saveCommands(list) {
+      var clean = (Array.isArray(list) ? list : []).slice(-200);
+      await host.storage.set(KEYS.cmd, clean);
+      return clean;
+    }
     async function clearAll() {
       await host.storage.delete(KEYS.settings);
       await host.storage.delete(KEYS.playlists);
@@ -733,11 +786,13 @@
       await host.storage.delete(KEYS.recent);
       await host.storage.delete(KEYS.searches);
       await host.storage.delete(KEYS.queue);
+      await host.storage.delete(KEYS.comments);
+      await host.storage.delete(KEYS.cmd);
     }
     return {
       loadSettings,
       saveSettings,
-      loadPlaylists,
+      loadPlaylists: loadPlaylists2,
       savePlaylists,
       loadFavorites,
       saveFavorites,
@@ -745,6 +800,10 @@
       saveRecent,
       loadSearches,
       saveSearches,
+      loadComments: loadComments2,
+      saveComments,
+      loadCommands,
+      saveCommands,
       clearAll
     };
   }
@@ -2268,6 +2327,148 @@
     };
   }
 
+  // src/services/taStore.js
+  var CHAR_PLAYLIST_NAME = "TA 的歌";
+  var RECOMMEND_PLAYLIST_NAME = "为你挑的";
+  var MAX_COMMENT_LEN = 80;
+  var MAX_COMMENT_TRACKS = 300;
+  function mirrorRead(key) {
+    try {
+      if (typeof localStorage === "undefined") return null;
+      var text = localStorage.getItem("mp:mirror:" + key);
+      if (!text) return null;
+      return JSON.parse(text);
+    } catch (err) {
+      return null;
+    }
+  }
+  function mirrorWrite(key, value) {
+    try {
+      if (typeof localStorage === "undefined") return;
+      localStorage.setItem("mp:mirror:" + key, JSON.stringify(value));
+    } catch (err) {
+    }
+  }
+  async function readJson(roche, key, fallback) {
+    var fromHost = null;
+    try {
+      if (roche && roche.storage && typeof roche.storage.get === "function") {
+        fromHost = await roche.storage.get(key);
+      }
+    } catch (err) {
+      fromHost = null;
+    }
+    if (fromHost !== void 0 && fromHost !== null) {
+      mirrorWrite(key, fromHost);
+      return fromHost;
+    }
+    var mirrored = mirrorRead(key);
+    return mirrored === null ? fallback : mirrored;
+  }
+  async function writeJson(roche, key, value) {
+    mirrorWrite(key, value);
+    try {
+      if (roche && roche.storage && typeof roche.storage.set === "function") {
+        await roche.storage.set(key, value);
+      }
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+  async function loadPlaylists(roche) {
+    var raw = await readJson(roche, "mp:playlists", []);
+    return normalizePlaylists(raw);
+  }
+  function charPlaylists(list, characterId) {
+    var id = String(characterId || "");
+    return (list || []).filter(function(p) {
+      return p && p.owner === "char" && String(p.ownerId || "") === id;
+    }).sort(function(a, b) {
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
+  }
+  async function addTrackForChar(roche, characterId, track) {
+    if (!track || !trackKey(track)) return { ok: false, reason: "没有正在播放的歌" };
+    var list = await loadPlaylists(roche);
+    var mine = charPlaylists(list, characterId);
+    var target = mine[0] || null;
+    var created = false;
+    if (!target) {
+      var made = createPlaylist(list, CHAR_PLAYLIST_NAME, "char-" + String(characterId || "ta"), Date.now(), {
+        owner: "char",
+        ownerId: characterId
+      });
+      if (!made.playlist) return { ok: false, reason: "歌单数量已达上限" };
+      list = made.list;
+      target = made.playlist;
+      created = true;
+    }
+    var res = addTracksToPlaylist(list, target.id, [track], Date.now());
+    await writeJson(roche, "mp:playlists", res.list);
+    var updated = null;
+    res.list.forEach(function(p) {
+      if (p.id === target.id) updated = p;
+    });
+    return {
+      ok: res.added > 0 || res.duplicate > 0,
+      playlist: updated || target,
+      created,
+      duplicate: res.duplicate > 0 && res.added === 0,
+      reason: res.added > 0 ? "" : res.duplicate > 0 ? "这首已经在歌单里了" : "歌单已满"
+    };
+  }
+  async function createCharPlaylist(roche, characterId, name, tracks) {
+    var list = await loadPlaylists(roche);
+    var made = createPlaylist(list, name || CHAR_PLAYLIST_NAME, "char-" + Date.now().toString(36), Date.now(), {
+      owner: "char",
+      ownerId: characterId
+    });
+    if (!made.playlist) return { ok: false, reason: "歌单数量已达上限" };
+    list = made.list;
+    var added = 0;
+    if (tracks && tracks.length) {
+      var res = addTracksToPlaylist(list, made.playlist.id, tracks, Date.now());
+      list = res.list;
+      added = res.added;
+    }
+    await writeJson(roche, "mp:playlists", list);
+    return { ok: true, playlist: made.playlist, added, created: true, playlistId: made.playlist.id };
+  }
+  function cleanComment(text) {
+    var s = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+    return s.slice(0, MAX_COMMENT_LEN);
+  }
+  async function loadComments(roche) {
+    var raw = await readJson(roche, "mp:comments", {});
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  }
+  async function saveComment(roche, characterId, track, text) {
+    var clean = cleanComment(text);
+    if (!clean) return { ok: false, reason: "短评为空" };
+    var key = trackKey(track);
+    if (!key) return { ok: false, reason: "没有正在播放的歌" };
+    var map2 = await loadComments(roche);
+    var entry = map2[key] && typeof map2[key] === "object" ? map2[key] : {};
+    entry[String(characterId || "ta")] = {
+      text: clean,
+      at: Date.now(),
+      name: track.name || "",
+      artist: track.artist || ""
+    };
+    var keys = Object.keys(map2);
+    if (keys.length > MAX_COMMENT_TRACKS) {
+      keys.sort(function(a, b) {
+        return map2[a] && map2[a][String(characterId)] && map2[a][String(characterId)].at || 0;
+      }).slice(0, keys.length - MAX_COMMENT_TRACKS).forEach(function(k) {
+        delete map2[k];
+      });
+    }
+    map2[key] = entry;
+    await writeJson(roche, "mp:comments", map2);
+    return { ok: true, text: clean, key };
+  }
+
   // src/ui/dom.js
   function h(tag, attrs, children) {
     var el = document.createElement(tag);
@@ -2355,7 +2556,7 @@
   var base_default = '/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */\n\n.mp-root,\n.mp-root * {\n  box-sizing: border-box;\n}\n\n/* 全屏：背景铺到屏幕边缘，再把安全区内边距加回自己的 header / 底栏 */\n.mp-root {\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  width: calc(100% + env(safe-area-inset-left) + env(safe-area-inset-right));\n  height: calc(100% + env(safe-area-inset-top) + env(safe-area-inset-bottom));\n  margin: calc(0px - env(safe-area-inset-top)) calc(0px - env(safe-area-inset-right)) calc(0px - env(safe-area-inset-bottom)) calc(0px - env(safe-area-inset-left));\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--mp-bg);\n  color: var(--mp-ink);\n  font-family: var(--mp-font);\n  font-size: 14px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\n.mp-root button {\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.mp-root button:disabled {\n  opacity: 0.45;\n  cursor: default;\n}\n\n/* ---------- 页面骨架 ---------- */\n\n.mp-view-host {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-view {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-header {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));\n}\n\n.mp-header__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 21px;\n  font-weight: 700;\n  letter-spacing: -0.2px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-header__sub {\n  font-size: 12px;\n  color: var(--mp-muted);\n  font-weight: 400;\n}\n\n.mp-body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  padding-bottom: 12px;\n}\n\n.mp-icon-btn {\n  flex: 0 0 auto;\n  width: 34px;\n  height: 34px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink-2);\n  padding: 0;\n}\n\n.mp-icon-btn:active {\n  background: var(--mp-soft);\n}\n\n.mp-icon-btn svg {\n  width: 21px;\n  height: 21px;\n}\n\n.mp-icon-btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 歌曲行 ---------- */\n\n.mp-row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  border: 0;\n  background: transparent;\n  width: 100%;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-row:active {\n  background: var(--mp-soft);\n}\n\n.mp-row__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: var(--mp-r-sm);\n  object-fit: cover;\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-row__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-row__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-row__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-row__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row.is-current .mp-row__name {\n  color: var(--mp-accent);\n}\n\n.mp-row.is-selected {\n  background: var(--mp-accent-soft);\n}\n\n.mp-row__check {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  border-radius: 50%;\n  border: 1.5px solid var(--mp-line-strong);\n  display: grid;\n  place-items: center;\n  color: #fff;\n}\n\n.mp-row__check.is-on {\n  border-color: var(--mp-accent);\n  background: var(--mp-accent);\n}\n\n.mp-row__check svg {\n  width: 13px;\n  height: 13px;\n}\n\n.mp-select-bar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 16px 8px;\n}\n\n.mp-select-bar__count {\n  flex: 1 1 auto;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n}\n\n.mp-row__sub {\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row__tag {\n  display: inline-block;\n  margin-right: 5px;\n  padding: 0 5px;\n  border-radius: 4px;\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n  font-size: 10px;\n  line-height: 15px;\n  vertical-align: 1px;\n}\n\n.mp-row__btn {\n  flex: 0 0 auto;\n  width: 32px;\n  height: 32px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-muted);\n}\n\n.mp-row__btn:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-row__btn svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-row__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 迷你播放条 ---------- */\n\n.mp-player {\n  position: relative;\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 14px 10px;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n}\n\n.mp-player__bar {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  background: var(--mp-line);\n  cursor: pointer;\n}\n\n.mp-player__bar i {\n  display: block;\n  height: 100%;\n  width: 0;\n  background: var(--mp-accent);\n}\n\n.mp-player__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  overflow: hidden;\n  color: var(--mp-muted);\n}\n\n.mp-player__cover svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-player__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-player__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-player__hit {\n  display: block;\n  border: 0;\n  background: transparent;\n  padding: 0;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-player__name {\n  font-size: 13.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__sub {\n  font-size: 11px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__play {\n  flex: 0 0 auto;\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink);\n}\n\n.mp-player__play svg {\n  width: 26px;\n  height: 26px;\n}\n\n/* ---------- 悬浮歌词 ---------- */\n\n.mp-float-lyric {\n  flex: 0 0 auto;\n  display: none;\n  margin: 0 10px 6px;\n  padding: 5px 12px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-bg-2);\n  font-size: 11.5px;\n  line-height: 1.5;\n  color: var(--mp-ink-2);\n  text-align: center;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.mp-float-lyric.is-fresh {\n  animation: mp-lyric-in 0.28s ease-out;\n}\n\n@keyframes mp-lyric-in {\n  from { opacity: 0.25; transform: translateY(3px); }\n  to { opacity: 1; transform: none; }\n}\n\n/* 键盘弹出时把播放条、悬浮歌词、底栏全部让出去，屏幕留给搜索结果 */\n.mp-root.is-keyboard .mp-player,\n.mp-root.is-keyboard .mp-float-lyric,\n.mp-root.is-keyboard .mp-dock {\n  display: none !important;\n}\n\n/* ---------- 四按钮底栏 ---------- */\n\n.mp-dock {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: stretch;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));\n}\n\n.mp-dock__btn {\n  flex: 1 1 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n  padding: 5px 0 3px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 10.5px;\n  line-height: 1.2;\n}\n\n.mp-dock__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-dock__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 底部弹层（挂在插件根内） ---------- */\n\n.mp-mask {\n  position: absolute;\n  inset: 0;\n  z-index: 40;\n  display: flex;\n  align-items: flex-end;\n  background: rgba(0, 0, 0, 0.35);\n}\n\n.mp-sheet {\n  width: 100%;\n  max-height: 74%;\n  display: flex;\n  flex-direction: column;\n  background: var(--mp-bg);\n  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;\n  padding-bottom: calc(6px + env(safe-area-inset-bottom));\n  animation: mp-rise 0.18s ease-out;\n}\n\n@keyframes mp-rise {\n  from { transform: translateY(12px); opacity: 0.6; }\n  to { transform: translateY(0); opacity: 1; }\n}\n\n.mp-sheet__head {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-sheet__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  padding-bottom: 6px;\n}\n\n.mp-sheet__item {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 12px 16px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14.5px;\n  text-align: left;\n}\n\n.mp-sheet__item:active {\n  background: var(--mp-soft);\n}\n\n.mp-sheet__item svg {\n  width: 19px;\n  height: 19px;\n  color: var(--mp-muted);\n}\n\n.mp-editor {\n  display: block;\n  width: calc(100% - 32px);\n  margin: 4px 16px 10px;\n  min-height: 150px;\n  padding: 12px;\n  border: 1px solid var(--mp-line-strong);\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  color: var(--mp-ink);\n  font-family: inherit;\n  font-size: 13px;\n  line-height: 1.65;\n  resize: vertical;\n  outline: none;\n}\n\n.mp-editor:focus {\n  border-color: var(--mp-accent);\n}\n\n.mp-sheet__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__x {\n  flex: 0 0 auto;\n  width: 28px;\n  height: 28px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-sheet__x:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-sheet__x svg {\n  width: 15px;\n  height: 15px;\n}\n\n.mp-sheet__item.is-danger {\n  color: var(--mp-accent);\n}\n\n/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */\n\n.mp-card {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 11px;\n  border-radius: 12px;\n  background: var(--mp-bg, #fff);\n  color: var(--mp-ink, #1b1c1f);\n  border: 1px solid var(--mp-line, #ededf0);\n  /* 固定宽度：不随歌名 / 歌手长短变化 */\n  width: 252px;\n  min-width: 0;\n  box-sizing: border-box;\n  max-width: 100%;\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  white-space: nowrap;\n}\n\n.mp-card__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: 8px;\n  background: var(--mp-soft-2, #e9eaee);\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-card__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-card__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__name {\n  font-size: 13.5px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__sub {\n  margin-top: 1px;\n  font-size: 11px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  border: 0;\n  background: rgba(225, 75, 75, 0.1);\n  color: #e14b4b;\n  font-size: 12px;\n  font-weight: 600;\n  padding: 6px 11px;\n  border-radius: 999px;\n}\n\n/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */\n\n.mp-modal {\n  position: fixed;\n  inset: 0;\n  z-index: 9999;\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  background: rgba(0, 0, 0, 0.4);\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-modal__panel {\n  width: 100%;\n  max-width: 480px;\n  max-height: 76vh;\n  display: flex;\n  flex-direction: column;\n  background: #fff;\n  color: #1b1c1f;\n  border-radius: 18px 18px 0 0;\n  padding-bottom: calc(8px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-modal__head {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 10px;\n  border-bottom: 1px solid #ededf0;\n}\n\n.mp-modal__title {\n  flex: 1 1 auto;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.mp-modal__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  font-size: 14.5px;\n  background: transparent;\n  color: inherit;\n}\n\n.mp-modal__body {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 56vh;\n  overflow-y: auto;\n}\n\n.mp-modal__row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 10px 16px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-size: 14px;\n}\n\n.mp-modal__row:active {\n  background: #f2f3f5;\n}\n\n.mp-modal__row span {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__hint {\n  padding: 14px 16px;\n  font-size: 12.5px;\n  color: #9299a3;\n  text-align: center;\n}\n\n/* ---------- 聊天里的「一起听」面板 ---------- */\n\n.mp-listen {\n  max-height: 68vh;\n}\n\n.mp-listen__now {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 10px 16px 14px;\n}\n\n.mp-listen__cover {\n  flex: 0 0 auto;\n  width: 52px;\n  height: 52px;\n  border-radius: 12px;\n  background: #eef0f3;\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-listen__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-listen__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-listen__meta {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-listen__name {\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__artist {\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__ctrl {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n}\n\n.mp-listen__btn {\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  background: transparent;\n  color: #1b1c1f;\n  padding: 0;\n}\n\n.mp-listen__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-listen__list {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 32vh;\n  overflow-y: auto;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__sub {\n  /* 固定宽度 + 右对齐，多行列表里歌手名才能对齐成一条线 */\n  flex: 0 0 auto;\n  width: 42%;\n  text-align: right;\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__row.is-active span:first-child {\n  color: #e14b4b;\n  font-weight: 600;\n}\n\n.mp-listen__searchicon {\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n}\n\n.mp-listen__searchicon svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-listen__foot {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  padding: 6px 16px;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__open {\n  flex: 1 1 auto;\n  border: 0;\n  background: transparent;\n  color: #6b7280;\n  font-size: 12.5px;\n  padding: 8px 0;\n}\n\n.mp-listen__stop {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: #d5544e;\n  font-size: 12.5px;\n  padding: 8px 0 8px 14px;\n}\n\n.mp-listen__tabs {\n  display: flex;\n  gap: 10px;\n  padding: 2px 16px 10px;\n}\n\n.mp-listen__tab {\n  flex: 1 1 0;\n  padding: 8px 0;\n  border: 0;\n  border-radius: 999px;\n  background: #f2f3f5;\n  color: #6b7280;\n  font-size: 13px;\n}\n\n.mp-listen__tab.is-active {\n  background: #ffeceb;\n  color: #e14b4b;\n  font-weight: 600;\n}\n';
 
   // src/ui/views.css
-  var views_default = '/* 各页面专属样式 */\n\n/* ---------- 搜索 ---------- */\n\n.mp-search {\n  flex: 0 0 auto;\n  padding: 0 16px 8px;\n}\n\n.mp-search__box {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  height: 38px;\n  padding: 0 12px;\n  border-radius: var(--mp-r-full);\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n}\n\n.mp-search__box svg {\n  width: 17px;\n  height: 17px;\n  flex: 0 0 auto;\n}\n\n.mp-search__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14px;\n  -webkit-appearance: none;\n  appearance: none;\n}\n\n/* 去掉 WebView 自带的搜索框装饰（那个多余的 × 和小图标） */\n.mp-search__input::-webkit-search-cancel-button,\n.mp-search__input::-webkit-search-decoration,\n.mp-search__input::-webkit-search-results-button {\n  -webkit-appearance: none;\n  display: none;\n}\n\n.mp-search__clear {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-soft-2);\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-search__clear svg {\n  width: 12px;\n  height: 12px;\n}\n\n.mp-chips {\n  display: flex;\n  gap: 8px;\n  overflow-x: auto;\n  padding: 6px 16px 2px;\n  scrollbar-width: none;\n}\n\n.mp-chips::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-chip {\n  flex: 0 0 auto;\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 4px 12px;\n  font-size: 12.5px;\n}\n\n.mp-chip.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n/* ---------- 通用段落 ---------- */\n\n.mp-section {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 14px 16px 6px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-section__act {\n  margin-left: auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 12px;\n  font-weight: 400;\n  padding: 2px 0;\n}\n\n/* ---------- 搜索推荐 ---------- */\n\n.mp-rec {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n  padding: 2px 16px 10px;\n}\n\n.mp-rec-chip {\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 6px 13px;\n  font-size: 13px;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-rec-chip:active {\n  background: var(--mp-soft);\n}\n\n.mp-rec__hint {\n  padding: 0 16px 8px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n}\n\n.mp-rec__foot {\n  padding-top: 8px;\n  padding-bottom: 4px;\n}\n\n.mp-hint {\n  padding: 22px 24px;\n  text-align: center;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.7;\n}\n\n.mp-error {\n  margin: 8px 16px;\n  padding: 9px 12px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-size: 12px;\n}\n\n/* ---------- 歌单列表 ---------- */\n\n.mp-list {\n  padding: 4px 10px 8px;\n}\n\n.mp-pl {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  width: 100%;\n  padding: 9px 6px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  border-radius: var(--mp-r-md);\n}\n\n.mp-pl:active {\n  background: var(--mp-soft);\n}\n\n.mp-pl__cover {\n  flex: 0 0 auto;\n  width: 54px;\n  height: 54px;\n  border-radius: var(--mp-r-md);\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-pl__cover svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-pl__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-pl__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-pl__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-pl__sub {\n  margin-top: 3px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */\n\n.mp-actions {\n  display: flex;\n  gap: 10px;\n  padding: 4px 16px 10px;\n}\n\n.mp-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 6px;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  background: var(--mp-soft);\n  color: var(--mp-ink);\n  /* 在设置行里被压缩时不要变成竖排文字 */\n  flex: 0 0 auto;\n  white-space: nowrap;\n  writing-mode: horizontal-tb;\n  min-width: 68px;\n}\n\n.mp-btn svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-btn--primary {\n  background: var(--mp-accent);\n  color: var(--mp-on-accent);\n}\n\n.mp-btn--ghost {\n  background: transparent;\n  border: 1px solid var(--mp-line-strong);\n  color: var(--mp-ink-2);\n  font-weight: 500;\n}\n\n.mp-actions .mp-btn {\n  flex: 1 1 0;\n}\n\n.mp-field__actions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  flex: 0 0 auto;\n}\n\n/* 网易云扫码登录弹层 */\n.mp-qr {\n  padding-bottom: 18px;\n}\n\n.mp-qr__img {\n  display: block;\n  width: 200px;\n  height: 200px;\n  margin: 10px auto 6px;\n  border-radius: 12px;\n  background: #fff;\n  object-fit: contain;\n}\n\n.mp-qr__tip {\n  padding: 4px 20px 0;\n  text-align: center;\n  font-size: 12.5px;\n  color: #9299a3;\n  line-height: 1.6;\n}\n\n/* ---------- 正在播放页 ---------- */\n\n.mp-now {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  padding: calc(4px + env(safe-area-inset-top)) 26px calc(18px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-now__head {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 0 8px;\n}\n\n.mp-now__from {\n  flex: 1 1 auto;\n  text-align: center;\n  font-size: 12px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__stage {\n  flex: 1 1 auto;\n  min-height: 0;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n\n.mp-now__cover {\n  flex: 0 0 auto;\n  width: min(76vw, 300px);\n  height: min(76vw, 300px);\n  margin: auto 0;\n  border-radius: 50%;\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n  box-shadow: var(--mp-shadow);\n}\n\n.mp-now__cover svg {\n  width: 54px;\n  height: 54px;\n}\n\n.mp-now__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-now__meta {\n  flex: 0 0 auto;\n  width: 100%;\n  text-align: center;\n  margin-top: 18px;\n}\n\n.mp-now__name {\n  font-size: 18px;\n  font-weight: 700;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__artist {\n  margin-top: 4px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__progress {\n  flex: 0 0 auto;\n  width: 100%;\n  margin-top: 16px;\n}\n\n.mp-now__track {\n  height: 4px;\n  border-radius: 999px;\n  background: var(--mp-soft-2);\n  cursor: pointer;\n  position: relative;\n}\n\n.mp-now__track i {\n  display: block;\n  height: 100%;\n  width: 0;\n  border-radius: 999px;\n  background: var(--mp-accent);\n}\n\n.mp-now__times {\n  display: flex;\n  justify-content: space-between;\n  margin-top: 5px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  font-variant-numeric: tabular-nums;\n}\n\n.mp-now__ctrl {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: 14px;\n}\n\n.mp-now__ctrl .mp-icon-btn {\n  width: 42px;\n  height: 42px;\n}\n\n.mp-now__ctrl .mp-icon-btn svg {\n  width: 23px;\n  height: 23px;\n}\n\n.mp-now__play {\n  width: 58px;\n  height: 58px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-ink);\n  color: var(--mp-bg);\n}\n\n.mp-now__play svg {\n  width: 28px;\n  height: 28px;\n}\n\n.mp-now__extras {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  justify-content: space-around;\n  margin-top: 14px;\n  padding-bottom: 4px;\n}\n\n/* 正在播放：滚动歌词 */\n\n.mp-now__lyric {\n  flex: 1 1 auto;\n  align-self: stretch;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  text-align: center;\n  padding: 4px 0 8px;\n  scrollbar-width: none;\n}\n\n.mp-now__lyric::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-lyric__line {\n  padding: 7px 10px;\n  font-size: 13.5px;\n  line-height: 1.5;\n  color: var(--mp-muted);\n  transition: color 0.15s, transform 0.15s, opacity 0.15s;\n  opacity: 0.7;\n}\n\n.mp-lyric__line.is-active {\n  color: var(--mp-accent);\n  font-weight: 600;\n  opacity: 1;\n  transform: scale(1.05);\n}\n\n.mp-lyric__empty {\n  padding: 46px 24px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n\n/* ---------- 设置 ---------- */\n\n.mp-group {\n  margin: 6px 16px 14px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  overflow: hidden;\n}\n\n.mp-group__title {\n  padding: 12px 14px 6px;\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-field {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 11px 14px;\n  border-top: 1px solid var(--mp-line);\n}\n\n/* 右侧控件永远不被压扁，说明文字可换行 */\n.mp-field > .mp-btn,\n.mp-field > .mp-switch,\n.mp-field > .mp-field__value,\n.mp-field > .mp-dots,\n.mp-field > .mp-theme-row {\n  flex: 0 0 auto;\n  margin-left: auto;\n}\n\n.mp-group__title + .mp-field {\n  border-top: 0;\n}\n\n.mp-field__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n}\n\n.mp-field__desc {\n  margin-top: 2px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  line-height: 1.5;\n}\n\n.mp-field__value {\n  flex: 0 0 auto;\n  font-size: 13px;\n  color: var(--mp-muted);\n  max-width: 55%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-input {\n  flex: 0 0 auto;\n  width: 55%;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 13px;\n  text-align: right;\n}\n\n.mp-switch {\n  flex: 0 0 auto;\n  width: 46px;\n  height: 27px;\n  border-radius: 999px;\n  border: 0;\n  background: var(--mp-soft-2);\n  position: relative;\n  transition: background 0.15s;\n  padding: 0;\n}\n\n.mp-switch::after {\n  content: "";\n  position: absolute;\n  top: 3px;\n  left: 3px;\n  width: 21px;\n  height: 21px;\n  border-radius: 50%;\n  background: #fff;\n  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);\n  transition: transform 0.15s;\n}\n\n.mp-switch.is-on {\n  background: var(--mp-accent);\n}\n\n.mp-switch.is-on::after {\n  transform: translateX(19px);\n}\n\n.mp-select {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 13px;\n  text-align: right;\n  outline: none;\n}\n\n.mp-slider {\n  flex: 0 0 auto;\n  width: 55%;\n  accent-color: var(--mp-accent);\n}\n\n.mp-theme-row {\n  display: flex;\n  gap: 8px;\n  padding: 11px 14px;\n}\n\n.mp-theme-btn {\n  flex: 1 1 0;\n  padding: 8px 2px;\n  border-radius: var(--mp-r-sm);\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  font-size: 12.5px;\n  white-space: nowrap;\n}\n\n.mp-theme-btn.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n.mp-dots {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n}\n\n.mp-dot--custom {\n  position: relative;\n  overflow: hidden;\n}\n\n.mp-dot--custom .mp-color {\n  position: absolute;\n  inset: 0;\n  width: 100%;\n  height: 100%;\n  opacity: 0;\n}\n\n.mp-color {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);\n  -webkit-appearance: none;\n  appearance: none;\n  overflow: hidden;\n}\n\n.mp-color::-webkit-color-swatch-wrapper {\n  padding: 0;\n}\n\n.mp-color::-webkit-color-swatch {\n  border: 0;\n  border-radius: 50%;\n}\n\n.mp-dot {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border-radius: 50%;\n  border: 2px solid transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);\n}\n\n.mp-dot.is-active {\n  border-color: var(--mp-ink);\n}\n\n.mp-about {\n  padding: 6px 24px 28px;\n  text-align: center;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n';
+  var views_default = '/* 各页面专属样式 */\n\n/* ---------- 搜索 ---------- */\n\n.mp-search {\n  flex: 0 0 auto;\n  padding: 0 16px 8px;\n}\n\n.mp-search__box {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  height: 38px;\n  padding: 0 12px;\n  border-radius: var(--mp-r-full);\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n}\n\n.mp-search__box svg {\n  width: 17px;\n  height: 17px;\n  flex: 0 0 auto;\n}\n\n.mp-search__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14px;\n  -webkit-appearance: none;\n  appearance: none;\n}\n\n/* 去掉 WebView 自带的搜索框装饰（那个多余的 × 和小图标） */\n.mp-search__input::-webkit-search-cancel-button,\n.mp-search__input::-webkit-search-decoration,\n.mp-search__input::-webkit-search-results-button {\n  -webkit-appearance: none;\n  display: none;\n}\n\n.mp-search__clear {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-soft-2);\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-search__clear svg {\n  width: 12px;\n  height: 12px;\n}\n\n.mp-chips {\n  display: flex;\n  gap: 8px;\n  overflow-x: auto;\n  padding: 6px 16px 2px;\n  scrollbar-width: none;\n}\n\n.mp-chips::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-chip {\n  flex: 0 0 auto;\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 4px 12px;\n  font-size: 12.5px;\n}\n\n.mp-chip.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n/* ---------- 通用段落 ---------- */\n\n.mp-section {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 14px 16px 6px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-section__act {\n  margin-left: auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 12px;\n  font-weight: 400;\n  padding: 2px 0;\n}\n\n/* ---------- 搜索推荐 ---------- */\n\n.mp-rec {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n  padding: 2px 16px 10px;\n}\n\n.mp-rec-chip {\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 6px 13px;\n  font-size: 13px;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-rec-chip:active {\n  background: var(--mp-soft);\n}\n\n.mp-rec__hint {\n  padding: 0 16px 8px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n}\n\n.mp-rec__foot {\n  padding-top: 8px;\n  padding-bottom: 4px;\n}\n\n.mp-hint {\n  padding: 22px 24px;\n  text-align: center;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.7;\n}\n\n.mp-error {\n  margin: 8px 16px;\n  padding: 9px 12px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-size: 12px;\n}\n\n/* ---------- 歌单列表 ---------- */\n\n.mp-list {\n  padding: 4px 10px 8px;\n}\n\n.mp-pl {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  width: 100%;\n  padding: 9px 6px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  border-radius: var(--mp-r-md);\n}\n\n.mp-pl:active {\n  background: var(--mp-soft);\n}\n\n.mp-pl__cover {\n  flex: 0 0 auto;\n  width: 54px;\n  height: 54px;\n  border-radius: var(--mp-r-md);\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-pl__cover svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-pl__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-pl__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-pl__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-pl__sub {\n  margin-top: 3px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */\n\n.mp-actions {\n  display: flex;\n  gap: 10px;\n  padding: 4px 16px 10px;\n}\n\n.mp-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 6px;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  background: var(--mp-soft);\n  color: var(--mp-ink);\n  /* 在设置行里被压缩时不要变成竖排文字 */\n  flex: 0 0 auto;\n  white-space: nowrap;\n  writing-mode: horizontal-tb;\n  min-width: 68px;\n}\n\n.mp-btn svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-btn--primary {\n  background: var(--mp-accent);\n  color: var(--mp-on-accent);\n}\n\n.mp-btn--ghost {\n  background: transparent;\n  border: 1px solid var(--mp-line-strong);\n  color: var(--mp-ink-2);\n  font-weight: 500;\n}\n\n.mp-actions .mp-btn {\n  flex: 1 1 0;\n}\n\n.mp-field__actions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  flex: 0 0 auto;\n}\n\n/* 网易云扫码登录弹层 */\n.mp-qr {\n  padding-bottom: 18px;\n}\n\n.mp-qr__img {\n  display: block;\n  width: 200px;\n  height: 200px;\n  margin: 10px auto 6px;\n  border-radius: 12px;\n  background: #fff;\n  object-fit: contain;\n}\n\n.mp-qr__tip {\n  padding: 4px 20px 0;\n  text-align: center;\n  font-size: 12.5px;\n  color: #9299a3;\n  line-height: 1.6;\n}\n\n/* ---------- 正在播放页 ---------- */\n\n.mp-now {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  padding: calc(4px + env(safe-area-inset-top)) 26px calc(18px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-now__head {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 0 8px;\n}\n\n.mp-now__from {\n  flex: 1 1 auto;\n  text-align: center;\n  font-size: 12px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__stage {\n  flex: 1 1 auto;\n  min-height: 0;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n\n.mp-now__cover {\n  flex: 0 0 auto;\n  width: min(76vw, 300px);\n  height: min(76vw, 300px);\n  margin: auto 0;\n  border-radius: 50%;\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n  box-shadow: var(--mp-shadow);\n}\n\n.mp-now__cover svg {\n  width: 54px;\n  height: 54px;\n}\n\n.mp-now__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-now__meta {\n  flex: 0 0 auto;\n  width: 100%;\n  text-align: center;\n  margin-top: 18px;\n}\n\n.mp-now__name {\n  font-size: 18px;\n  font-weight: 700;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__artist {\n  margin-top: 4px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__progress {\n  flex: 0 0 auto;\n  width: 100%;\n  margin-top: 16px;\n}\n\n.mp-now__track {\n  height: 4px;\n  border-radius: 999px;\n  background: var(--mp-soft-2);\n  cursor: pointer;\n  position: relative;\n}\n\n.mp-now__track i {\n  display: block;\n  height: 100%;\n  width: 0;\n  border-radius: 999px;\n  background: var(--mp-accent);\n}\n\n.mp-now__times {\n  display: flex;\n  justify-content: space-between;\n  margin-top: 5px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  font-variant-numeric: tabular-nums;\n}\n\n.mp-now__ctrl {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: 14px;\n}\n\n.mp-now__ctrl .mp-icon-btn {\n  width: 42px;\n  height: 42px;\n}\n\n.mp-now__ctrl .mp-icon-btn svg {\n  width: 23px;\n  height: 23px;\n}\n\n.mp-now__play {\n  width: 58px;\n  height: 58px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-ink);\n  color: var(--mp-bg);\n}\n\n.mp-now__play svg {\n  width: 28px;\n  height: 28px;\n}\n\n.mp-now__extras {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  justify-content: space-around;\n  margin-top: 14px;\n  padding-bottom: 4px;\n}\n\n/* 正在播放：滚动歌词 */\n\n.mp-now__lyric {\n  flex: 1 1 auto;\n  align-self: stretch;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  text-align: center;\n  padding: 4px 0 8px;\n  scrollbar-width: none;\n}\n\n.mp-now__lyric::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-lyric__line {\n  padding: 7px 10px;\n  font-size: 13.5px;\n  line-height: 1.5;\n  color: var(--mp-muted);\n  transition: color 0.15s, transform 0.15s, opacity 0.15s;\n  opacity: 0.7;\n}\n\n.mp-lyric__line.is-active {\n  color: var(--mp-accent);\n  font-weight: 600;\n  opacity: 1;\n  transform: scale(1.05);\n}\n\n.mp-lyric__empty {\n  padding: 46px 24px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n\n/* ---------- 设置 ---------- */\n\n.mp-group {\n  margin: 6px 16px 14px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  overflow: hidden;\n}\n\n.mp-group__title {\n  padding: 12px 14px 6px;\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-field {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 11px 14px;\n  border-top: 1px solid var(--mp-line);\n}\n\n/* 右侧控件永远不被压扁，说明文字可换行 */\n.mp-field > .mp-btn,\n.mp-field > .mp-switch,\n.mp-field > .mp-field__value,\n.mp-field > .mp-dots,\n.mp-field > .mp-theme-row {\n  flex: 0 0 auto;\n  margin-left: auto;\n}\n\n.mp-group__title + .mp-field {\n  border-top: 0;\n}\n\n.mp-field__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n}\n\n.mp-field__desc {\n  margin-top: 2px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  line-height: 1.5;\n}\n\n.mp-field__value {\n  flex: 0 0 auto;\n  font-size: 13px;\n  color: var(--mp-muted);\n  max-width: 55%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-input {\n  flex: 0 0 auto;\n  width: 55%;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 13px;\n  text-align: right;\n}\n\n.mp-switch {\n  flex: 0 0 auto;\n  width: 46px;\n  height: 27px;\n  border-radius: 999px;\n  border: 0;\n  background: var(--mp-soft-2);\n  position: relative;\n  transition: background 0.15s;\n  padding: 0;\n}\n\n.mp-switch::after {\n  content: "";\n  position: absolute;\n  top: 3px;\n  left: 3px;\n  width: 21px;\n  height: 21px;\n  border-radius: 50%;\n  background: #fff;\n  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);\n  transition: transform 0.15s;\n}\n\n.mp-switch.is-on {\n  background: var(--mp-accent);\n}\n\n.mp-switch.is-on::after {\n  transform: translateX(19px);\n}\n\n.mp-select {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 13px;\n  text-align: right;\n  outline: none;\n}\n\n.mp-slider {\n  flex: 0 0 auto;\n  width: 55%;\n  accent-color: var(--mp-accent);\n}\n\n/* TA 页：角色说过的短评 */\n.mp-ta-say {\n  padding: 10px 16px;\n  border-top: 1px solid var(--mp-line);\n}\n\n.mp-ta-say__title {\n  font-size: 13px;\n  font-weight: 500;\n  color: var(--mp-ink);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-ta-say__text {\n  margin-top: 3px;\n  font-size: 12.5px;\n  color: var(--mp-ink-2);\n  line-height: 1.55;\n}\n\n.mp-theme-row {\n  display: flex;\n  gap: 8px;\n  padding: 11px 14px;\n}\n\n.mp-theme-btn {\n  flex: 1 1 0;\n  padding: 8px 2px;\n  border-radius: var(--mp-r-sm);\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  font-size: 12.5px;\n  white-space: nowrap;\n}\n\n.mp-theme-btn.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n.mp-dots {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n}\n\n.mp-dot--custom {\n  position: relative;\n  overflow: hidden;\n}\n\n.mp-dot--custom .mp-color {\n  position: absolute;\n  inset: 0;\n  width: 100%;\n  height: 100%;\n  opacity: 0;\n}\n\n.mp-color {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);\n  -webkit-appearance: none;\n  appearance: none;\n  overflow: hidden;\n}\n\n.mp-color::-webkit-color-swatch-wrapper {\n  padding: 0;\n}\n\n.mp-color::-webkit-color-swatch {\n  border: 0;\n  border-radius: 50%;\n}\n\n.mp-dot {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border-radius: 50%;\n  border: 2px solid transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);\n}\n\n.mp-dot.is-active {\n  border-color: var(--mp-ink);\n}\n\n.mp-about {\n  padding: 6px 24px 28px;\n  text-align: center;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n';
 
   // src/ui/style.js
   var STYLE_ID = "music-player-style";
@@ -3115,38 +3316,51 @@
       }),
       subEl
     ]);
-    function charPlaylists() {
+    function charPlaylists2() {
       return (state.playlists || []).filter(function(p) {
         return p.owner === "char";
       });
     }
     function renderList() {
       clear(listBox);
-      var list = charPlaylists();
+      var list = charPlaylists2();
       subEl.textContent = list.length ? list.length + " 个" : "";
       if (!list.length) {
         listBox.appendChild(emptyHint(
           "TA 还没有歌单",
-          "让 TA 在聊天里帮你建一个，或者在「歌曲 ⋯」里让 TA 收藏\n你自己收藏的歌在「歌单 → 我的收藏」"
+          "让 TA 在聊天里帮你建一个，或者在「一起听」里让 TA 把当前这首收进去\n你自己收藏的歌在「歌单 → 我的收藏」"
         ));
-        return;
-      }
-      list.forEach(function(p) {
-        var first = (p.tracks || [])[0];
-        var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-pl__cover");
-        if (first) cover.dataset.cover = trackKey(first);
-        var row = h("button", { class: "mp-pl", type: "button" }, [
-          cover,
-          h("div", { class: "mp-pl__main" }, [
-            h("div", { class: "mp-pl__name", text: p.name }),
-            h("div", { class: "mp-pl__sub", text: fmtSummary((p.tracks || []).length, playlistDuration(p)) })
-          ])
-        ]);
-        row.addEventListener("click", function() {
-          ctx.goto("playlist", { playlistId: p.id });
+      } else {
+        list.forEach(function(p) {
+          var first = (p.tracks || [])[0];
+          var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-pl__cover");
+          if (first) cover.dataset.cover = trackKey(first);
+          var row = h("button", { class: "mp-pl", type: "button" }, [
+            cover,
+            h("div", { class: "mp-pl__main" }, [
+              h("div", { class: "mp-pl__name", text: p.name }),
+              h("div", { class: "mp-pl__sub", text: fmtSummary((p.tracks || []).length, playlistDuration(p)) })
+            ])
+          ]);
+          row.addEventListener("click", function() {
+            ctx.goto("playlist", { playlistId: p.id });
+          });
+          listBox.appendChild(row);
         });
-        listBox.appendChild(row);
-      });
+      }
+      var says = ctx.taComments ? ctx.taComments() : [];
+      if (says.length) {
+        listBox.appendChild(h("div", { class: "mp-section", text: "TA 说" }));
+        says.slice(0, 20).forEach(function(item) {
+          listBox.appendChild(h("div", { class: "mp-ta-say" }, [
+            h("div", {
+              class: "mp-ta-say__title",
+              text: (item.name || "未知歌曲") + (item.artist ? " · " + item.artist : "")
+            }),
+            h("div", { class: "mp-ta-say__text", text: "「" + (item.text || "") + "」" })
+          ]));
+        });
+      }
     }
     var view = h("div", { class: "mp-view" }, [header, listBox]);
     host.appendChild(view);
@@ -3377,6 +3591,35 @@
           }),
           "开：只把搜到的第一首加进当前列表；关：直接用它替换列表"
         ),
+        field("指令通道", (function() {
+          var row = h("div", { class: "mp-theme-row" });
+          [
+            { id: "mark", name: "标记（省一次）" },
+            { id: "tool", name: "工具（更稳）" }
+          ].forEach(function(item) {
+            var btn = h("button", {
+              class: "mp-theme-btn" + ((s.chatCommandMode || "mark") === item.id ? " is-active" : ""),
+              type: "button",
+              text: item.name
+            });
+            btn.addEventListener("click", function() {
+              ctx.updateSettings({ chatCommandMode: item.id });
+            });
+            row.appendChild(btn);
+          });
+          return row;
+        })(), "标记：模型把指令写在回复里，只花一次模型调用；工具：走 function calling，多一次但更稳"),
+        field("推荐搜索词", (function() {
+          var input = h("input", {
+            class: "mp-input",
+            type: "text",
+            value: s.chatRecommendSeed || "华语流行"
+          });
+          input.addEventListener("change", function() {
+            ctx.updateSettings({ chatRecommendSeed: String(input.value || "").trim() });
+          });
+          return input;
+        })(), "TA 给你挑歌时会用这个词搜索"),
         field(
           "一起听提示词",
           editPromptBtn,
@@ -4719,8 +4962,306 @@
     }, 30);
   }
 
-  // src/chat/chatLink.js
+  // src/core/marker.js
+  var MARK_TYPES = ["play", "next", "prev", "pause", "resume", "status", "add", "comment", "new", "recommend", "fav"];
+  var PATTERN = /\[\[\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^\]\n]*))?\]\]/g;
+  function normalizeType(raw) {
+    var type = String(raw || "").toLowerCase();
+    if (type === "previous") return "prev";
+    if (type === "favorite") return "fav";
+    if (MARK_TYPES.indexOf(type) === -1) return "";
+    return type;
+  }
+  function parseCommands(text) {
+    var source = String(text || "");
+    if (!source) return [];
+    var out = [];
+    var match;
+    PATTERN.lastIndex = 0;
+    while ((match = PATTERN.exec(source)) !== null) {
+      var type = normalizeType(match[1]);
+      if (!type) continue;
+      var arg = String(match[2] == null ? "" : match[2]).trim();
+      if ((type === "play" || type === "comment" || type === "new") && !arg) continue;
+      out.push({ type, arg, raw: String(match[0]) });
+      if (out.length >= 6) break;
+    }
+    return out;
+  }
+  function dedupeKey(conversationId, messageId, cmd) {
+    return [conversationId || "", messageId || "", cmd.raw || cmd.type].join("|");
+  }
+
+  // src/chat/commandBridge.js
+  var POLL_MS2 = 2500;
+  var MAX_EXECUTED = 200;
   var runtime = {
+    conversationId: "",
+    characterId: "",
+    characterName: "",
+    mode: "mark",
+    // mark | tool
+    degraded: false,
+    timer: null,
+    executed: [],
+    lastMessageId: ""
+  };
+  function resolveRoche() {
+    if (typeof window === "undefined") return null;
+    return window.Roche || window.roche || null;
+  }
+  function chatListenOn() {
+    return isOn(runtime.conversationId, true);
+  }
+  function noteConversation(ctx) {
+    if (!ctx) return;
+    var cid = ctx.conversationId || ctx.conversation && ctx.conversation.id || "";
+    if (cid) runtime.conversationId = cid;
+    var contact = ctx.contact || null;
+    if (contact && contact.id) {
+      runtime.characterId = String(contact.id);
+      runtime.characterName = String(contact.name || contact.nickname || "");
+    }
+  }
+  function setCommandMode(mode) {
+    runtime.mode = mode === "tool" ? "tool" : "mark";
+    runtime.degraded = false;
+  }
+  function commandStatus() {
+    return {
+      mode: runtime.mode,
+      degraded: runtime.degraded,
+      conversationId: runtime.conversationId,
+      characterId: runtime.characterId
+    };
+  }
+  function nativePlugin() {
+    if (typeof window === "undefined") return null;
+    var cap = window.Capacitor;
+    var plugin = cap && cap.Plugins ? cap.Plugins.BackgroundAudio : null;
+    return plugin && typeof plugin.getStatus === "function" ? plugin : null;
+  }
+  async function readSettings(roche) {
+    try {
+      return normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+    } catch (err) {
+      return normalizeSettings(null);
+    }
+  }
+  async function headlessPlay(keyword, roche, settings) {
+    var native = nativePlugin();
+    if (!native) return { ok: false, reason: "没有可用的原生播放器" };
+    var sources = createSources();
+    var found = await sources.search(keyword, settings, { limit: 6 });
+    if (!found.tracks.length) return { ok: false, reason: "没搜到这首歌" };
+    var track = found.tracks[0];
+    var url = "";
+    try {
+      url = await sources.createResolver(track, settings)();
+    } catch (err) {
+      url = "";
+    }
+    if (!url) return { ok: false, reason: "拿不到播放地址" };
+    await native.replaceQueue({
+      tracks: [{
+        id: trackKey(track),
+        albumId: track.album || "",
+        title: track.name,
+        artist: track.artist || "",
+        cover: track.cover || "",
+        url
+      }],
+      startIndex: 0,
+      mode: "loop",
+      autoplay: true
+    });
+    return { ok: true, track };
+  }
+  async function currentTrack(roche) {
+    var bridge = getBridge();
+    if (bridge && bridge.ready()) {
+      var status = bridge.status();
+      if (status && status.playing) return status.playing;
+    }
+    var native = nativePlugin();
+    if (!native) return null;
+    try {
+      var res = await native.getStatus();
+      var st = res && res.status || {};
+      if (!st.title) return null;
+      return { name: st.title, artist: st.artist || "", id: st.trackId || st.title, source: "native" };
+    } catch (err) {
+      return null;
+    }
+  }
+  async function doPlay(keyword, roche, settings) {
+    var bridge = getBridge();
+    if (bridge && bridge.ready()) {
+      var found = await bridge.search(keyword, 6);
+      if (!found || !found.length) return { ok: false, reason: "没搜到这首歌" };
+      if (settings.chatAddToQueue && typeof bridge.addAndPlay === "function") {
+        await bridge.addAndPlay([found[0]], 0);
+      } else if (typeof bridge.playList === "function") {
+        await bridge.playList([found[0]], 0);
+      }
+      return { ok: true, track: found[0] };
+    }
+    return headlessPlay(keyword, roche, settings);
+  }
+  async function doControl(action) {
+    var bridge = getBridge();
+    if (bridge && bridge.ready()) {
+      await bridge.control(action);
+      return { ok: true };
+    }
+    var native = nativePlugin();
+    if (!native) return { ok: false, reason: "没有可用的播放器" };
+    var methods = { next: "next", prev: "previous", pause: "pause", resume: "play" };
+    var method = methods[action];
+    if (!method) return { ok: false, reason: "不支持的操作" };
+    await native[method]();
+    return { ok: true };
+  }
+  async function doAdd(roche) {
+    var track = await currentTrack(roche);
+    if (!track) return { ok: false, reason: "现在没有在放的歌" };
+    var added = await addTrackForChar(roche, runtime.characterId, track);
+    return added.ok ? { ok: true, playlist: added.playlist, created: added.created, duplicate: added.duplicate } : { ok: false, reason: added.reason };
+  }
+  async function doComment(text, roche) {
+    var track = await currentTrack(roche);
+    if (!track) return { ok: false, reason: "现在没有在放的歌" };
+    var saved = await saveComment(roche, runtime.characterId, track, text);
+    return saved.ok ? { ok: true, text: saved.text } : { ok: false, reason: saved.reason };
+  }
+  async function doRecommend(roche, settings) {
+    var sources = createSources();
+    var seed = settings && settings.chatRecommendSeed || "华语流行";
+    try {
+      var found = await sources.search(seed, settings, { limit: 8 });
+      if (!found.tracks.length) return { ok: false, reason: "没找到可推荐的歌" };
+      var made = await createCharPlaylist(roche, runtime.characterId, RECOMMEND_PLAYLIST_NAME, found.tracks.slice(0, 6));
+      return made.ok ? { ok: true, playlist: made.playlist, added: made.added } : { ok: false, reason: made.reason };
+    } catch (err) {
+      return { ok: false, reason: String(err && err.message || err) };
+    }
+  }
+  async function runCommand(cmd, roche) {
+    var settings = await readSettings(roche);
+    try {
+      switch (cmd.type) {
+        case "play":
+          return await doPlay(cmd.arg, roche, settings);
+        case "next":
+          return await doControl("next");
+        case "prev":
+          return await doControl("prev");
+        case "pause":
+          return await doControl("pause");
+        case "resume":
+          return await doControl("resume");
+        case "add":
+          return await doAdd(roche);
+        case "comment":
+          return await doComment(cmd.arg, roche);
+        case "recommend":
+          return await doRecommend(roche, settings);
+        case "new": {
+          var made = await createCharPlaylist(roche, runtime.characterId, cmd.arg, []);
+          return made.ok ? { ok: true, playlist: made.playlist } : { ok: false, reason: made.reason };
+        }
+        case "status":
+          return Object.assign({ ok: true }, commandStatus());
+        default:
+          return { ok: false, reason: "不支持的指令" };
+      }
+    } catch (err) {
+      return { ok: false, reason: String(err && err.message || err) };
+    }
+  }
+  function pickMessages(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (raw && Array.isArray(raw.messages)) return raw.messages;
+    if (raw && Array.isArray(raw.items)) return raw.items;
+    return [];
+  }
+  function messageText(msg) {
+    if (!msg) return "";
+    return String(msg.content || msg.text || msg.body || "");
+  }
+  function messageRole(msg) {
+    if (!msg) return "";
+    return String(msg.role || msg.senderType || (msg.isMe ? "user" : "assistant"));
+  }
+  function alreadyDone(key) {
+    return runtime.executed.indexOf(key) !== -1;
+  }
+  function markDone(key) {
+    runtime.executed.push(key);
+    if (runtime.executed.length > MAX_EXECUTED) runtime.executed.shift();
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("mp:cmdLog", JSON.stringify(runtime.executed));
+      }
+    } catch (err) {
+    }
+  }
+  async function pollOnce() {
+    if (runtime.mode !== "mark") return;
+    if (runtime.degraded) return;
+    if (!runtime.conversationId) return;
+    if (!chatListenOn()) return;
+    var roche = resolveRoche();
+    if (!roche || !roche.memory || typeof roche.memory.getShortTerm !== "function") {
+      runtime.degraded = true;
+      return;
+    }
+    var raw = null;
+    try {
+      raw = await roche.memory.getShortTerm({ conversationId: runtime.conversationId, limit: 8 });
+    } catch (err) {
+      runtime.degraded = true;
+      return;
+    }
+    var messages = pickMessages(raw);
+    if (!messages.length) return;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      var msg = messages[i];
+      if (messageRole(msg) !== "assistant") continue;
+      var id = String(msg.id || msg.messageId || msg.createdAt || "");
+      if (!id || id === runtime.lastMessageId) return;
+      runtime.lastMessageId = id;
+      var cmds = parseCommands(messageText(msg));
+      if (!cmds.length) return;
+      for (var j = 0; j < cmds.length; j++) {
+        var key = dedupeKey(runtime.conversationId, id, cmds[j]);
+        if (alreadyDone(key)) continue;
+        markDone(key);
+        try {
+          await runCommand(cmds[j], roche);
+        } catch (err) {
+        }
+      }
+      return;
+    }
+  }
+  function startCommandBridge() {
+    if (runtime.timer) return;
+    try {
+      if (typeof localStorage !== "undefined") {
+        var saved = localStorage.getItem("mp:cmdLog");
+        if (saved) runtime.executed = JSON.parse(saved) || [];
+      }
+    } catch (err) {
+    }
+    runtime.timer = setInterval(function() {
+      pollOnce().catch(function() {
+      });
+    }, POLL_MS2);
+  }
+
+  // src/chat/chatLink.js
+  var runtime2 = {
     chatListen: true,
     title: "",
     artist: "",
@@ -4732,17 +5273,17 @@
   function setChatRuntime(patch) {
     if (!patch) return;
     Object.keys(patch).forEach(function(key) {
-      runtime[key] = patch[key];
+      runtime2[key] = patch[key];
     });
   }
-  function nativePlugin() {
+  function nativePlugin2() {
     if (typeof window === "undefined") return null;
     var cap = window.Capacitor;
     var plugin = cap && cap.Plugins ? cap.Plugins.BackgroundAudio : null;
     return plugin && typeof plugin.getStatus === "function" ? plugin : null;
   }
   async function nativeControl(action) {
-    var plugin = nativePlugin();
+    var plugin = nativePlugin2();
     if (!plugin) return { ok: false, reason: "没有可控制的播放器" };
     try {
       var methods = { next: "next", previous: "previous", pause: "pause", resume: "play" };
@@ -4760,7 +5301,7 @@
       return { ok: false, reason: "播放器调用失败" };
     }
   }
-  async function doControl(action) {
+  async function doControl2(action) {
     var bridge = getBridge();
     if (bridge && bridge.ready()) {
       try {
@@ -4771,7 +5312,7 @@
     }
     return nativeControl(action);
   }
-  async function headlessPlay(keyword, roche) {
+  async function headlessPlay2(keyword, roche) {
     var native = createNativeAudio();
     if (!native.available()) {
       return { ok: false, reason: "这台设备没有原生播放器，需要先打开音乐 App" };
@@ -4855,18 +5396,20 @@
     } catch (err) {
     }
   }
-  function renderChatPrompt() {
-    var template = String(runtime.chatPrompt || DEFAULT_CHAT_PROMPT);
-    var stateText = runtime.isPlaying ? "正在播放" : runtime.title ? "已暂停" : "";
-    return template.replace(/\{\{title\}\}/g, runtime.title || "（没在放歌）").replace(/\{\{artist\}\}/g, runtime.artist || "").replace(/\{\{state\}\}/g, stateText).replace(/\{\{queue\}\}/g, String(runtime.queueSize || 0)).trim();
+  function renderChatPrompt(templateOverride) {
+    var template = String(templateOverride || runtime2.chatPrompt || DEFAULT_CHAT_PROMPT);
+    var stateText = runtime2.isPlaying ? "正在播放" : runtime2.title ? "已暂停" : "";
+    return template.replace(/\{\{title\}\}/g, runtime2.title || "（没在放歌）").replace(/\{\{artist\}\}/g, runtime2.artist || "").replace(/\{\{state\}\}/g, stateText).replace(/\{\{queue\}\}/g, String(runtime2.queueSize || 0)).trim();
   }
   function conversationIdOf(ctx) {
     if (!ctx) return "";
     return ctx.conversationId || ctx.conversation && ctx.conversation.id || "";
   }
   function chatContextProvider(ctx) {
-    if (!isOn(conversationIdOf(ctx), runtime.chatListen)) return null;
-    return renderChatPrompt() || null;
+    noteConversation(ctx);
+    if (!isOn(conversationIdOf(ctx), runtime2.chatListen)) return null;
+    var template = runtime2.chatCommandMode === "tool" ? TOOL_CHAT_PROMPT : runtime2.chatPrompt || DEFAULT_CHAT_PROMPT;
+    return renderChatPrompt(template) || null;
   }
   function tool(id, description, parameters, run) {
     return {
@@ -4874,7 +5417,7 @@
       description,
       parameters: parameters || {},
       async execute(args, ctx, roche) {
-        if (!isOn(conversationIdOf(ctx), runtime.chatListen)) {
+        if (!isOn(conversationIdOf(ctx), runtime2.chatListen)) {
           return { ok: false, reason: "用户已经结束了这次一起听，不要再执行音乐操作" };
         }
         try {
@@ -4895,7 +5438,7 @@
         if (!keyword) return { ok: false, reason: "缺少 keyword" };
         var bridge = getBridge();
         if (!bridge || !bridge.ready()) {
-          var headless = await headlessPlay(keyword, roche);
+          var headless = await headlessPlay2(keyword, roche);
           if (!headless.ok) return headless;
           await pushCard(ctx, roche, headless.track, "listening");
           return {
@@ -4911,7 +5454,7 @@
         if (!found || !found.length) return { ok: false, reason: "没搜到这首歌" };
         var first = found[0];
         var result;
-        if (runtime.chatAddToQueue) {
+        if (runtime2.chatAddToQueue) {
           result = await bridge.addAndPlay([first], 0);
         } else {
           result = await bridge.playList([first], 0);
@@ -4932,18 +5475,18 @@
       }
     ),
     tool("music_next", "切到下一首。", {}, async function() {
-      var res = await doControl("next");
+      var res = await doControl2("next");
       return res.ok ? { ok: true, playing: res.title || "", artist: res.artist || "" } : res;
     }),
     tool("music_previous", "切到上一首。", {}, async function() {
-      var res = await doControl("previous");
+      var res = await doControl2("previous");
       return res.ok ? { ok: true, playing: res.title || "", artist: res.artist || "" } : res;
     }),
     tool("music_pause", "暂停播放。", {}, async function() {
-      return doControl("pause");
+      return doControl2("pause");
     }),
     tool("music_resume", "继续播放。", {}, async function() {
-      return doControl("resume");
+      return doControl2("resume");
     }),
     tool("music_status", "查看当前播放的歌和队列。", {}, async function() {
       var bridge = getBridge();
@@ -4951,11 +5494,63 @@
         var status = bridge.status();
         return Object.assign({ ok: true }, status);
       }
-      var plugin = nativePlugin();
+      var plugin = nativePlugin2();
       if (!plugin) return { ok: false, reason: "没有播放器" };
       var res = await plugin.getStatus();
       var st = res && res.status || {};
       return { ok: true, playing: st.title || "", artist: st.artist || "", isPlaying: !!st.isPlaying, queueSize: st.queueSize || 0 };
+    }),
+    tool("music_add_to_playlist", "把当前正在播放的这首收进你自己的歌单（没有歌单会自动建一个）。", {}, async function(args, ctx, roche) {
+      var bridge = getBridge();
+      var track = null;
+      if (bridge && bridge.ready()) {
+        var st = bridge.status();
+        track = st && st.playing;
+      }
+      if (!track) {
+        var native = nativePlugin2();
+        if (native) {
+          var res = await native.getStatus();
+          var raw = res && res.status || {};
+          if (raw.title) track = { name: raw.title, artist: raw.artist || "", id: raw.trackId || raw.title, source: "native" };
+        }
+      }
+      if (!track) return { ok: false, reason: "现在没有在放的歌" };
+      var characterId = ctx && ctx.contact ? ctx.contact.id : "";
+      var added = await addTrackForChar(roche, characterId, track);
+      return added.ok ? { ok: true, added: track.name, playlist: added.playlist ? added.playlist.name : "", created: !!added.created } : { ok: false, reason: added.reason };
+    }),
+    tool("music_comment", "给当前正在播放的歌写一句简短评价（不超过 30 字）。", { text: "string" }, async function(args, ctx, roche) {
+      var text = String(args.text || "").trim();
+      if (!text) return { ok: false, reason: "缺少 text" };
+      var bridge = getBridge();
+      var track = null;
+      if (bridge && bridge.ready()) {
+        var st = bridge.status();
+        track = st && st.playing;
+      }
+      if (!track) {
+        var native = nativePlugin2();
+        if (native) {
+          var res = await native.getStatus();
+          var raw = res && res.status || {};
+          if (raw.title) track = { name: raw.title, artist: raw.artist || "", id: raw.trackId || raw.title, source: "native" };
+        }
+      }
+      if (!track) return { ok: false, reason: "现在没有在放的歌" };
+      var characterId = ctx && ctx.contact ? ctx.contact.id : "";
+      var saved = await saveComment(roche, characterId, track, text);
+      return saved.ok ? { ok: true, text: saved.text, track: track.name } : { ok: false, reason: saved.reason };
+    }),
+    tool("music_recommend", "按对方最近的喜好挑几首歌，放进名为「为你挑的」的歌单。", {}, async function(args, ctx, roche) {
+      var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+      var sources = createSources();
+      var seed = settings.chatRecommendSeed || "华语流行";
+      var found = await sources.search(seed, settings, { limit: 8 });
+      if (!found.tracks.length) return { ok: false, reason: "没找到可推荐的歌" };
+      var characterId = ctx && ctx.contact ? ctx.contact.id : "";
+      var made = await createCharPlaylist(roche, characterId, RECOMMEND_PLAYLIST_NAME, found.tracks.slice(0, 6));
+      return made.ok ? { ok: true, playlist: RECOMMEND_PLAYLIST_NAME, added: made.added } : { ok: false, reason: made.reason };
     }),
     tool("music_favorite", "把当前播放的歌加入收藏。", {}, async function() {
       var bridge = getBridge();
@@ -4989,6 +5584,7 @@
       recent: [],
       search: { keyword: "", busy: false, tracks: [], errors: [], counts: {}, at: 0 },
       searches: [],
+      comments: {},
       queue: null,
       player: { status: "idle", track: null, time: 0, duration: 0, error: "", volume: 0.8 },
       lyrics: { lines: [], loading: false, error: "" },
@@ -5028,8 +5624,10 @@
         isPlaying: state.player.status === "playing",
         queueSize: state.queue ? state.queue.tracks.length : 0,
         chatAddToQueue: !!state.settings.chatAddToQueue,
+        chatCommandMode: state.settings.chatCommandMode || "mark",
         chatPrompt: state.settings.chatPrompt
       });
+      setCommandMode(state.settings.chatCommandMode || "mark");
       saveSnapshot({
         track: state.player.track,
         isPlaying: state.player.status === "playing",
@@ -5615,6 +6213,33 @@
       toast(res.added ? "已收藏" : "已取消收藏");
       refresh();
     }
+    async function addCurrentToCharPlaylist(characterId) {
+      var track2 = state.player.track;
+      if (!track2) return { ok: false, reason: "现在没有在放的歌" };
+      var res = await addTrackForChar(host.raw, characterId || "ta", track2);
+      if (res.ok) {
+        state.playlists = await store.loadPlaylists();
+        refresh();
+      }
+      return res;
+    }
+    async function commentCurrent(characterId, text) {
+      var track2 = state.player.track;
+      if (!track2) return { ok: false, reason: "现在没有在放的歌" };
+      var res = await saveComment(host.raw, characterId || "ta", track2, text);
+      if (res.ok) {
+        state.comments = await store.loadComments();
+        refresh();
+      }
+      return res;
+    }
+    async function reloadComments() {
+      try {
+        state.comments = await store.loadComments();
+        refresh();
+      } catch (err) {
+      }
+    }
     async function createPlaylist2(name, tracks) {
       var res = createPlaylist(state.playlists, name, uid(), Date.now());
       if (!res.playlist) {
@@ -5902,6 +6527,27 @@
       },
       rebuildSession,
       hardStop,
+      // TA 页用：角色歌单 + 歌曲短评
+      taPlaylists: function() {
+        return (state.playlists || []).filter(function(p) {
+          return p.owner === "char";
+        });
+      },
+      taComments: function() {
+        var map2 = state.comments || {};
+        return Object.keys(map2).map(function(key) {
+          var entry = map2[key] || {};
+          var ids = Object.keys(entry);
+          if (!ids.length) return null;
+          var one = entry[ids[0]] || {};
+          return { key, name: one.name || "", artist: one.artist || "", text: one.text || "", at: one.at || 0 };
+        }).filter(Boolean).sort(function(a, b) {
+          return b.at - a.at;
+        });
+      },
+      reloadComments,
+      addCurrentToCharPlaylist,
+      commentCurrent,
       engineStats: function() {
         if (!engine) return null;
         var stats = engine.stats();
@@ -5917,13 +6563,15 @@
       store.loadPlaylists(),
       store.loadFavorites(),
       store.loadRecent(),
-      store.loadSearches()
+      store.loadSearches(),
+      store.loadComments()
     ]);
     state.settings = loaded[0];
     state.playlists = loaded[1];
     state.favorites = loaded[2];
     state.recent = loaded[3];
     state.searches = loaded[4];
+    state.comments = loaded[5] || {};
     state.player.volume = state.settings.volume;
     state.queue = await loadQueue() || createQueue([], {
       repeat: state.settings.repeat,
@@ -6070,7 +6718,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.26.0" });
+    app = await createApp({ container, roche, version: "0.27.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6086,7 +6734,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.26.0",
+    version: "0.27.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
@@ -6134,4 +6782,5 @@
       ]
     }
   });
+  startCommandBridge();
 })();
