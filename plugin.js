@@ -1,4 +1,4 @@
-/* music-player v0.30.0 | built 2026-11-04T11:58:37.012Z */
+/* music-player v0.31.0 | built 2026-11-04T12:16:48.045Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -392,18 +392,19 @@
   var DEFAULT_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
     "",
-    "你能操作音乐。需要操作时，在回复最后单独一行写指令：",
-    "点歌 / 加歌：[[mp:play:歌名]]",
-    "上一首：[[mp:prev]]　下一首：[[mp:next]]　暂停：[[mp:pause]]　继续：[[mp:resume]]",
-    "把当前这首收进你的歌单：[[mp:add]]",
-    "给当前这首写一句评价：[[mp:comment:一句话评价]]",
-    "新建歌单：[[mp:new:歌单名]]　给我挑几首：[[mp:recommend]]",
+    "你能操作音乐。需要操作时，在回复最后单独一行写一条 HTML 注释指令（聊天里不会显示）：",
+    "点歌 / 加歌：<!-- mp:play:歌名 -->",
+    "上一首：<!-- mp:prev -->　下一首：<!-- mp:next -->",
+    "暂停：<!-- mp:pause -->　继续：<!-- mp:resume -->",
+    "把当前这首收进你的歌单：<!-- mp:add -->",
+    "给当前这首写一句评价：<!-- mp:comment:一句话评价 -->",
+    "新建歌单：<!-- mp:new:歌单名 -->　给我挑几首：<!-- mp:recommend -->",
     "",
     "规则：",
-    "1. 【重要】不要调用任何工具（music_play / music_next 等），只在正文里写上面这种指令行；",
-    "2. 指令必须单独占一行，不要放进代码块，不加标点、不加解释；",
+    "1. 【重要】不要调用任何工具（music_play / music_next 等），只写上面这种注释指令；",
+    "2. 指令必须单独占一行，且必须是 <!-- ... --> 这种注释形式，不要用方括号；",
     "3. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；",
-    "4. 用户让你放歌时必须写 [[mp:play:歌名]]；",
+    "4. 用户让你放歌时必须写 <!-- mp:play:歌名 -->；",
     "5. 切歌或换歌时，可以顺带自然地说一句你对这首歌的感受。"
   ].join("\n");
   var TOOL_CHAT_PROMPT = [
@@ -530,14 +531,14 @@
       chatPromptTool: (function() {
         var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
         if (!text) return def.chatPromptTool;
-        if (text.indexOf("[[mp:") !== -1) return def.chatPromptTool;
+        if (text.indexOf("mp:play") !== -1 || text.indexOf("[[mp:") !== -1) return def.chatPromptTool;
         return text.slice(0, 2e3);
       })(),
       chatRecommendSeed: String(s.chatRecommendSeed || def.chatRecommendSeed).trim().slice(0, 20),
       chatPrompt: (function() {
         var text = String(s.chatPrompt == null ? "" : s.chatPrompt).trim();
         if (!text) return def.chatPrompt;
-        if (text.indexOf("[[mp:") === -1 && text.indexOf("music_play") !== -1) return def.chatPrompt;
+        if (text.indexOf("mp:play") === -1 && text.indexOf("[[mp:") === -1 && text.indexOf("music_play") !== -1) return def.chatPrompt;
         return text.slice(0, 2e3);
       })(),
       nativeMinimal: bool(s.nativeMinimal, def.nativeMinimal)
@@ -3379,6 +3380,13 @@
     var view = h("div", { class: "mp-view" }, [header, listBox]);
     host.appendChild(view);
     renderList();
+    Promise.all([
+      ctx.reloadPlaylists ? ctx.reloadPlaylists() : Promise.resolve(),
+      ctx.reloadComments ? ctx.reloadComments() : Promise.resolve()
+    ]).then(function() {
+      renderList();
+    }).catch(function() {
+    });
     return { refresh: renderList };
   }
 
@@ -5058,6 +5066,7 @@
   // src/core/marker.js
   var MARK_TYPES = ["play", "next", "prev", "pause", "resume", "status", "add", "comment", "new", "recommend", "fav"];
   var PATTERN = /\[\[\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^\]\n]*))?\]\]/g;
+  var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^>\n]*?))?\s*-->/g;
   function normalizeType(raw) {
     var type = String(raw || "").toLowerCase();
     if (type === "previous") return "prev";
@@ -5069,16 +5078,20 @@
     var source = String(text || "");
     if (!source) return [];
     var out = [];
-    var match;
-    PATTERN.lastIndex = 0;
-    while ((match = PATTERN.exec(source)) !== null) {
-      var type = normalizeType(match[1]);
-      if (!type) continue;
-      var arg = String(match[2] == null ? "" : match[2]).trim();
-      if ((type === "play" || type === "comment" || type === "new") && !arg) continue;
-      out.push({ type, arg, raw: String(match[0]) });
-      if (out.length >= 6) break;
+    function collect(pattern) {
+      var match;
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(source)) !== null) {
+        var type = normalizeType(match[1]);
+        if (!type) continue;
+        var arg = String(match[2] == null ? "" : match[2]).trim();
+        if ((type === "play" || type === "comment" || type === "new") && !arg) continue;
+        out.push({ type, arg, raw: String(match[0]) });
+        if (out.length >= 6) return;
+      }
     }
+    collect(COMMENT_PATTERN);
+    if (out.length < 6) collect(PATTERN);
     return out;
   }
   function dedupeKey(conversationId, messageId, cmd) {
@@ -5092,6 +5105,8 @@
     conversationId: "",
     characterId: "",
     characterName: "",
+    // App 挂载时用的那份 roche 是完整的（含 chat），聊天回调里的 window.roche 常常没有 chat
+    roche: null,
     mode: "mark",
     // mark | tool
     degraded: false,
@@ -5099,7 +5114,11 @@
     executed: [],
     lastMessageId: ""
   };
+  function setRoche(raw) {
+    if (raw && raw.chat) runtime.roche = raw;
+  }
   function resolveRoche() {
+    if (runtime.roche) return runtime.roche;
     if (typeof window === "undefined") return null;
     return window.Roche || window.roche || null;
   }
@@ -5188,10 +5207,11 @@
     }
   }
   async function pushListenCard(roche, track) {
-    if (!track || !roche || !roche.chat || typeof roche.chat.createCard !== "function") return;
+    var host = runtime.roche && runtime.roche.chat ? runtime.roche : roche;
+    if (!track || !host || !host.chat || typeof host.chat.createCard !== "function") return;
     if (!runtime.conversationId) return;
     try {
-      await roche.chat.createCard({
+      await host.chat.createCard({
         conversationId: runtime.conversationId,
         messageType: "mp-listen",
         isMe: false,
@@ -5743,6 +5763,7 @@
       });
       var commandMode = state.settings.chatCommandMode || "tool";
       setCommandMode(commandMode);
+      setRoche(host.raw);
       if (commandMode === "mark" && typeof window !== "undefined" && typeof window.__mpStartCommandBridge === "function") {
         window.__mpStartCommandBridge();
       }
@@ -5797,9 +5818,18 @@
           var start = index || 0;
           var want = list[start] || list[0];
           var existIndex = -1;
+          var wantKey = trackKey(want);
+          var wantName = String(want.name || "").trim();
+          var wantArtist = String(want.artist || "").trim();
           if (state.queue) {
             for (var i = 0; i < state.queue.tracks.length; i++) {
-              if (trackKey(state.queue.tracks[i]) === trackKey(want)) {
+              var item = state.queue.tracks[i];
+              if (!item) continue;
+              if (trackKey(item) === wantKey) {
+                existIndex = i;
+                break;
+              }
+              if (wantName && String(item.name || "").trim() === wantName && String(item.artist || "").trim() === wantArtist) {
                 existIndex = i;
                 break;
               }
@@ -6370,8 +6400,17 @@
     async function reloadComments() {
       try {
         state.comments = await store.loadComments();
-        refresh();
+        return state.comments;
       } catch (err) {
+        return state.comments;
+      }
+    }
+    async function reloadPlaylists() {
+      try {
+        state.playlists = await store.loadPlaylists();
+        return state.playlists;
+      } catch (err) {
+        return state.playlists;
       }
     }
     async function createPlaylist2(name, tracks) {
@@ -6680,6 +6719,7 @@
         });
       },
       reloadComments,
+      reloadPlaylists,
       addCurrentToCharPlaylist,
       commentCurrent,
       engineStats: function() {
@@ -6852,7 +6892,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.30.0" });
+    app = await createApp({ container, roche, version: "0.31.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6868,7 +6908,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.30.0",
+    version: "0.31.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
