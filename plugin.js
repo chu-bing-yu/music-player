@@ -1,4 +1,4 @@
-/* music-player v0.28.0 | built 2026-11-04T11:25:29.529Z */
+/* music-player v0.29.0 | built 2026-11-04T11:44:04.889Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -400,10 +400,11 @@
     "新建歌单：[[mp:new:歌单名]]　给我挑几首：[[mp:recommend]]",
     "",
     "规则：",
-    "1. 指令必须单独占一行，不要放进代码块，不加标点、不加解释；",
-    "2. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；",
-    "3. 用户让你放歌时必须写 [[mp:play:歌名]]；",
-    "4. 切歌或换歌时，可以顺带自然地说一句你对这首歌的感受。"
+    "1. 【重要】不要调用任何工具（music_play / music_next 等），只在正文里写上面这种指令行；",
+    "2. 指令必须单独占一行，不要放进代码块，不加标点、不加解释；",
+    "3. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；",
+    "4. 用户让你放歌时必须写 [[mp:play:歌名]]；",
+    "5. 切歌或换歌时，可以顺带自然地说一句你对这首歌的感受。"
   ].join("\n");
   var TOOL_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
@@ -525,12 +526,16 @@
       chatCommandMode: s.chatCommandMode === "mark" ? "mark" : "tool",
       chatPromptTool: (function() {
         var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
-        return text ? text.slice(0, 2e3) : def.chatPromptTool;
+        if (!text) return def.chatPromptTool;
+        if (text.indexOf("[[mp:") !== -1) return def.chatPromptTool;
+        return text.slice(0, 2e3);
       })(),
       chatRecommendSeed: String(s.chatRecommendSeed || def.chatRecommendSeed).trim().slice(0, 20),
       chatPrompt: (function() {
         var text = String(s.chatPrompt == null ? "" : s.chatPrompt).trim();
-        return text ? text.slice(0, 2e3) : def.chatPrompt;
+        if (!text) return def.chatPrompt;
+        if (text.indexOf("[[mp:") === -1 && text.indexOf("music_play") !== -1) return def.chatPrompt;
+        return text.slice(0, 2e3);
       })(),
       nativeMinimal: bool(s.nativeMinimal, def.nativeMinimal)
     };
@@ -4768,9 +4773,56 @@
   }
   function unmountCard() {
   }
+  async function playCardTrack(track, roche) {
+    if (!track) return false;
+    var bridge = getBridge();
+    if (bridge && bridge.ready()) {
+      try {
+        var res = await bridge.playKey(trackKey(track));
+        if (res && res.ok) return true;
+        var added = await bridge.addAndPlay([track], 0);
+        return !!(added && added.ok);
+      } catch (err) {
+      }
+    }
+    var native = typeof window !== "undefined" && window.Capacitor && window.Capacitor.Plugins ? window.Capacitor.Plugins.BackgroundAudio : null;
+    if (!native || typeof native.replaceQueue !== "function") return false;
+    try {
+      var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+      var sources = createSources();
+      var url = "";
+      try {
+        url = await sources.createResolver(track, settings)();
+      } catch (err) {
+        url = "";
+      }
+      if (!url) return false;
+      await native.replaceQueue({
+        tracks: [{
+          id: trackKey(track),
+          albumId: track.album || "",
+          title: track.name || "未知歌曲",
+          artist: track.artist || "",
+          cover: track.cover || "",
+          url
+        }],
+        startIndex: 0,
+        mode: "loop",
+        autoplay: true
+      });
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
   async function onCardAction(message, action, payload, roche) {
     if (action !== "open") return;
     rememberCard(message, roche);
+    var track = normalizeTrack(message && message.cardData ? message.cardData.track : null, "local");
+    if (track && !(getSnapshot() && getSnapshot().track && trackKey(getSnapshot().track) === trackKey(track))) {
+      playCardTrack(track, roche).catch(function() {
+      });
+    }
     openListenPanel(message, roche);
   }
   function closeModal(modal) {
@@ -5472,7 +5524,7 @@
         var first = found[0];
         var result;
         if (runtime2.chatAddToQueue) {
-          result = await bridge.addTracks([first]);
+          result = await bridge.addAndPlay([first], 0);
         } else {
           result = await bridge.playList([first], 0);
           result = { ok: !!result, started: true };
@@ -6741,7 +6793,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.28.0" });
+    app = await createApp({ container, roche, version: "0.29.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6757,7 +6809,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.28.0",
+    version: "0.29.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
