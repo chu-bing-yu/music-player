@@ -1,4 +1,4 @@
-/* music-player v0.20.0 | built 2026-11-04T09:00:47.749Z */
+/* music-player v0.21.0 | built 2026-11-04T09:17:10.330Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -366,9 +366,9 @@
   var SCHEMA_VERSION = 4;
   var DEFAULT_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
-    "你可以直接调用音乐工具帮用户操作：music_play 点歌、music_next 下一首、music_previous 上一首、",
-    "music_pause 暂停、music_resume 继续、music_status 查当前播放、music_favorite 收藏当前这首。",
-    "用户想听歌时优先调用工具，不要编造歌名；工具返回失败就照实说，不要假装已经放了。"
+    "可用工具：music_play（点歌）、music_next、music_previous、music_pause、music_resume、music_status、music_favorite。",
+    "规则：用户说「放/加/换一首某某」时，必须真的调用 music_play，不能只在文字里说「加好了」「已经在播」。",
+    "没有调用工具就等于什么都没发生，不要假装已经完成。工具返回失败就照实说。"
   ].join("");
   var THEMES = [
     { id: "auto", name: "跟随系统" },
@@ -4775,20 +4775,6 @@
     if (!message || !message.id || !message.conversationId) return;
     lastCard = { conversationId: message.conversationId, messageId: message.id, roche };
   }
-  async function syncCardTrack(track) {
-    if (!track || !lastCard || !lastCard.messageId) return;
-    var roche = lastCard.roche;
-    if (!roche || !roche.chat || typeof roche.chat.updateCard !== "function") return;
-    try {
-      await roche.chat.updateCard({
-        conversationId: lastCard.conversationId,
-        messageId: lastCard.messageId,
-        cardData: { track, status: "listening", at: Date.now() },
-        modelText: "正在和你一起听《" + track.name + "》" + (track.artist ? " - " + track.artist : "") + "。"
-      });
-    } catch (err) {
-    }
-  }
   async function pushCard(ctx, roche, track, status) {
     if (!roche || !roche.chat || typeof roche.chat.createCard !== "function") return;
     if (!ctx || !ctx.conversationId || !ctx.contact || !ctx.contact.id) return;
@@ -4839,7 +4825,7 @@
   var chatTools = [
     tool(
       "music_play",
-      "按歌名或歌手搜索歌曲；加到当前播放列表末尾，不替换用户已有的列表。",
+      "用户说「放/加/来一首 某某」时必须调用：搜索这首歌，把第一首加入当前播放列表。不调用就等于没做。",
       { keyword: "string" },
       async function(args, ctx, roche) {
         var keyword = String(args.keyword || "").trim();
@@ -4970,12 +4956,6 @@
         shell.refreshPage();
       }
       syncChatRuntime();
-      var track2 = state.player.track;
-      var key = track2 ? trackKey(track2) : "";
-      if (key && key !== cardSyncKey) {
-        cardSyncKey = key;
-        syncCardTrack(track2);
-      }
     }
     function syncChatRuntime() {
       setChatRuntime({
@@ -5885,7 +5865,6 @@
           saveQueue();
           loadLyrics(track2);
           if (shell) shell.renderPlayer();
-          syncCardTrack(track2);
         }
       });
     }
@@ -5943,6 +5922,19 @@
         loadLyrics(state.player.track);
       }
     }
+    var queueSyncTimer = setInterval(function() {
+      if (!engine || !shell || !state.queue) return;
+      var now = engine.getState().track;
+      if (!now) return;
+      var exists = state.queue.tracks.some(function(t) {
+        return trackKey(t) === trackKey(now);
+      });
+      if (exists) return;
+      state.queue = appendTracks(state.queue, [now]);
+      engine.setList(state.queue.tracks, state.settings);
+      saveQueue();
+      refresh();
+    }, 4e3);
     var pending = await host.storage.get("mp:pending", null);
     if (pending) {
       await host.storage.delete("mp:pending");
@@ -5957,6 +5949,8 @@
       ctx,
       destroy: function() {
         searchToken += 1;
+        if (queueSyncTimer) clearInterval(queueSyncTimer);
+        queueSyncTimer = null;
         if (player) player.setHandlers({});
         if (engine) engine.dispose();
         clearBridge();
@@ -5972,7 +5966,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.20.0" });
+    app = await createApp({ container, roche, version: "0.21.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -5988,7 +5982,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.20.0",
+    version: "0.21.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
