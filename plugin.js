@@ -1,4 +1,4 @@
-/* music-player v0.29.0 | built 2026-11-04T11:44:04.889Z */
+/* music-player v0.30.0 | built 2026-11-04T11:58:37.012Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -461,6 +461,8 @@
       chatAddToQueue: true,
       // 工具通道的提示词（和标记通道分开存，设置页按当前模式显示对应那份）
       chatPromptTool: TOOL_CHAT_PROMPT,
+      /** 点聊天卡片时要不要重新播放这首；默认只显示当前状态 */
+      cardTapPlay: false,
       // 指令通道：tool = 调用工具（稳，默认）；mark = 模型写标记（省一次调用，但需要后台轮询）
       chatCommandMode: "tool",
       // 推荐歌单的搜索种子
@@ -524,6 +526,7 @@
       chatListen: bool(s.chatListen, def.chatListen),
       chatAddToQueue: bool(s.chatAddToQueue, def.chatAddToQueue),
       chatCommandMode: s.chatCommandMode === "mark" ? "mark" : "tool",
+      cardTapPlay: bool(s.cardTapPlay, def.cardTapPlay),
       chatPromptTool: (function() {
         var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
         if (!text) return def.chatPromptTool;
@@ -3641,6 +3644,13 @@
           return input;
         })(), "TA 给你挑歌时会用这个词搜索"),
         field(
+          "点卡片播放",
+          switchEl(!!s.cardTapPlay, function(v) {
+            ctx.updateSettings({ cardTapPlay: v });
+          }),
+          s.cardTapPlay ? "开：每次点卡片都切回这张卡上的歌" : "关：发卡时已经播过，之后再点卡片只显示当前播放状态"
+        ),
+        field(
           "一起听提示词",
           editPromptBtn,
           "每轮注入给主聊天的说明；占位符 {{title}} {{artist}} {{state}} {{queue}} 会自动替换"
@@ -4818,10 +4828,18 @@
   async function onCardAction(message, action, payload, roche) {
     if (action !== "open") return;
     rememberCard(message, roche);
+    var settings = normalizeSettings(null);
+    try {
+      settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+    } catch (err) {
+    }
     var track = normalizeTrack(message && message.cardData ? message.cardData.track : null, "local");
-    if (track && !(getSnapshot() && getSnapshot().track && trackKey(getSnapshot().track) === trackKey(track))) {
-      playCardTrack(track, roche).catch(function() {
-      });
+    if (settings.cardTapPlay && track) {
+      var snap = getSnapshot();
+      if (!(snap && snap.track && trackKey(snap.track) === trackKey(track))) {
+        playCardTrack(track, roche).catch(function() {
+        });
+      }
     }
     openListenPanel(message, roche);
   }
@@ -4890,6 +4908,14 @@
       row.addEventListener("click", async function() {
         row.disabled = true;
         var ok = await sendCard(roche, ctx, track, settings);
+        if (ok) {
+          try {
+            if (!(getSnapshot() && getSnapshot().track && trackKey(getSnapshot().track) === trackKey(track))) {
+              await playCardTrack(track, roche);
+            }
+          } catch (err) {
+          }
+        }
         row.disabled = false;
         if (ok) close();
       });
@@ -5161,6 +5187,21 @@
       return null;
     }
   }
+  async function pushListenCard(roche, track) {
+    if (!track || !roche || !roche.chat || typeof roche.chat.createCard !== "function") return;
+    if (!runtime.conversationId) return;
+    try {
+      await roche.chat.createCard({
+        conversationId: runtime.conversationId,
+        messageType: "mp-listen",
+        isMe: false,
+        senderId: runtime.characterId || "",
+        cardData: { track, status: "listening", at: Date.now() },
+        modelText: "我点开了《" + track.name + "》" + (track.artist ? " - " + track.artist : "") + "，和你一起听。"
+      });
+    } catch (err) {
+    }
+  }
   async function doPlay(keyword, roche, settings) {
     var bridge = getBridge();
     if (bridge && bridge.ready()) {
@@ -5171,9 +5212,12 @@
       } else if (typeof bridge.playList === "function") {
         await bridge.playList([found[0]], 0);
       }
+      await pushListenCard(roche, found[0]);
       return { ok: true, track: found[0] };
     }
-    return headlessPlay(keyword, roche, settings);
+    var headless = await headlessPlay(keyword, roche, settings);
+    if (headless.ok) await pushListenCard(roche, headless.track);
+    return headless;
   }
   async function doControl(action) {
     var bridge = getBridge();
@@ -5751,13 +5795,28 @@
           var list = (tracks || []).filter(Boolean);
           if (!list.length) return { ok: false, reason: "没有可播放的歌" };
           var start = index || 0;
+          var want = list[start] || list[0];
+          var existIndex = -1;
+          if (state.queue) {
+            for (var i = 0; i < state.queue.tracks.length; i++) {
+              if (trackKey(state.queue.tracks[i]) === trackKey(want)) {
+                existIndex = i;
+                break;
+              }
+            }
+          }
+          if (existIndex >= 0) {
+            await playQueueAt(existIndex);
+            refresh();
+            return { ok: true, track: want, duplicate: true };
+          }
           state.queue = appendTracks(state.queue, list);
           saveQueue();
           if (engine) engine.setList(state.queue.tracks, state.settings);
           var target = state.queue.tracks.length - list.length + start;
           await playQueueAt(target);
           refresh();
-          return { ok: true, track: list[start] || list[0] };
+          return { ok: true, track: want };
         },
         /** 追加到当前队列，不打断正在播的歌（模型点歌默认走这里） */
         addTracks: async function(tracks) {
@@ -6793,7 +6852,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.29.0" });
+    app = await createApp({ container, roche, version: "0.30.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6809,7 +6868,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.29.0",
+    version: "0.30.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
