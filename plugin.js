@@ -1,4 +1,4 @@
-/* music-player v0.27.0 | built 2026-11-04T11:07:09.912Z */
+/* music-player v0.28.0 | built 2026-11-04T11:25:29.529Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -458,8 +458,10 @@
       chatListen: true,
       // 角色点歌时：true = 只把第一首加进队列；false = 直接替换成这首
       chatAddToQueue: true,
-      // 指令通道：mark = 模型写标记（省一次模型调用）；tool = 调用工具（多一次但稳）
-      chatCommandMode: "mark",
+      // 工具通道的提示词（和标记通道分开存，设置页按当前模式显示对应那份）
+      chatPromptTool: TOOL_CHAT_PROMPT,
+      // 指令通道：tool = 调用工具（稳，默认）；mark = 模型写标记（省一次调用，但需要后台轮询）
+      chatCommandMode: "tool",
       // 推荐歌单的搜索种子
       chatRecommendSeed: "华语流行",
       chatPrompt: DEFAULT_CHAT_PROMPT,
@@ -520,7 +522,11 @@
       neteaseProfile: String(s.neteaseProfile || "").trim(),
       chatListen: bool(s.chatListen, def.chatListen),
       chatAddToQueue: bool(s.chatAddToQueue, def.chatAddToQueue),
-      chatCommandMode: s.chatCommandMode === "tool" ? "tool" : "mark",
+      chatCommandMode: s.chatCommandMode === "mark" ? "mark" : "tool",
+      chatPromptTool: (function() {
+        var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
+        return text ? text.slice(0, 2e3) : def.chatPromptTool;
+      })(),
       chatRecommendSeed: String(s.chatRecommendSeed || def.chatRecommendSeed).trim().slice(0, 20),
       chatPrompt: (function() {
         var text = String(s.chatPrompt == null ? "" : s.chatPrompt).trim();
@@ -3560,18 +3566,27 @@
           s.floating ? "开：点右上角最小化会缩成悬浮球" : "关：点右上角直接退出 App，不显示悬浮球，音乐继续在后台播放"
         )
       ]);
+      var toolMode = (s.chatCommandMode || "tool") === "tool";
+      var promptKey = toolMode ? "chatPromptTool" : "chatPrompt";
+      var promptValue = toolMode ? s.chatPromptTool || TOOL_CHAT_PROMPT : s.chatPrompt || DEFAULT_CHAT_PROMPT;
+      var promptDefault = toolMode ? TOOL_CHAT_PROMPT : DEFAULT_CHAT_PROMPT;
       var editPromptBtn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "编辑" });
       editPromptBtn.addEventListener("click", function() {
+        var patch = {};
         ctx.openEditor({
-          title: "一起听提示词",
-          value: s.chatPrompt,
-          defaultValue: DEFAULT_CHAT_PROMPT,
+          title: toolMode ? "工具通道提示词" : "标记通道提示词",
+          value: promptValue,
+          defaultValue: promptDefault,
           placeholder: "可用占位符：{{title}} {{artist}} {{state}} {{queue}}",
           onSubmit: function(text) {
-            ctx.updateSettings({ chatPrompt: text });
+            var next = {};
+            next[promptKey] = text;
+            ctx.updateSettings(next);
           },
           onReset: function() {
-            ctx.updateSettings({ chatPrompt: DEFAULT_CHAT_PROMPT });
+            var next = {};
+            next[promptKey] = promptDefault;
+            ctx.updateSettings(next);
           }
         });
       });
@@ -5268,7 +5283,9 @@
     isPlaying: false,
     queueSize: 0,
     chatAddToQueue: true,
-    chatPrompt: DEFAULT_CHAT_PROMPT
+    chatCommandMode: "tool",
+    chatPrompt: DEFAULT_CHAT_PROMPT,
+    chatPromptTool: TOOL_CHAT_PROMPT
   };
   function setChatRuntime(patch) {
     if (!patch) return;
@@ -5408,7 +5425,7 @@
   function chatContextProvider(ctx) {
     noteConversation(ctx);
     if (!isOn(conversationIdOf(ctx), runtime2.chatListen)) return null;
-    var template = runtime2.chatCommandMode === "tool" ? TOOL_CHAT_PROMPT : runtime2.chatPrompt || DEFAULT_CHAT_PROMPT;
+    var template = runtime2.chatCommandMode === "mark" ? runtime2.chatPrompt || DEFAULT_CHAT_PROMPT : runtime2.chatPromptTool || TOOL_CHAT_PROMPT;
     return renderChatPrompt(template) || null;
   }
   function tool(id, description, parameters, run) {
@@ -5455,7 +5472,7 @@
         var first = found[0];
         var result;
         if (runtime2.chatAddToQueue) {
-          result = await bridge.addAndPlay([first], 0);
+          result = await bridge.addTracks([first]);
         } else {
           result = await bridge.playList([first], 0);
           result = { ok: !!result, started: true };
@@ -5624,10 +5641,15 @@
         isPlaying: state.player.status === "playing",
         queueSize: state.queue ? state.queue.tracks.length : 0,
         chatAddToQueue: !!state.settings.chatAddToQueue,
-        chatCommandMode: state.settings.chatCommandMode || "mark",
-        chatPrompt: state.settings.chatPrompt
+        chatCommandMode: state.settings.chatCommandMode || "tool",
+        chatPrompt: state.settings.chatPrompt,
+        chatPromptTool: state.settings.chatPromptTool
       });
-      setCommandMode(state.settings.chatCommandMode || "mark");
+      var commandMode = state.settings.chatCommandMode || "tool";
+      setCommandMode(commandMode);
+      if (commandMode === "mark" && typeof window !== "undefined" && typeof window.__mpStartCommandBridge === "function") {
+        window.__mpStartCommandBridge();
+      }
       saveSnapshot({
         track: state.player.track,
         isPlaying: state.player.status === "playing",
@@ -5960,7 +5982,8 @@
       saveQueue();
       if (engine) {
         engine.setList(state.queue.tracks, state.settings);
-        await engine.playAt(index);
+        var started = await engine.playAt(index);
+        if (!started) await playTrack(track2);
         refresh();
         return;
       }
@@ -6718,7 +6741,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.27.0" });
+    app = await createApp({ container, roche, version: "0.28.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -6734,7 +6757,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.27.0",
+    version: "0.28.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
@@ -6782,5 +6805,7 @@
       ]
     }
   });
-  startCommandBridge();
+  if (typeof window !== "undefined") {
+    window.__mpStartCommandBridge = startCommandBridge;
+  }
 })();
