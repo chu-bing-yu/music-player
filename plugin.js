@@ -1,4 +1,4 @@
-/* music-player v0.18.0 | built 2026-11-03T14:45:05.963Z */
+/* music-player v0.19.0 | built 2026-11-04T08:40:21.093Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -887,6 +887,11 @@
   }
 
   // src/services/netease.js
+  function httpsCover(url) {
+    var text = String(url || "");
+    if (!text) return "";
+    return text.replace(/^http:\/\//i, "https://");
+  }
   function base(settings) {
     var url = String(settings && settings.neteaseApi ? settings.neteaseApi : "").trim();
     return url.replace(/\/+$/, "");
@@ -951,7 +956,7 @@
         name: song.name,
         artist: artists,
         album: song.al && song.al.name || "",
-        cover: song.al && song.al.picUrl || "",
+        cover: httpsCover(song.al && song.al.picUrl),
         duration: song.dt || 0
       };
     });
@@ -987,7 +992,7 @@
         name: song.name,
         artist: artists,
         album: song.al && song.al.name || "",
-        cover: song.al && song.al.picUrl || "",
+        cover: httpsCover(song.al && song.al.picUrl),
         duration: song.dt || 0
       };
     });
@@ -2426,7 +2431,7 @@
       row.appendChild(more);
     }
     row.addEventListener("click", function() {
-      opts.onPlay();
+      opts.onPlay(row);
     });
     return row;
   }
@@ -2598,6 +2603,13 @@
         return selected[key];
       });
     }
+    function updateSelectCount() {
+      var countEl = resultsBox.querySelector(".mp-select-bar__count");
+      var addBtn = resultsBox.querySelector(".mp-select-bar .mp-btn");
+      var n = selectedTracks().length;
+      if (countEl) countEl.textContent = "已选 " + n + " 首";
+      if (addBtn) addBtn.disabled = !n;
+    }
     var input = h("input", {
       class: "mp-search__input",
       type: "text",
@@ -2736,8 +2748,9 @@
         var addBtn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "加入播放列表" });
         addBtn.disabled = !chosen.length;
         addBtn.addEventListener("click", function() {
-          if (!chosen.length) return;
-          ctx.appendToQueue(chosen).then(function(n) {
+          var picked = selectedTracks();
+          if (!picked.length) return;
+          ctx.appendToQueue(picked).then(function(n) {
             selected = /* @__PURE__ */ Object.create(null);
             selecting = false;
             ctx.toast("已加入 " + n + " 首到播放列表");
@@ -2760,10 +2773,19 @@
           selectable: selecting,
           selected: !!selected[trackKey(track)],
           tag: track.source === "itunes" ? "试听" : track.source === "audius" ? "免费" : "",
-          onPlay: function() {
+          onPlay: function(rowEl) {
             if (selecting) {
               toggleSelect(track);
-              renderResults();
+              var on = !!selected[trackKey(track)];
+              if (rowEl) {
+                rowEl.classList.toggle("is-selected", on);
+                var check = rowEl.querySelector(".mp-row__check");
+                if (check) {
+                  check.classList.toggle("is-on", on);
+                  check.innerHTML = on ? icon("check") : "";
+                }
+              }
+              updateSelectCount();
               return;
             }
             if (ctx.isCurrent(track)) ctx.togglePlay();
@@ -4407,6 +4429,7 @@
   }
   async function onCardAction(message, action, payload, roche) {
     if (action !== "open") return;
+    rememberCard(message, roche);
     openListenPanel(message, roche);
   }
   function closeModal(modal) {
@@ -4674,7 +4697,7 @@
     var sources = createSources();
     var found = await sources.search(keyword, settings, { limit: 8 });
     if (!found.tracks.length) return { ok: false, reason: "没搜到这首歌" };
-    var list = found.tracks.slice(0, 5);
+    var list = found.tracks.slice(0, 1);
     var nativeTracks = [];
     for (var i = 0; i < list.length; i++) {
       try {
@@ -4714,11 +4737,30 @@
       return t.name + " - " + t.artist;
     }) };
   }
+  var lastCard = null;
+  function rememberCard(message, roche) {
+    if (!message || !message.id || !message.conversationId) return;
+    lastCard = { conversationId: message.conversationId, messageId: message.id, roche };
+  }
+  async function syncCardTrack(track) {
+    if (!track || !lastCard || !lastCard.messageId) return;
+    var roche = lastCard.roche;
+    if (!roche || !roche.chat || typeof roche.chat.updateCard !== "function") return;
+    try {
+      await roche.chat.updateCard({
+        conversationId: lastCard.conversationId,
+        messageId: lastCard.messageId,
+        cardData: { track, status: "listening", at: Date.now() },
+        modelText: "正在和你一起听《" + track.name + "》" + (track.artist ? " - " + track.artist : "") + "。"
+      });
+    } catch (err) {
+    }
+  }
   async function pushCard(ctx, roche, track, status) {
     if (!roche || !roche.chat || typeof roche.chat.createCard !== "function") return;
     if (!ctx || !ctx.conversationId || !ctx.contact || !ctx.contact.id) return;
     try {
-      await roche.chat.createCard({
+      var created = await roche.chat.createCard({
         conversationId: ctx.conversationId,
         messageType: MESSAGE_TYPE,
         isMe: false,
@@ -4726,6 +4768,8 @@
         cardData: { track, status: status || "listening", at: Date.now() },
         modelText: "我点开了《" + track.name + "》" + (track.artist ? " - " + track.artist : "") + "，和你一起听。"
       });
+      var id = created && (created.id || created.message && created.message.id);
+      if (id) lastCard = { conversationId: ctx.conversationId, messageId: id, roche };
     } catch (err) {
     }
   }
@@ -4786,7 +4830,7 @@
         var first = found[0];
         var result;
         if (runtime.chatAddToQueue) {
-          result = await bridge.addTracks([first]);
+          result = await bridge.addAndPlay([first], 0);
         } else {
           result = await bridge.playList([first], 0);
           result = { ok: !!result, started: true };
@@ -4885,6 +4929,7 @@
     async function ensureCover(track2) {
       return track2;
     }
+    var cardSyncKey = "";
     function refresh() {
       if (shell) {
         shell.renderPlayer();
@@ -4892,6 +4937,12 @@
         shell.refreshPage();
       }
       syncChatRuntime();
+      var track2 = state.player.track;
+      var key = track2 ? trackKey(track2) : "";
+      if (key && key !== cardSyncKey) {
+        cardSyncKey = key;
+        syncCardTrack(track2);
+      }
     }
     function syncChatRuntime() {
       setChatRuntime({
@@ -5801,6 +5852,7 @@
           saveQueue();
           loadLyrics(track2);
           if (shell) shell.renderPlayer();
+          syncCardTrack(track2);
         }
       });
     }
@@ -5879,7 +5931,7 @@
   async function mount7(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.18.0" });
+    app = await createApp({ container, roche, version: "0.19.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -5895,7 +5947,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.18.0",
+    version: "0.19.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
