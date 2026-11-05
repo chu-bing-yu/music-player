@@ -1,4 +1,4 @@
-/* music-player v0.38.0 | built 2026-11-05T11:33:22.272Z */
+/* music-player v0.39.0 | built 2026-11-05T12:42:59.611Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -270,15 +270,15 @@
     var o = opts || {};
     var list = (tracks || []).filter(Boolean).slice();
     var repeat = REPEAT_ORDER.indexOf(o.repeat) === -1 ? REPEAT.OFF : o.repeat;
-    var shuffle = !!o.shuffle;
+    var shuffle2 = !!o.shuffle;
     var start = clamp(Number(o.startIndex) || 0, 0, Math.max(list.length - 1, 0));
-    var order = shuffle ? shuffledOrder(list.length, o.rng, start) : range(list.length);
-    var pos = shuffle ? 0 : start;
+    var order = shuffle2 ? shuffledOrder(list.length, o.rng, start) : range(list.length);
+    var pos = shuffle2 ? 0 : start;
     return {
       tracks: list,
       order,
       pos: list.length ? pos : -1,
-      shuffle,
+      shuffle: shuffle2,
       repeat
     };
   }
@@ -371,11 +371,11 @@
     if (at === -1) return queue;
     return Object.assign({}, queue, { pos: at });
   }
-  function setShuffle(queue, shuffle, rng) {
+  function setShuffle(queue, shuffle2, rng) {
     if (!queue) return queue;
-    if (!!shuffle === !!queue.shuffle) return queue;
+    if (!!shuffle2 === !!queue.shuffle) return queue;
     var playingIdx = currentIndex(queue);
-    if (shuffle) {
+    if (shuffle2) {
       var shuffled = shuffledOrder(queue.tracks.length, rng, playingIdx);
       return Object.assign({}, queue, { shuffle: true, order: shuffled, pos: 0 });
     }
@@ -482,6 +482,10 @@
       cardTapPlay: false,
       /** 推荐页刷新策略：manual = 点「换一批」才调模型（默认）；auto = 每次进入都调；local = 不调模型 */
       recMode: "manual",
+      /** 每次推荐多少首（5~50） */
+      recCount: 20,
+      /** 只推荐能解析出播放地址的歌（每批会多花 2~4 秒） */
+      recFilterPlayable: true,
       // 指令通道：hybrid = 点歌用工具、其余用注释（默认）；
       // tool = 全走工具（多一次调用但最稳）；mark = 全走注释（最省调用）
       chatCommandMode: "hybrid",
@@ -559,6 +563,12 @@
         if (mode === "auto" || mode === "local" || mode === "manual") return mode;
         return def.recMode;
       })(),
+      recCount: (function() {
+        var n = Math.round(Number(s.recCount));
+        if (!Number.isFinite(n)) return def.recCount;
+        return Math.max(5, Math.min(50, n));
+      })(),
+      recFilterPlayable: bool(s.recFilterPlayable, def.recFilterPlayable),
       chatPromptTool: (function() {
         var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
         if (!text) return def.chatPromptTool;
@@ -1111,6 +1121,26 @@
         name: item.name,
         cover: item.coverImgUrl || "",
         count: item.trackCount || item.tracks && item.tracks.length || 0
+      };
+    });
+  }
+  async function dailySongs(settings, limit) {
+    var data = await call(settings, "/recommend/songs");
+    var songs = data && data.data && data.data.dailySongs || [];
+    var max = Math.max(1, Math.min(50, Number(limit) || 20));
+    return songs.slice(0, max).map(function(song) {
+      var artists = (song.ar || []).map(function(a) {
+        return a.name;
+      }).join("/");
+      return {
+        source: "netease",
+        platform: "netease",
+        id: song.id,
+        name: song.name,
+        artist: artists,
+        album: song.al && song.al.name || "",
+        cover: httpsCover(song.al && song.al.picUrl),
+        duration: song.dt || 0
       };
     });
   }
@@ -2661,8 +2691,64 @@
 
   // src/services/recommend.js
   var AI_TIMEOUT = 2e4;
-  var MAX_TRACKS = 8;
-  function buildProfilePrompt(prefs, recent, favorites) {
+  var RESOLVE_TIMEOUT = 8e3;
+  var RESOLVE_CONCURRENCY = 4;
+  var SCENES = ["夜晚", "通勤", "雨天", "健身", "独处", "周末", "开车", "睡前"];
+  var DEFAULT_COUNT = 20;
+  var MIN_COUNT = 5;
+  var MAX_COUNT = 50;
+  function clampCount(value) {
+    var n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return DEFAULT_COUNT;
+    return Math.max(MIN_COUNT, Math.min(MAX_COUNT, n));
+  }
+  function makeRandom(seed) {
+    var s = Math.abs(Number(seed) || Date.now()) % 233280 || 1;
+    return function() {
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+  }
+  function shuffle(list, rnd) {
+    var arr = list.slice();
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(rnd() * (i + 1));
+      var tmp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = tmp;
+    }
+    return arr;
+  }
+  function pickSeeds(prefs, recent, favorites, now) {
+    var pool = [];
+    (recent || []).forEach(function(t) {
+      if (t && t.artist) pool.push(String(t.artist));
+    });
+    (favorites || []).forEach(function(t) {
+      if (t && t.artist) pool.push(String(t.artist));
+    });
+    (prefs || []).forEach(function(p) {
+      if (p && p.label !== "避雷" && p.prompt) pool.push(String(p.prompt));
+    });
+    SCENES.forEach(function(s) {
+      pool.push(s);
+    });
+    var seen = /* @__PURE__ */ Object.create(null);
+    var uniq = [];
+    pool.forEach(function(word) {
+      var text = String(word || "").replace(/\s+/g, " ").trim();
+      if (!text || seen[text]) return;
+      seen[text] = true;
+      uniq.push(text);
+    });
+    if (!uniq.length) return ["华语流行"];
+    var rnd = makeRandom(now);
+    var shuffled = shuffle(uniq, rnd);
+    var take = 2 + Math.floor(rnd() * 2);
+    return shuffled.slice(0, Math.min(take, shuffled.length));
+  }
+  function buildProfilePrompt(prefs, recent, favorites, count) {
+    var want = clampCount(count);
     var recentNames = (recent || []).slice(0, 12).map(function(t) {
       return "《" + (t.name || "") + "》" + (t.artist ? " - " + t.artist : "");
     }).filter(Boolean);
@@ -2679,9 +2765,9 @@
       favNames.length ? "【收藏】\n" + favNames.join("、") : "【收藏】暂无",
       "",
       "要求：",
-      "1. 挑 6 到 8 首，风格要贴合画像，不要重复最近在听的歌；",
+      "1. 挑 " + want + " 首，风格要贴合画像，不要重复最近在听的歌；",
       "2. 只输出 JSON，不要解释、不要代码块，格式：",
-      '{"playlistName":"四个字以内的小标题","keywords":["3 个中文搜索关键词"],"tracks":[{"name":"歌名","artist":"歌手"}]}',
+      '{"playlistName":"四个字以内的小标题","keywords":["3 到 5 个互不相同的中文搜索关键词"],"tracks":[{"name":"歌名","artist":"歌手"}]}',
       "3. 歌名和歌手必须是真实存在的作品，不要编造。"
     ].join("\n");
   }
@@ -2692,10 +2778,9 @@
     var start = raw.indexOf("{");
     var end = raw.lastIndexOf("}");
     if (start === -1 || end <= start) return null;
-    var body = raw.slice(start, end + 1);
     var data = null;
     try {
-      data = JSON.parse(body);
+      data = JSON.parse(raw.slice(start, end + 1));
     } catch (err) {
       return null;
     }
@@ -2707,10 +2792,10 @@
       var name = String(t.name || t.title || "").trim();
       if (!name) return null;
       return { name, artist: String(t.artist || "").trim() };
-    }).filter(Boolean).slice(0, MAX_TRACKS);
+    }).filter(Boolean);
     var keywords = Array.isArray(data.keywords) ? data.keywords.map(function(k) {
       return String(k || "").trim();
-    }).filter(Boolean).slice(0, 4) : [];
+    }).filter(Boolean).slice(0, 5) : [];
     return {
       playlistName: String(data.playlistName || data.name || "AI 推荐").trim().slice(0, 12),
       keywords,
@@ -2727,71 +2812,120 @@
       })
     ]);
   }
-  async function ground({ sources, settings, picks, keywords, avoid }) {
+  async function playable(track, sources, settings) {
+    try {
+      var url = await withTimeout(Promise.resolve(sources.createResolver(track, settings)()), RESOLVE_TIMEOUT);
+      return !!url;
+    } catch (err) {
+      return false;
+    }
+  }
+  async function ground(opts) {
+    var sources = opts.sources;
+    var settings = opts.settings;
+    var want = clampCount(opts.want);
+    var avoid = opts.avoid || [];
+    var exclude = opts.exclude || /* @__PURE__ */ Object.create(null);
     var out = [];
     var seen = /* @__PURE__ */ Object.create(null);
+    var checked = /* @__PURE__ */ Object.create(null);
     function blocked(track) {
-      if (!avoid || !avoid.length) return false;
+      if (!avoid.length) return false;
       var text = (track.name || "") + " " + (track.artist || "");
       return avoid.some(function(word) {
         return word && text.indexOf(word) !== -1;
       });
     }
-    function push(track) {
-      if (!track) return false;
-      var key = trackKey(track);
-      if (!key || seen[key]) return false;
-      if (blocked(track)) return false;
-      seen[key] = true;
-      out.push(track);
-      return true;
-    }
-    for (var i = 0; i < picks.length && out.length < MAX_TRACKS; i++) {
-      var pick = picks[i];
+    var picks = [];
+    for (var i = 0; i < (opts.picks || []).length && picks.length < want * 2; i++) {
+      var pick = opts.picks[i];
+      if (!pick || !pick.name) continue;
       try {
-        var kw = (pick.name + " " + pick.artist).trim();
-        var found = await sources.search(kw, settings, { limit: 4 });
-        if (found && found.tracks && found.tracks.length) push(found.tracks[0]);
-      } catch (err) {
-      }
-    }
-    for (var j = 0; j < keywords.length && out.length < MAX_TRACKS; j++) {
-      try {
-        var res = await sources.search(keywords[j], settings, { limit: 6 });
-        (res && res.tracks ? res.tracks : []).forEach(function(t) {
-          if (out.length < MAX_TRACKS) push(t);
+        var found = await sources.search((pick.name + " " + pick.artist).trim(), settings, { limit: 3 });
+        (found && found.tracks ? found.tracks : []).forEach(function(t) {
+          picks.push(t);
         });
       } catch (err) {
       }
     }
+    for (var j = 0; j < (opts.keywords || []).length && picks.length < want * 2; j++) {
+      try {
+        var res = await sources.search(opts.keywords[j], settings, { limit: Math.min(30, want) });
+        (res && res.tracks ? res.tracks : []).forEach(function(t) {
+          picks.push(t);
+        });
+      } catch (err) {
+      }
+    }
+    var candidates = [];
+    picks.forEach(function(track) {
+      if (!track) return;
+      var key = trackKey(track);
+      if (!key || seen[key] || exclude[key]) return;
+      if (blocked(track)) return;
+      seen[key] = true;
+      candidates.push(track);
+    });
+    if (!opts.filterPlayable) {
+      return candidates.slice(0, want);
+    }
+    var cursor = 0;
+    async function worker() {
+      while (cursor < candidates.length && out.length < want) {
+        var track = candidates[cursor++];
+        var key = trackKey(track);
+        if (checked[key]) continue;
+        checked[key] = true;
+        var ok = await playable(track, sources, settings);
+        if (ok && out.length < want) out.push(track);
+      }
+    }
+    var workers = [];
+    for (var w = 0; w < RESOLVE_CONCURRENCY; w++) workers.push(worker());
+    await Promise.all(workers);
     return out;
   }
-  async function localGenerate({ sources, settings, prefs, recent, avoid }) {
-    var keywords = [];
-    (prefs || []).forEach(function(p) {
-      if (!p || p.label === "避雷" || !p.prompt) return;
-      keywords.push(p.prompt);
+  function excludeMap(tracks) {
+    var map2 = /* @__PURE__ */ Object.create(null);
+    (tracks || []).forEach(function(t) {
+      var key = trackKey(t);
+      if (key) map2[key] = true;
     });
-    (recent || []).slice(0, 3).forEach(function(t) {
-      if (t && t.artist) keywords.push(t.artist);
-    });
-    if (!keywords.length) keywords.push("华语流行");
-    var tracks = await ground({ sources, settings, picks: [], keywords: keywords.slice(0, 4), avoid });
+    return map2;
+  }
+  function result(source, playlistName, tracks, reason) {
     return {
       ok: tracks.length > 0,
-      mode: "local",
-      playlistName: "为你挑的",
+      source,
+      playlistName,
       tracks,
-      reason: tracks.length ? "" : "没搜到合适的歌"
+      reason: reason || (tracks.length ? "" : "没搜到能播放的歌")
     };
   }
   async function generate(options) {
     var opts = options || {};
-    var sources = opts.sources;
     var settings = opts.settings || {};
     var prefs = opts.prefs || [];
+    var count = clampCount(settings.recCount);
+    var filterPlayable = settings.recFilterPlayable !== false;
     var avoid = avoidTexts(prefs);
     var mode = String(settings.recMode || "manual");
+    var logged = false;
+    try {
+      logged = isLoggedIn(settings);
+    } catch (err) {
+      logged = false;
+    }
+    if (logged && mode !== "local") {
+      try {
+        var daily = await dailySongs(settings, count);
+        if (daily && daily.length) {
+          var filled = daily.slice(0, count);
+          return result("netease", "网易云每日推荐", filled, "");
+        }
+      } catch (err) {
+      }
+    }
     var ai = null;
     try {
       var api2 = typeof window !== "undefined" ? window.Roche : null;
@@ -2799,51 +2933,66 @@
     } catch (err) {
       ai = null;
     }
-    if (mode === "local" || !ai || typeof ai.chat !== "function") {
-      return localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
+    var exclude = excludeMap(opts.recent);
+    if (mode !== "local" && ai && typeof ai.chat === "function") {
+      try {
+        var text = "";
+        var res = await withTimeout(ai.chat({
+          messages: [
+            { role: "system", content: "你只输出 JSON，不要输出任何解释或 Markdown 代码块。" },
+            { role: "user", content: buildProfilePrompt(prefs, opts.recent, opts.favorites, count) }
+          ],
+          temperature: 0.95
+        }), AI_TIMEOUT);
+        text = res && (res.text || res.content) || "";
+        var parsed = parseRecommendJson(text);
+        if (parsed) {
+          var tracks = await ground({
+            sources: opts.sources,
+            settings,
+            picks: parsed.tracks,
+            keywords: parsed.keywords,
+            avoid,
+            exclude,
+            want: count,
+            filterPlayable
+          });
+          if (tracks.length) {
+            return result("ai", parsed.playlistName || "AI 为你挑的", tracks, "");
+          }
+        }
+      } catch (err) {
+      }
     }
-    var prompt = buildProfilePrompt(prefs, opts.recent, opts.favorites);
-    var text = "";
-    try {
-      var result = await withTimeout(ai.chat({
-        messages: [
-          { role: "system", content: "你只输出 JSON，不要输出任何解释或 Markdown 代码块。" },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.85
-      }), AI_TIMEOUT);
-      text = result && (result.text || result.content) || "";
-    } catch (err) {
-      var fallback = await localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
-      fallback.reason = "AI 暂时不可用，先按偏好挑了几首";
-      return fallback;
-    }
-    var parsed = parseRecommendJson(text);
-    if (!parsed || !parsed.tracks.length && !parsed.keywords.length) {
-      var again = await localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
-      again.reason = "AI 返回的格式看不懂，已按偏好兜底";
-      return again;
-    }
-    var tracks = await ground({
-      sources,
+    var seeds = pickSeeds(prefs, opts.recent, opts.favorites, Date.now());
+    var localTracks = await ground({
+      sources: opts.sources,
       settings,
-      picks: parsed.tracks,
-      keywords: parsed.keywords,
-      avoid
+      picks: [],
+      keywords: seeds,
+      avoid,
+      exclude,
+      want: count,
+      filterPlayable
     });
-    if (!tracks.length) {
-      var retry = await localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
-      retry.reason = "AI 挑的歌没搜到，已按偏好兜底";
-      return retry;
+    if (localTracks.length < Math.min(count, 8)) {
+      var moreSeeds = pickSeeds(prefs, opts.recent, opts.favorites, Date.now() + 7919);
+      var extra = await ground({
+        sources: opts.sources,
+        settings,
+        picks: [],
+        keywords: moreSeeds,
+        avoid,
+        exclude: Object.assign({}, exclude, excludeMap(localTracks)),
+        want: count - localTracks.length,
+        filterPlayable
+      });
+      localTracks = localTracks.concat(extra);
     }
-    return {
-      ok: true,
-      mode: "ai",
-      playlistName: parsed.playlistName || "AI 为你挑的",
-      keywords: parsed.keywords,
-      tracks,
-      reason: ""
-    };
+    var why = "";
+    if (!localTracks.length) why = "没搜到能播放的歌，换个偏好试试";
+    else if (mode === "local") why = "";
+    return result("local", seeds.slice(0, 2).join(" · ") || "为你挑的", localTracks, why);
   }
 
   // src/ui/dom.js
@@ -3930,67 +4079,142 @@
   padding-bottom: 12px;
 }
 
-/* 搜索页：进入即展示的榜单网格 */
+/* 搜索页：网易云式榜单横滑卡（卡内直接列前 8 首） */
 .mp-rank {
   padding-bottom: 16px;
 }
 
-.mp-rank__grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px 12px;
-  padding: 8px 16px 0;
+.mp-rank-rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 8px 16px 4px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
 }
 
-.mp-rank__card {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  text-align: left;
+.mp-rank-rail::-webkit-scrollbar {
+  display: none;
 }
 
-.mp-rank__cover {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  border-radius: 12px;
-  overflow: hidden;
+.mp-rank-card {
+  flex: 0 0 auto;
+  width: 76vw;
+  max-width: 320px;
+  padding: 12px 12px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--mp-line);
   background: var(--mp-bg-2);
+  scroll-snap-align: start;
 }
 
-.mp-rank__cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.mp-rank-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
-.mp-rank__count {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.45);
-  color: #fff;
-  font-size: 10.5px;
-}
-
-.mp-rank__name {
-  margin-top: 6px;
-  font-size: 12.5px;
-  font-weight: 500;
+.mp-rank-card__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
   color: var(--mp-ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mp-rank__card.is-skeleton .is-skeleton,
-.mp-rank__cover.is-skeleton {
+.mp-rank-card__play {
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  border: 1px solid var(--mp-line-strong, var(--mp-line));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 11.5px;
+  line-height: 18px;
+}
+
+.mp-rank-card__rows {
+  display: block;
+}
+
+.mp-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-rank-row:active {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mp-rank-row__no {
+  flex: 0 0 20px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--mp-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-rank-row__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rank-row.is-top .mp-rank-row__no {
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+.mp-rank-row.is-top:nth-child(2) .mp-rank-row__no {
+  color: #ff9f0a;
+}
+
+.mp-rank-card__empty {
+  padding: 10px 0;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rank-card.is-skeleton {
+  min-height: 280px;
   background: linear-gradient(90deg, var(--mp-bg-2) 25%, var(--mp-line) 37%, var(--mp-bg-2) 63%);
   background-size: 400% 100%;
   animation: mp-skeleton 1.2s ease infinite;
+}
+
+/* 设置页：推荐数量滑杆 */
+.mp-count {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 150px;
+}
+
+.mp-count .mp-prefs__slider {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.mp-count__value {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-accent);
 }
 
 @keyframes mp-skeleton {
@@ -4814,6 +5038,7 @@
       });
       box2.appendChild(hot);
       box2.appendChild(h("div", { class: "mp-hint mp-rec__foot", text: "点上面的词直接搜索，也可以自己输入歌名或歌手" }));
+      if (rankBox) box2.appendChild(rankBox);
       return box2;
     }
     function renderResults() {
@@ -4914,28 +5139,37 @@
       clear(rankBox);
       if (!list.length) return;
       rankBox.appendChild(h("div", { class: "mp-section", text: "排行榜" }));
-      var grid = h("div", { class: "mp-rank__grid" });
+      var rail = h("div", { class: "mp-rank-rail" });
       list.slice(0, 6).forEach(function(item) {
-        var cover = h("div", { class: "mp-rank__cover" });
-        var url = String(item.cover || "").replace(/^http:/, "https:");
-        if (url) {
-          var img = h("img", { src: url, alt: "" });
-          img.addEventListener("error", function() {
-            img.remove();
-          });
-          cover.appendChild(img);
-        }
-        if (item.count) cover.appendChild(h("span", { class: "mp-rank__count", text: item.count + " 首" }));
-        var card = h("button", { class: "mp-rank__card", type: "button" }, [
-          cover,
-          h("div", { class: "mp-rank__name", text: item.name || "榜单" })
-        ]);
-        card.addEventListener("click", function() {
+        var playBtn = h("button", { class: "mp-rank-card__play", type: "button", text: "播放" });
+        playBtn.addEventListener("click", function(e) {
+          e.stopPropagation();
           if (ctx.playNeteaseToplist) ctx.playNeteaseToplist(item.id, item.name);
         });
-        grid.appendChild(card);
+        var head = h("div", { class: "mp-rank-card__head" }, [
+          h("div", { class: "mp-rank-card__name", text: item.name || "榜单" }),
+          playBtn
+        ]);
+        var rows = h("div", { class: "mp-rank-card__rows" });
+        (item.tracks || []).slice(0, 8).forEach(function(track, i) {
+          var row = h("button", {
+            class: "mp-rank-row" + (i < 3 ? " is-top" : ""),
+            type: "button"
+          }, [
+            h("span", { class: "mp-rank-row__no", text: String(i + 1) }),
+            h("span", { class: "mp-rank-row__name", text: track.name || "未知歌曲" })
+          ]);
+          row.addEventListener("click", function() {
+            if (ctx.playNeteaseSong) ctx.playNeteaseSong(track);
+          });
+          rows.appendChild(row);
+        });
+        if (!(item.tracks || []).length) {
+          rows.appendChild(h("div", { class: "mp-rank-card__empty", text: "榜单暂时拉不到" }));
+        }
+        rail.appendChild(h("div", { class: "mp-rank-card" }, [head, rows]));
       });
-      rankBox.appendChild(grid);
+      rankBox.appendChild(rail);
     }
     function renderRankError() {
       clear(rankBox);
@@ -4950,7 +5184,7 @@
       renderRankSkeleton();
       var res = null;
       try {
-        res = await ctx.fetchNeteaseToplists();
+        res = await ctx.fetchNeteaseRankCards();
       } catch (err) {
         res = { ok: false, list: [] };
       }
@@ -4969,7 +5203,7 @@
       header,
       h("div", { class: "mp-search" }, [box]),
       resultsBox
-    ].concat(rankBox ? [rankBox] : []));
+    ]);
     host.appendChild(view);
     renderResults();
     return {
@@ -5751,6 +5985,34 @@
           });
           return row;
         })(), "推荐页刷新策略：手动只在你点「换一批」时调模型，最省"),
+        field("推荐数量", (function() {
+          var box = h("div", { class: "mp-count" });
+          var value = h("span", { class: "mp-count__value", text: (s.recCount || 20) + " 首" });
+          var slider = h("input", {
+            class: "mp-prefs__slider",
+            type: "range",
+            min: "5",
+            max: "50",
+            step: "5",
+            value: String(s.recCount || 20)
+          });
+          slider.addEventListener("input", function() {
+            value.textContent = slider.value + " 首";
+          });
+          slider.addEventListener("change", function() {
+            ctx.updateSettings({ recCount: Number(slider.value) });
+          });
+          box.appendChild(slider);
+          box.appendChild(value);
+          return box;
+        })(), "每次推荐多少首（5~50）"),
+        field(
+          "只推荐能播放的",
+          switchEl(s.recFilterPlayable !== false, function(v) {
+            ctx.updateSettings({ recFilterPlayable: v });
+          }),
+          "开启后推荐时逐首试解析，拿不到播放地址的会被剔除（每批多花 2~4 秒）"
+        ),
         field(
           "点卡片播放",
           switchEl(!!s.cardTapPlay, function(v) {
@@ -6387,6 +6649,51 @@
           h("div", { class: "mp-prefs__title", text: "推荐模式" }),
           modeRow
         ]));
+        var countValue = ctx.state.settings && ctx.state.settings.recCount || 20;
+        var countText = h("span", { class: "mp-prefs__weight", text: countValue + " 首" });
+        var countSlider = h("input", {
+          class: "mp-prefs__slider",
+          type: "range",
+          min: "5",
+          max: "50",
+          step: "5",
+          value: String(countValue)
+        });
+        countSlider.addEventListener("input", function() {
+          countText.textContent = countSlider.value + " 首";
+        });
+        countSlider.addEventListener("change", function() {
+          ctx.updateSettings({ recCount: Number(countSlider.value) });
+          renderPanel();
+        });
+        body.appendChild(h("div", { class: "mp-prefs__item" }, [
+          h("div", { class: "mp-prefs__row" }, [
+            h("div", { class: "mp-prefs__label", text: "每次推荐多少首" }),
+            countText
+          ]),
+          countSlider
+        ]));
+        var onlyPlayOn = !(ctx.state.settings && ctx.state.settings.recFilterPlayable === false);
+        var onlyPlay = h("button", {
+          class: "mp-switch" + (onlyPlayOn ? " is-on" : ""),
+          type: "button",
+          "aria-pressed": onlyPlayOn ? "true" : "false"
+        });
+        onlyPlay.addEventListener("click", function() {
+          var next = ctx.state.settings && ctx.state.settings.recFilterPlayable === false;
+          ctx.updateSettings({ recFilterPlayable: next });
+          renderPanel();
+        });
+        body.appendChild(h("div", { class: "mp-prefs__item" }, [
+          h("div", { class: "mp-prefs__row" }, [
+            h("div", { class: "mp-prefs__label", text: "只推荐能播放的" }),
+            h("span", { class: "mp-prefs__tag", text: onlyPlayOn ? "开" : "关" })
+          ]),
+          h("div", { class: "mp-prefs__foot" }, [
+            h("div", { class: "mp-prefs__prompt", text: "关闭后推荐更快，但列表里可能有无版权的歌" }),
+            onlyPlay
+          ])
+        ]));
         var list = ctx.prefs();
         body.appendChild(h("div", { class: "mp-prefs__hint", text: "拖动条表示这类偏好的重要程度，越靠右越影响推荐" }));
         list.forEach(function(pref) {
@@ -6772,8 +7079,8 @@
       searching = true;
       clear(rows);
       rows.appendChild(h("div", { class: "mp-modal__hint", text: "搜索中…" }));
-      var result = await sources.search(keyword, settings, { limit: 20 });
-      searchTracks = result.tracks || [];
+      var result2 = await sources.search(keyword, settings, { limit: 20 });
+      searchTracks = result2.tracks || [];
       renderList();
     }
     function renderList() {
@@ -7236,8 +7543,8 @@
       }
       clear(listBox);
       listBox.appendChild(h("div", { class: "mp-modal__hint", text: "搜索中…" }));
-      var result = await sources.search(kw, settings);
-      searchTracks = result.tracks || [];
+      var result2 = await sources.search(kw, settings);
+      searchTracks = result2.tracks || [];
       renderList(searchTracks, "没搜到，换个关键词");
     }
     input.addEventListener("keydown", function(e) {
@@ -7834,18 +8141,18 @@
         var found = await bridge.search(keyword, 8);
         if (!found || !found.length) return { ok: false, reason: "没搜到这首歌" };
         var first = found[0];
-        var result;
+        var result2;
         if (runtime2.chatAddToQueue) {
-          result = await bridge.addAndPlay([first], 0);
+          result2 = await bridge.addAndPlay([first], 0);
         } else {
-          result = await bridge.playList([first], 0);
-          result = { ok: !!result, started: true };
+          result2 = await bridge.playList([first], 0);
+          result2 = { ok: !!result2, started: true };
         }
-        if (!result || !result.ok) return { ok: false, reason: result && result.reason || "没找到歌" };
+        if (!result2 || !result2.ok) return { ok: false, reason: result2 && result2.reason || "没找到歌" };
         await pushCard(ctx, roche, first, "listening");
         return {
           ok: true,
-          started: !!result.started,
+          started: !!result2.started,
           added: 1,
           playing: first.name,
           artist: first.artist,
@@ -8581,18 +8888,18 @@
       var token = ++searchToken;
       state.search = Object.assign({}, state.search, { busy: true, errors: [] });
       if (shell) shell.refreshPage();
-      var result = await sources.search(kw, state.settings);
+      var result2 = await sources.search(kw, state.settings);
       if (token !== searchToken) return;
       state.search = {
         keyword: kw,
         busy: false,
-        tracks: result.tracks,
-        errors: result.errors,
-        counts: result.counts,
+        tracks: result2.tracks,
+        errors: result2.errors,
+        counts: result2.counts,
         at: Date.now()
       };
-      if (!result.tracks.length) {
-        if (result.errors.length) toast("搜索失败，检查网络或换音源");
+      if (!result2.tracks.length) {
+        if (result2.errors.length) toast("搜索失败，检查网络或换音源");
         else toast("没有找到歌曲");
       } else {
         state.searches = await store.saveSearches([kw].concat(state.searches));
@@ -9081,6 +9388,55 @@
       playNeteaseToplist: async function(id, name) {
         return playNeteasePlaylist({ id, name: name || "网易云榜单" });
       },
+      /** 播一首网易云单曲（榜单卡里点歌名用） */
+      playNeteaseSong: async function(track2) {
+        if (!track2) return { ok: false, reason: "没有这首歌" };
+        var one = normalizeTrack(track2, "netease");
+        if (!one) return { ok: false, reason: "这首歌有问题" };
+        await playTracks([one], 0);
+        refresh();
+        return { ok: true };
+      },
+      /** 榜单卡：榜单信息 + 每榜前 8 首，缓存 10 分钟 */
+      fetchNeteaseRankCards: async function() {
+        var CACHE_KEY = "mp:rankCache";
+        try {
+          var cache = await host.storage.get(CACHE_KEY, null);
+          if (cache && cache.at && cache.list && Date.now() - cache.at < 10 * 60 * 1e3) {
+            return { ok: true, list: cache.list, cached: true };
+          }
+        } catch (err) {
+        }
+        var tops = [];
+        try {
+          tops = await toplists(state.settings);
+        } catch (err) {
+          return { ok: false, list: [], reason: String(err && err.message || err) };
+        }
+        if (!tops || !tops.length) return { ok: false, list: [], reason: "没有榜单" };
+        var picked = tops.slice(0, 6);
+        var list = await Promise.all(picked.map(async function(item) {
+          var tracks = [];
+          try {
+            var got = await playlistTracks(state.settings, item.id, 8);
+            tracks = (got || []).slice(0, 8);
+          } catch (err) {
+            tracks = [];
+          }
+          return {
+            id: item.id,
+            name: item.name,
+            cover: item.cover,
+            count: item.count,
+            tracks
+          };
+        }));
+        try {
+          await host.storage.set(CACHE_KEY, { at: Date.now(), list });
+        } catch (err) {
+        }
+        return { ok: true, list };
+      },
       openPrefsPanel: function() {
         if (shell) shell.openPrefsPanel();
       },
@@ -9281,7 +9637,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.38.0" });
+    app = await createApp({ container, roche, version: "0.39.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -9297,7 +9653,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.38.0",
+    version: "0.39.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
