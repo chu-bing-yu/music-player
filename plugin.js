@@ -1,4 +1,4 @@
-/* music-player v0.36.0 | built 2026-11-04T14:36:03.523Z */
+/* music-player v0.37.0 | built 2026-11-05T10:49:18.716Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -398,7 +398,7 @@
     "暂停：<!-- mp:pause -->　继续：<!-- mp:resume -->",
     "把当前这首收进你的歌单：<!-- mp:add -->",
     "给当前这首写一句评价：<!-- mp:comment:一句话评价 -->",
-    "新建歌单：<!-- mp:new:歌单名 -->　给我挑几首：<!-- mp:recommend -->",
+    "新建歌单：<!-- mp:new:歌单名 -->　给我挑几首：<!-- mp:recommend:关键词 -->",
     "",
     "规则：",
     "1. 【重要】不要调用任何工具（music_play / music_next 等），只写上面这种注释指令；",
@@ -417,7 +417,7 @@
     "   暂停 <!-- mp:pause -->　继续 <!-- mp:resume -->",
     "   把当前这首收进你的歌单 <!-- mp:add -->",
     "   给当前这首写评价 <!-- mp:comment:一句话评价 -->",
-    "   新建歌单 <!-- mp:new:歌单名 -->　给用户挑几首 <!-- mp:recommend -->",
+    "   新建歌单 <!-- mp:new:歌单名 -->　给用户挑几首 <!-- mp:recommend:关键词 -->",
     "3. 指令必须单独占一行，且必须是 <!-- ... --> 形式；",
     "4. 没有写指令就等于没有操作，不要只说「已经加好了」；",
     "5. 切歌时顺带自然地说一句你对这首歌的感受。"
@@ -480,11 +480,12 @@
       chatPromptHybrid: HYBRID_CHAT_PROMPT,
       /** 点聊天卡片时要不要重新播放这首；默认只显示当前状态 */
       cardTapPlay: false,
+      /** 推荐页刷新策略：manual = 点「换一批」才调模型（默认）；auto = 每次进入都调；local = 不调模型 */
+      recMode: "manual",
       // 指令通道：hybrid = 点歌用工具、其余用注释（默认）；
       // tool = 全走工具（多一次调用但最稳）；mark = 全走注释（最省调用）
       chatCommandMode: "hybrid",
-      // 推荐歌单的搜索种子
-      chatRecommendSeed: "华语流行",
+      // 推荐歌单的搜索词由角色自己决定（指令里带参数），这里不再保存固定词
       chatPrompt: DEFAULT_CHAT_PROMPT,
       /**
        * 极简模式：插件不再轮询、不重建、不自动暂停，只把队列交给原生播放器。
@@ -553,13 +554,17 @@
         return text ? text.slice(0, 2e3) : def.chatPromptHybrid;
       })(),
       cardTapPlay: bool(s.cardTapPlay, def.cardTapPlay),
+      recMode: (function() {
+        var mode = String(s.recMode || "");
+        if (mode === "auto" || mode === "local" || mode === "manual") return mode;
+        return def.recMode;
+      })(),
       chatPromptTool: (function() {
         var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
         if (!text) return def.chatPromptTool;
         if (text.indexOf("mp:play") !== -1 || text.indexOf("[[mp:") !== -1) return def.chatPromptTool;
         return text.slice(0, 2e3);
       })(),
-      chatRecommendSeed: String(s.chatRecommendSeed || def.chatRecommendSeed).trim().slice(0, 20),
       chatPrompt: (function() {
         var text = String(s.chatPrompt == null ? "" : s.chatPrompt).trim();
         if (!text) return def.chatPrompt;
@@ -1026,6 +1031,9 @@
   }
   function isReady(settings) {
     return !!base(settings);
+  }
+  function isLoggedIn(settings) {
+    return !!base(settings) && !!(settings && settings.neteaseCookie);
   }
   async function call(settings, path, params) {
     var root = base(settings);
@@ -2534,6 +2542,310 @@
     return { ok: true, text: clean, key };
   }
 
+  // src/core/prefs.js
+  var MAX_PREFS = 12;
+  function clampWeight(value) {
+    var n = Number(value);
+    if (!Number.isFinite(n)) return 50;
+    return Math.max(0, Math.min(100, Math.round(n)));
+  }
+  function cleanText(text, max) {
+    return String(text == null ? "" : text).replace(/\s+/g, " ").trim().slice(0, max);
+  }
+  function defaultPrefs() {
+    return [
+      {
+        id: "genre",
+        label: "曲风与语种",
+        prompt: "偏华语流行、独立民谣，也能接受英文慢歌",
+        weight: 60,
+        builtin: true
+      },
+      {
+        id: "era",
+        label: "年代",
+        prompt: "更偏 2010 年之后的歌，好听的老歌也可以",
+        weight: 40,
+        builtin: true
+      },
+      {
+        id: "mood",
+        label: "情绪",
+        prompt: "睡前和通勤时想听安静、治愈的歌",
+        weight: 55,
+        builtin: true
+      },
+      {
+        id: "avoid",
+        label: "避雷",
+        prompt: "不要喊麦、不要土味改编、不要太吵",
+        weight: 80,
+        builtin: true
+      }
+    ];
+  }
+  function normalizePrefs(raw) {
+    var list = Array.isArray(raw) ? raw : [];
+    var out = [];
+    var seen = /* @__PURE__ */ Object.create(null);
+    list.slice(0, MAX_PREFS).forEach(function(item, index) {
+      if (!item || typeof item !== "object") return;
+      var label = cleanText(item.label, 16);
+      var prompt = cleanText(item.prompt, 120);
+      if (!label && !prompt) return;
+      var id = String(item.id || "p" + index + "_" + Date.now().toString(36));
+      if (seen[id]) id = id + "_" + index;
+      seen[id] = true;
+      out.push({
+        id,
+        label: label || "偏好",
+        prompt,
+        weight: clampWeight(item.weight),
+        builtin: !!item.builtin
+      });
+    });
+    return out.length ? out : defaultPrefs();
+  }
+  function addPref(list, label, prompt) {
+    var arr = Array.isArray(list) ? list.slice() : [];
+    if (arr.length >= MAX_PREFS) return { list: arr, pref: null, reason: "limit" };
+    var pref = {
+      id: "p" + Date.now().toString(36) + Math.floor(Math.random() * 1e3),
+      label: cleanText(label, 16) || "新偏好",
+      prompt: cleanText(prompt, 120),
+      weight: 50,
+      builtin: false
+    };
+    arr.push(pref);
+    return { list: arr, pref };
+  }
+  function removePref(list, id) {
+    var arr = Array.isArray(list) ? list.slice() : [];
+    var target = null;
+    arr.forEach(function(p) {
+      if (p && p.id === id) target = p;
+    });
+    if (target && target.builtin) return { list: arr, removed: false, reason: "builtin" };
+    var next = arr.filter(function(p) {
+      return !p || p.id !== id;
+    });
+    if (!next.length) return { list: next, removed: false, reason: "empty" };
+    return { list: next, removed: true };
+  }
+  function updatePref(list, id, patch) {
+    return (Array.isArray(list) ? list : []).map(function(p) {
+      if (!p || p.id !== id) return p;
+      var next = Object.assign({}, p);
+      if (patch && typeof patch.label === "string") next.label = cleanText(patch.label, 16) || p.label;
+      if (patch && typeof patch.prompt === "string") next.prompt = cleanText(patch.prompt, 120);
+      if (patch && patch.weight != null) next.weight = clampWeight(patch.weight);
+      return next;
+    });
+  }
+  function prefsToPrompt(list) {
+    var arr = (Array.isArray(list) ? list : []).slice();
+    arr.sort(function(a, b) {
+      return (b.weight || 0) - (a.weight || 0);
+    });
+    return arr.map(function(p) {
+      return "- " + p.label + "（重要度 " + p.weight + "/100）：" + (p.prompt || "无特别要求");
+    }).join("\n");
+  }
+  function avoidTexts(list) {
+    return (Array.isArray(list) ? list : []).filter(function(p) {
+      return p && p.label === "避雷" && p.prompt;
+    }).map(function(p) {
+      return p.prompt;
+    });
+  }
+
+  // src/services/recommend.js
+  var AI_TIMEOUT = 2e4;
+  var MAX_TRACKS = 8;
+  function buildProfilePrompt(prefs, recent, favorites) {
+    var recentNames = (recent || []).slice(0, 12).map(function(t) {
+      return "《" + (t.name || "") + "》" + (t.artist ? " - " + t.artist : "");
+    }).filter(Boolean);
+    var favNames = (favorites || []).slice(0, 12).map(function(t) {
+      return "《" + (t.name || "") + "》" + (t.artist ? " - " + t.artist : "");
+    }).filter(Boolean);
+    return [
+      "你是一个懂音乐的推荐助手。请根据下面的用户画像，挑一批适合现在听的歌。",
+      "",
+      "【偏好】",
+      prefsToPrompt(prefs),
+      "",
+      recentNames.length ? "【最近在听】\n" + recentNames.join("、") : "【最近在听】暂无记录",
+      favNames.length ? "【收藏】\n" + favNames.join("、") : "【收藏】暂无",
+      "",
+      "要求：",
+      "1. 挑 6 到 8 首，风格要贴合画像，不要重复最近在听的歌；",
+      "2. 只输出 JSON，不要解释、不要代码块，格式：",
+      '{"playlistName":"四个字以内的小标题","keywords":["3 个中文搜索关键词"],"tracks":[{"name":"歌名","artist":"歌手"}]}',
+      "3. 歌名和歌手必须是真实存在的作品，不要编造。"
+    ].join("\n");
+  }
+  function parseRecommendJson(text) {
+    var raw = String(text || "").trim();
+    if (!raw) return null;
+    raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    var start = raw.indexOf("{");
+    var end = raw.lastIndexOf("}");
+    if (start === -1 || end <= start) return null;
+    var body = raw.slice(start, end + 1);
+    var data = null;
+    try {
+      data = JSON.parse(body);
+    } catch (err) {
+      return null;
+    }
+    if (!data || typeof data !== "object") return null;
+    var tracks = Array.isArray(data.tracks) ? data.tracks : [];
+    var clean = tracks.map(function(t) {
+      if (!t) return null;
+      if (typeof t === "string") return { name: t.trim(), artist: "" };
+      var name = String(t.name || t.title || "").trim();
+      if (!name) return null;
+      return { name, artist: String(t.artist || "").trim() };
+    }).filter(Boolean).slice(0, MAX_TRACKS);
+    var keywords = Array.isArray(data.keywords) ? data.keywords.map(function(k) {
+      return String(k || "").trim();
+    }).filter(Boolean).slice(0, 4) : [];
+    return {
+      playlistName: String(data.playlistName || data.name || "AI 推荐").trim().slice(0, 12),
+      keywords,
+      tracks: clean
+    };
+  }
+  function withTimeout(promise, ms) {
+    return Promise.race([
+      promise,
+      new Promise(function(_, reject) {
+        setTimeout(function() {
+          reject(new Error("timeout"));
+        }, ms);
+      })
+    ]);
+  }
+  async function ground({ sources, settings, picks, keywords, avoid }) {
+    var out = [];
+    var seen = /* @__PURE__ */ Object.create(null);
+    function blocked(track) {
+      if (!avoid || !avoid.length) return false;
+      var text = (track.name || "") + " " + (track.artist || "");
+      return avoid.some(function(word) {
+        return word && text.indexOf(word) !== -1;
+      });
+    }
+    function push(track) {
+      if (!track) return false;
+      var key = trackKey(track);
+      if (!key || seen[key]) return false;
+      if (blocked(track)) return false;
+      seen[key] = true;
+      out.push(track);
+      return true;
+    }
+    for (var i = 0; i < picks.length && out.length < MAX_TRACKS; i++) {
+      var pick = picks[i];
+      try {
+        var kw = (pick.name + " " + pick.artist).trim();
+        var found = await sources.search(kw, settings, { limit: 4 });
+        if (found && found.tracks && found.tracks.length) push(found.tracks[0]);
+      } catch (err) {
+      }
+    }
+    for (var j = 0; j < keywords.length && out.length < MAX_TRACKS; j++) {
+      try {
+        var res = await sources.search(keywords[j], settings, { limit: 6 });
+        (res && res.tracks ? res.tracks : []).forEach(function(t) {
+          if (out.length < MAX_TRACKS) push(t);
+        });
+      } catch (err) {
+      }
+    }
+    return out;
+  }
+  async function localGenerate({ sources, settings, prefs, recent, avoid }) {
+    var keywords = [];
+    (prefs || []).forEach(function(p) {
+      if (!p || p.label === "避雷" || !p.prompt) return;
+      keywords.push(p.prompt);
+    });
+    (recent || []).slice(0, 3).forEach(function(t) {
+      if (t && t.artist) keywords.push(t.artist);
+    });
+    if (!keywords.length) keywords.push("华语流行");
+    var tracks = await ground({ sources, settings, picks: [], keywords: keywords.slice(0, 4), avoid });
+    return {
+      ok: tracks.length > 0,
+      mode: "local",
+      playlistName: "为你挑的",
+      tracks,
+      reason: tracks.length ? "" : "没搜到合适的歌"
+    };
+  }
+  async function generate(options) {
+    var opts = options || {};
+    var sources = opts.sources;
+    var settings = opts.settings || {};
+    var prefs = opts.prefs || [];
+    var avoid = avoidTexts(prefs);
+    var mode = String(settings.recMode || "manual");
+    var ai = null;
+    try {
+      var api2 = typeof window !== "undefined" ? window.Roche : null;
+      ai = api2 && api2.ai ? api2.ai : null;
+    } catch (err) {
+      ai = null;
+    }
+    if (mode === "local" || !ai || typeof ai.chat !== "function") {
+      return localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
+    }
+    var prompt = buildProfilePrompt(prefs, opts.recent, opts.favorites);
+    var text = "";
+    try {
+      var result = await withTimeout(ai.chat({
+        messages: [
+          { role: "system", content: "你只输出 JSON，不要输出任何解释或 Markdown 代码块。" },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.85
+      }), AI_TIMEOUT);
+      text = result && (result.text || result.content) || "";
+    } catch (err) {
+      var fallback = await localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
+      fallback.reason = "AI 暂时不可用，先按偏好挑了几首";
+      return fallback;
+    }
+    var parsed = parseRecommendJson(text);
+    if (!parsed || !parsed.tracks.length && !parsed.keywords.length) {
+      var again = await localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
+      again.reason = "AI 返回的格式看不懂，已按偏好兜底";
+      return again;
+    }
+    var tracks = await ground({
+      sources,
+      settings,
+      picks: parsed.tracks,
+      keywords: parsed.keywords,
+      avoid
+    });
+    if (!tracks.length) {
+      var retry = await localGenerate({ sources, settings, prefs, recent: opts.recent, avoid });
+      retry.reason = "AI 挑的歌没搜到，已按偏好兜底";
+      return retry;
+    }
+    return {
+      ok: true,
+      mode: "ai",
+      playlistName: parsed.playlistName || "AI 为你挑的",
+      keywords: parsed.keywords,
+      tracks,
+      reason: ""
+    };
+  }
+
   // src/ui/dom.js
   function h(tag, attrs, children) {
     var el = document.createElement(tag);
@@ -2621,7 +2933,1215 @@
   var base_default = '/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */\n\n.mp-root,\n.mp-root * {\n  box-sizing: border-box;\n}\n\n/* 全屏：背景铺到屏幕边缘，再把安全区内边距加回自己的 header / 底栏 */\n.mp-root {\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  width: calc(100% + env(safe-area-inset-left) + env(safe-area-inset-right));\n  height: calc(100% + env(safe-area-inset-top) + env(safe-area-inset-bottom));\n  margin: calc(0px - env(safe-area-inset-top)) calc(0px - env(safe-area-inset-right)) calc(0px - env(safe-area-inset-bottom)) calc(0px - env(safe-area-inset-left));\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--mp-bg);\n  color: var(--mp-ink);\n  font-family: var(--mp-font);\n  font-size: 14px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\n.mp-root button {\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.mp-root button:disabled {\n  opacity: 0.45;\n  cursor: default;\n}\n\n/* ---------- 页面骨架 ---------- */\n\n.mp-view-host {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-view {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-header {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));\n}\n\n.mp-header__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 21px;\n  font-weight: 700;\n  letter-spacing: -0.2px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-header__sub {\n  font-size: 12px;\n  color: var(--mp-muted);\n  font-weight: 400;\n}\n\n.mp-body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  padding-bottom: 12px;\n}\n\n.mp-icon-btn {\n  flex: 0 0 auto;\n  width: 34px;\n  height: 34px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink-2);\n  padding: 0;\n}\n\n.mp-icon-btn:active {\n  background: var(--mp-soft);\n}\n\n.mp-icon-btn svg {\n  width: 21px;\n  height: 21px;\n}\n\n.mp-icon-btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 歌曲行 ---------- */\n\n.mp-row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  border: 0;\n  background: transparent;\n  width: 100%;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-row:active {\n  background: var(--mp-soft);\n}\n\n.mp-row__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: var(--mp-r-sm);\n  object-fit: cover;\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-row__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-row__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-row__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-row__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row.is-current .mp-row__name {\n  color: var(--mp-accent);\n}\n\n.mp-row.is-selected {\n  background: var(--mp-accent-soft);\n}\n\n.mp-row__check {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  border-radius: 50%;\n  border: 1.5px solid var(--mp-line-strong);\n  display: grid;\n  place-items: center;\n  color: #fff;\n}\n\n.mp-row__check.is-on {\n  border-color: var(--mp-accent);\n  background: var(--mp-accent);\n}\n\n.mp-row__check svg {\n  width: 13px;\n  height: 13px;\n}\n\n.mp-select-bar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 16px 8px;\n}\n\n.mp-select-bar__count {\n  flex: 1 1 auto;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n}\n\n.mp-row__sub {\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row__tag {\n  display: inline-block;\n  margin-right: 5px;\n  padding: 0 5px;\n  border-radius: 4px;\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n  font-size: 10px;\n  line-height: 15px;\n  vertical-align: 1px;\n}\n\n.mp-row__btn {\n  flex: 0 0 auto;\n  width: 32px;\n  height: 32px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-muted);\n}\n\n.mp-row__btn:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-row__btn svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-row__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 迷你播放条 ---------- */\n\n.mp-player {\n  position: relative;\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 14px 10px;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n}\n\n.mp-player__bar {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  background: var(--mp-line);\n  cursor: pointer;\n}\n\n.mp-player__bar i {\n  display: block;\n  height: 100%;\n  width: 0;\n  background: var(--mp-accent);\n}\n\n.mp-player__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  overflow: hidden;\n  color: var(--mp-muted);\n}\n\n.mp-player__cover svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-player__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-player__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-player__hit {\n  display: block;\n  border: 0;\n  background: transparent;\n  padding: 0;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-player__name {\n  font-size: 13.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__sub {\n  font-size: 11px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__play {\n  flex: 0 0 auto;\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink);\n}\n\n.mp-player__play svg {\n  width: 26px;\n  height: 26px;\n}\n\n/* ---------- 悬浮歌词 ---------- */\n\n.mp-float-lyric {\n  flex: 0 0 auto;\n  display: none;\n  margin: 0 10px 6px;\n  padding: 5px 12px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-bg-2);\n  font-size: 11.5px;\n  line-height: 1.5;\n  color: var(--mp-ink-2);\n  text-align: center;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.mp-float-lyric.is-fresh {\n  animation: mp-lyric-in 0.28s ease-out;\n}\n\n@keyframes mp-lyric-in {\n  from { opacity: 0.25; transform: translateY(3px); }\n  to { opacity: 1; transform: none; }\n}\n\n/* 键盘弹出时把播放条、悬浮歌词、底栏全部让出去，屏幕留给搜索结果 */\n.mp-root.is-keyboard .mp-player,\n.mp-root.is-keyboard .mp-float-lyric,\n.mp-root.is-keyboard .mp-dock {\n  display: none !important;\n}\n\n/* ---------- 四按钮底栏 ---------- */\n\n.mp-dock {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: stretch;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));\n}\n\n.mp-dock__btn {\n  flex: 1 1 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n  padding: 5px 0 3px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 10.5px;\n  line-height: 1.2;\n}\n\n.mp-dock__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-dock__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 底部弹层（挂在插件根内） ---------- */\n\n.mp-mask {\n  position: absolute;\n  inset: 0;\n  z-index: 40;\n  display: flex;\n  align-items: flex-end;\n  background: rgba(0, 0, 0, 0.35);\n}\n\n.mp-sheet {\n  width: 100%;\n  max-height: 74%;\n  display: flex;\n  flex-direction: column;\n  background: var(--mp-bg);\n  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;\n  padding-bottom: calc(6px + env(safe-area-inset-bottom));\n  animation: mp-rise 0.18s ease-out;\n}\n\n@keyframes mp-rise {\n  from { transform: translateY(12px); opacity: 0.6; }\n  to { transform: translateY(0); opacity: 1; }\n}\n\n.mp-sheet__head {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-sheet__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  padding-bottom: 6px;\n}\n\n.mp-sheet__item {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 12px 16px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14.5px;\n  text-align: left;\n}\n\n.mp-sheet__item:active {\n  background: var(--mp-soft);\n}\n\n.mp-sheet__item svg {\n  width: 19px;\n  height: 19px;\n  color: var(--mp-muted);\n}\n\n.mp-editor {\n  display: block;\n  width: calc(100% - 32px);\n  margin: 4px 16px 10px;\n  min-height: 150px;\n  padding: 12px;\n  border: 1px solid var(--mp-line-strong);\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  color: var(--mp-ink);\n  font-family: inherit;\n  font-size: 13px;\n  line-height: 1.65;\n  resize: vertical;\n  outline: none;\n}\n\n.mp-editor:focus {\n  border-color: var(--mp-accent);\n}\n\n.mp-sheet__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__x {\n  flex: 0 0 auto;\n  width: 28px;\n  height: 28px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-sheet__x:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-sheet__x svg {\n  width: 15px;\n  height: 15px;\n}\n\n.mp-sheet__item.is-danger {\n  color: var(--mp-accent);\n}\n\n/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */\n\n.mp-card {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 11px;\n  border-radius: 12px;\n  background: var(--mp-bg, #fff);\n  color: var(--mp-ink, #1b1c1f);\n  border: 1px solid var(--mp-line, #ededf0);\n  /* 固定宽度：不随歌名 / 歌手长短变化 */\n  width: 252px;\n  min-width: 0;\n  box-sizing: border-box;\n  max-width: 100%;\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  white-space: nowrap;\n}\n\n.mp-card__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: 8px;\n  background: var(--mp-soft-2, #e9eaee);\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-card__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-card__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__name {\n  font-size: 13.5px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__sub {\n  margin-top: 1px;\n  font-size: 11px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  border: 0;\n  background: rgba(225, 75, 75, 0.1);\n  color: #e14b4b;\n  font-size: 12px;\n  font-weight: 600;\n  padding: 6px 11px;\n  border-radius: 999px;\n}\n\n/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */\n\n.mp-modal {\n  position: fixed;\n  inset: 0;\n  z-index: 9999;\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  background: rgba(0, 0, 0, 0.4);\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-modal__panel {\n  width: 100%;\n  max-width: 480px;\n  max-height: 76vh;\n  display: flex;\n  flex-direction: column;\n  background: #fff;\n  color: #1b1c1f;\n  border-radius: 18px 18px 0 0;\n  padding-bottom: calc(8px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-modal__head {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 10px;\n  border-bottom: 1px solid #ededf0;\n}\n\n.mp-modal__title {\n  flex: 1 1 auto;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.mp-modal__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  font-size: 14.5px;\n  background: transparent;\n  color: inherit;\n}\n\n.mp-modal__body {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 56vh;\n  overflow-y: auto;\n}\n\n.mp-modal__row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 10px 16px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-size: 14px;\n}\n\n.mp-modal__row:active {\n  background: #f2f3f5;\n}\n\n.mp-modal__row span {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__hint {\n  padding: 14px 16px;\n  font-size: 12.5px;\n  color: #9299a3;\n  text-align: center;\n}\n\n/* ---------- 聊天里的「一起听」面板 ---------- */\n\n.mp-listen {\n  max-height: 68vh;\n}\n\n.mp-listen__now {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 10px 16px 14px;\n}\n\n.mp-listen__cover {\n  flex: 0 0 auto;\n  width: 52px;\n  height: 52px;\n  border-radius: 12px;\n  background: #eef0f3;\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-listen__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-listen__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-listen__meta {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-listen__name {\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__artist {\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__ctrl {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n}\n\n.mp-listen__btn {\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  background: transparent;\n  color: #1b1c1f;\n  padding: 0;\n}\n\n.mp-listen__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-listen__list {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 32vh;\n  overflow-y: auto;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__sub {\n  /* 固定宽度 + 右对齐，多行列表里歌手名才能对齐成一条线 */\n  flex: 0 0 auto;\n  width: 42%;\n  text-align: right;\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__row.is-active span:first-child {\n  color: #e14b4b;\n  font-weight: 600;\n}\n\n.mp-listen__searchicon {\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n}\n\n.mp-listen__searchicon svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-listen__foot {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  padding: 6px 16px;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__open {\n  flex: 1 1 auto;\n  border: 0;\n  background: transparent;\n  color: #6b7280;\n  font-size: 12.5px;\n  padding: 8px 0;\n}\n\n.mp-listen__stop {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: #d5544e;\n  font-size: 12.5px;\n  padding: 8px 0 8px 14px;\n}\n\n.mp-listen__tabs {\n  display: flex;\n  gap: 10px;\n  padding: 2px 16px 10px;\n}\n\n.mp-listen__tab {\n  flex: 1 1 0;\n  padding: 8px 0;\n  border: 0;\n  border-radius: 999px;\n  background: #f2f3f5;\n  color: #6b7280;\n  font-size: 13px;\n}\n\n.mp-listen__tab.is-active {\n  background: #ffeceb;\n  color: #e14b4b;\n  font-weight: 600;\n}\n';
 
   // src/ui/views.css
-  var views_default = '/* 各页面专属样式 */\n\n/* ---------- 搜索 ---------- */\n\n.mp-search {\n  flex: 0 0 auto;\n  padding: 0 16px 8px;\n}\n\n.mp-search__box {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  height: 38px;\n  padding: 0 12px;\n  border-radius: var(--mp-r-full);\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n}\n\n.mp-search__box svg {\n  width: 17px;\n  height: 17px;\n  flex: 0 0 auto;\n}\n\n.mp-search__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14px;\n  -webkit-appearance: none;\n  appearance: none;\n}\n\n/* 去掉 WebView 自带的搜索框装饰（那个多余的 × 和小图标） */\n.mp-search__input::-webkit-search-cancel-button,\n.mp-search__input::-webkit-search-decoration,\n.mp-search__input::-webkit-search-results-button {\n  -webkit-appearance: none;\n  display: none;\n}\n\n.mp-search__clear {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-soft-2);\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-search__clear svg {\n  width: 12px;\n  height: 12px;\n}\n\n.mp-chips {\n  display: flex;\n  gap: 8px;\n  overflow-x: auto;\n  padding: 6px 16px 2px;\n  scrollbar-width: none;\n}\n\n.mp-chips::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-chip {\n  flex: 0 0 auto;\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 4px 12px;\n  font-size: 12.5px;\n}\n\n.mp-chip.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n/* ---------- 通用段落 ---------- */\n\n.mp-section {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 14px 16px 6px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-section__act {\n  margin-left: auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 12px;\n  font-weight: 400;\n  padding: 2px 0;\n}\n\n/* ---------- 搜索推荐 ---------- */\n\n.mp-rec {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n  padding: 2px 16px 10px;\n}\n\n.mp-rec-chip {\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  border-radius: var(--mp-r-full);\n  padding: 6px 13px;\n  font-size: 13px;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-rec-chip:active {\n  background: var(--mp-soft);\n}\n\n.mp-rec__hint {\n  padding: 0 16px 8px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n}\n\n.mp-rec__foot {\n  padding-top: 8px;\n  padding-bottom: 4px;\n}\n\n.mp-hint {\n  padding: 22px 24px;\n  text-align: center;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.7;\n}\n\n.mp-error {\n  margin: 8px 16px;\n  padding: 9px 12px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-size: 12px;\n}\n\n/* ---------- 歌单列表 ---------- */\n\n.mp-list {\n  padding: 4px 10px 8px;\n}\n\n.mp-pl {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  width: 100%;\n  padding: 9px 6px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  border-radius: var(--mp-r-md);\n}\n\n.mp-pl:active {\n  background: var(--mp-soft);\n}\n\n.mp-pl__cover {\n  flex: 0 0 auto;\n  width: 54px;\n  height: 54px;\n  border-radius: var(--mp-r-md);\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-pl__cover svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-pl__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-pl__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-pl__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-pl__sub {\n  margin-top: 3px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */\n\n.mp-actions {\n  display: flex;\n  gap: 10px;\n  padding: 4px 16px 10px;\n}\n\n.mp-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 6px;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  background: var(--mp-soft);\n  color: var(--mp-ink);\n  /* 在设置行里被压缩时不要变成竖排文字 */\n  flex: 0 0 auto;\n  white-space: nowrap;\n  writing-mode: horizontal-tb;\n  min-width: 68px;\n}\n\n.mp-btn svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-btn--primary {\n  background: var(--mp-accent);\n  color: var(--mp-on-accent);\n}\n\n.mp-btn--ghost {\n  background: transparent;\n  border: 1px solid var(--mp-line-strong);\n  color: var(--mp-ink-2);\n  font-weight: 500;\n}\n\n.mp-actions .mp-btn {\n  flex: 1 1 0;\n}\n\n.mp-field__actions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  flex: 0 0 auto;\n}\n\n/* 网易云扫码登录弹层 */\n.mp-qr {\n  padding-bottom: 18px;\n}\n\n.mp-qr__img {\n  display: block;\n  width: 200px;\n  height: 200px;\n  margin: 10px auto 6px;\n  border-radius: 12px;\n  background: #fff;\n  object-fit: contain;\n}\n\n.mp-qr__tip {\n  padding: 4px 20px 0;\n  text-align: center;\n  font-size: 12.5px;\n  color: #9299a3;\n  line-height: 1.6;\n}\n\n/* ---------- 正在播放页 ---------- */\n\n.mp-now {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  padding: calc(4px + env(safe-area-inset-top)) 26px calc(18px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-now__head {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 0 8px;\n}\n\n.mp-now__from {\n  flex: 1 1 auto;\n  text-align: center;\n  font-size: 12px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__stage {\n  flex: 1 1 auto;\n  min-height: 0;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n\n.mp-now__cover {\n  flex: 0 0 auto;\n  width: min(76vw, 300px);\n  height: min(76vw, 300px);\n  margin: auto 0;\n  border-radius: 50%;\n  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n  box-shadow: var(--mp-shadow);\n}\n\n.mp-now__cover svg {\n  width: 54px;\n  height: 54px;\n}\n\n.mp-now__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-now__meta {\n  flex: 0 0 auto;\n  width: 100%;\n  text-align: center;\n  margin-top: 18px;\n}\n\n.mp-now__name {\n  font-size: 18px;\n  font-weight: 700;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__artist {\n  margin-top: 4px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-now__progress {\n  flex: 0 0 auto;\n  width: 100%;\n  margin-top: 16px;\n}\n\n.mp-now__track {\n  height: 4px;\n  border-radius: 999px;\n  background: var(--mp-soft-2);\n  cursor: pointer;\n  position: relative;\n}\n\n.mp-now__track i {\n  display: block;\n  height: 100%;\n  width: 0;\n  border-radius: 999px;\n  background: var(--mp-accent);\n}\n\n.mp-now__times {\n  display: flex;\n  justify-content: space-between;\n  margin-top: 5px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  font-variant-numeric: tabular-nums;\n}\n\n.mp-now__ctrl {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: 14px;\n}\n\n.mp-now__ctrl .mp-icon-btn {\n  width: 42px;\n  height: 42px;\n}\n\n.mp-now__ctrl .mp-icon-btn svg {\n  width: 23px;\n  height: 23px;\n}\n\n.mp-now__play {\n  width: 58px;\n  height: 58px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: var(--mp-ink);\n  color: var(--mp-bg);\n}\n\n.mp-now__play svg {\n  width: 28px;\n  height: 28px;\n}\n\n.mp-now__extras {\n  flex: 0 0 auto;\n  width: 100%;\n  display: flex;\n  justify-content: space-around;\n  margin-top: 14px;\n  padding-bottom: 4px;\n}\n\n/* 正在播放：滚动歌词 */\n\n.mp-now__lyric {\n  flex: 1 1 auto;\n  align-self: stretch;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  text-align: center;\n  padding: 4px 0 8px;\n  scrollbar-width: none;\n}\n\n.mp-now__lyric::-webkit-scrollbar {\n  display: none;\n}\n\n.mp-lyric__line {\n  padding: 7px 10px;\n  font-size: 13.5px;\n  line-height: 1.5;\n  color: var(--mp-muted);\n  transition: color 0.15s, transform 0.15s, opacity 0.15s;\n  opacity: 0.7;\n}\n\n.mp-lyric__line.is-active {\n  color: var(--mp-accent);\n  font-weight: 600;\n  opacity: 1;\n  transform: scale(1.05);\n}\n\n.mp-lyric__empty {\n  padding: 46px 24px;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n\n/* ---------- 设置 ---------- */\n\n.mp-group {\n  margin: 6px 16px 14px;\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  overflow: hidden;\n}\n\n.mp-group__title {\n  padding: 12px 14px 6px;\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--mp-muted);\n}\n\n.mp-field {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 11px 14px;\n  border-top: 1px solid var(--mp-line);\n}\n\n/* 控件比较宽（比如三个按钮）时用它：标题和说明占一行，控件单独一行 */\n.mp-field--stack {\n  display: block;\n}\n\n.mp-field--stack .mp-field__label {\n  margin-bottom: 9px;\n}\n\n/* 右侧控件永远不被压扁 */\n.mp-field > .mp-btn,\n.mp-field > .mp-switch,\n.mp-field > .mp-field__value,\n.mp-field > .mp-dots,\n.mp-field > .mp-theme-row {\n  flex: 0 0 auto;\n  margin-left: auto;\n}\n\n/* 开关行：标题+说明占左侧，开关垂直居中靠右（原生设置页的常规布局） */\n.mp-field > .mp-switch {\n  align-self: center;\n}\n\n.mp-group__title + .mp-field {\n  border-top: 0;\n}\n\n.mp-field__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n}\n\n.mp-field__desc {\n  margin-top: 2px;\n  font-size: 11px;\n  color: var(--mp-muted);\n  line-height: 1.5;\n}\n\n.mp-field__value {\n  flex: 0 0 auto;\n  font-size: 13px;\n  color: var(--mp-muted);\n  max-width: 55%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-input {\n  flex: 0 0 auto;\n  width: 55%;\n  border: 0;\n  outline: none;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 13px;\n  text-align: right;\n}\n\n.mp-switch {\n  flex: 0 0 auto;\n  width: 46px;\n  height: 27px;\n  border-radius: 999px;\n  border: 0;\n  background: var(--mp-soft-2);\n  position: relative;\n  transition: background 0.15s;\n  padding: 0;\n}\n\n.mp-switch::after {\n  content: "";\n  position: absolute;\n  top: 3px;\n  left: 3px;\n  width: 21px;\n  height: 21px;\n  border-radius: 50%;\n  background: #fff;\n  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);\n  transition: transform 0.15s;\n}\n\n.mp-switch.is-on {\n  background: var(--mp-accent);\n}\n\n.mp-switch.is-on::after {\n  transform: translateX(19px);\n}\n\n.mp-select {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 13px;\n  text-align: right;\n  outline: none;\n}\n\n.mp-slider {\n  flex: 0 0 auto;\n  width: 55%;\n  accent-color: var(--mp-accent);\n}\n\n/* TA 页：角色短评做成便利贴小卡片 */\n.mp-ta-say {\n  margin: 10px 16px;\n  padding: 10px 13px 12px;\n  border-radius: 12px;\n  background: linear-gradient(180deg, #fffbe6 0%, #fdf3c8 100%);\n  border: 1px solid rgba(0, 0, 0, 0.05);\n  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.07);\n  transform: rotate(-0.45deg);\n}\n\n.mp-ta-say:nth-of-type(even) {\n  transform: rotate(0.45deg);\n}\n\n.mp-ta-say__title {\n  font-size: 11.5px;\n  font-weight: 600;\n  color: #8a7635;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-ta-say__text {\n  margin-top: 5px;\n  font-size: 13px;\n  font-weight: 500;\n  color: #4a4130;\n  line-height: 1.6;\n  word-break: break-word;\n}\n\n.mp-ta-say__text b {\n  color: #b25d18;\n  font-weight: 700;\n}\n\n.mp-root[data-theme="dark"] .mp-ta-say {\n  background: linear-gradient(180deg, #3b3524 0%, #332e20 100%);\n  border-color: rgba(255, 255, 255, 0.06);\n  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.3);\n}\n\n.mp-root[data-theme="dark"] .mp-ta-say__title {\n  color: #c8b075;\n}\n\n.mp-root[data-theme="dark"] .mp-ta-say__text {\n  color: #e6dcc0;\n}\n\n.mp-root[data-theme="dark"] .mp-ta-say__text b {\n  color: #ffbe6b;\n}\n\n.mp-theme-row {\n  display: flex;\n  gap: 8px;\n  padding: 11px 14px;\n}\n\n.mp-theme-btn {\n  flex: 1 1 0;\n  padding: 8px 2px;\n  border-radius: var(--mp-r-sm);\n  border: 1px solid var(--mp-line-strong);\n  background: transparent;\n  color: var(--mp-ink-2);\n  font-size: 12.5px;\n  white-space: nowrap;\n}\n\n.mp-theme-btn.is-active {\n  border-color: transparent;\n  background: var(--mp-accent-soft);\n  color: var(--mp-accent);\n  font-weight: 600;\n}\n\n.mp-dots {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n}\n\n.mp-dot--custom {\n  position: relative;\n  overflow: hidden;\n}\n\n.mp-dot--custom .mp-color {\n  position: absolute;\n  inset: 0;\n  width: 100%;\n  height: 100%;\n  opacity: 0;\n}\n\n.mp-color {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);\n  -webkit-appearance: none;\n  appearance: none;\n  overflow: hidden;\n}\n\n.mp-color::-webkit-color-swatch-wrapper {\n  padding: 0;\n}\n\n.mp-color::-webkit-color-swatch {\n  border: 0;\n  border-radius: 50%;\n}\n\n.mp-dot {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border-radius: 50%;\n  border: 2px solid transparent;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);\n}\n\n.mp-dot.is-active {\n  border-color: var(--mp-ink);\n}\n\n.mp-about {\n  padding: 6px 24px 28px;\n  text-align: center;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  line-height: 1.8;\n}\n';
+  var views_default = `/* 各页面专属样式 */
+
+/* ---------- 搜索 ---------- */
+
+.mp-search {
+  flex: 0 0 auto;
+  padding: 0 16px 8px;
+}
+
+.mp-search__box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--mp-r-full);
+  background: var(--mp-soft);
+  color: var(--mp-muted);
+}
+
+.mp-search__box svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.mp-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--mp-ink);
+  font-size: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* 去掉 WebView 自带的搜索框装饰（那个多余的 × 和小图标） */
+.mp-search__input::-webkit-search-cancel-button,
+.mp-search__input::-webkit-search-decoration,
+.mp-search__input::-webkit-search-results-button {
+  -webkit-appearance: none;
+  display: none;
+}
+
+.mp-search__clear {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mp-soft-2);
+  color: var(--mp-muted);
+  padding: 0;
+}
+
+.mp-search__clear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.mp-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px 16px 2px;
+  scrollbar-width: none;
+}
+
+.mp-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--mp-line-strong);
+  background: transparent;
+  color: var(--mp-ink-2);
+  border-radius: var(--mp-r-full);
+  padding: 4px 12px;
+  font-size: 12.5px;
+}
+
+.mp-chip.is-active {
+  border-color: transparent;
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+/* ---------- 通用段落 ---------- */
+
+.mp-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-muted);
+}
+
+.mp-section__act {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--mp-muted);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 2px 0;
+}
+
+/* ---------- 搜索推荐 ---------- */
+
+.mp-rec {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 16px 10px;
+}
+
+.mp-rec-chip {
+  border: 1px solid var(--mp-line-strong);
+  background: transparent;
+  color: var(--mp-ink-2);
+  border-radius: var(--mp-r-full);
+  padding: 6px 13px;
+  font-size: 13px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec-chip:active {
+  background: var(--mp-soft);
+}
+
+.mp-rec__hint {
+  padding: 0 16px 8px;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+}
+
+.mp-rec__foot {
+  padding-top: 8px;
+  padding-bottom: 4px;
+}
+
+.mp-hint {
+  padding: 22px 24px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+  line-height: 1.7;
+}
+
+.mp-error {
+  margin: 8px 16px;
+  padding: 9px 12px;
+  border-radius: var(--mp-r-md);
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-size: 12px;
+}
+
+/* ---------- 歌单列表 ---------- */
+
+.mp-list {
+  padding: 4px 10px 8px;
+}
+
+.mp-pl {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: var(--mp-r-md);
+}
+
+.mp-pl:active {
+  background: var(--mp-soft);
+}
+
+.mp-pl__cover {
+  flex: 0 0 auto;
+  width: 54px;
+  height: 54px;
+  border-radius: var(--mp-r-md);
+  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
+  overflow: hidden;
+}
+
+.mp-pl__cover svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mp-pl__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-pl__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-pl__name {
+  font-size: 14.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-pl__sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */
+
+.mp-actions {
+  display: flex;
+  gap: 10px;
+  padding: 4px 16px 10px;
+}
+
+.mp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--mp-r-full);
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--mp-soft);
+  color: var(--mp-ink);
+  /* 在设置行里被压缩时不要变成竖排文字 */
+  flex: 0 0 auto;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  min-width: 68px;
+}
+
+.mp-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mp-btn--primary {
+  background: var(--mp-accent);
+  color: var(--mp-on-accent);
+}
+
+.mp-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--mp-line-strong);
+  color: var(--mp-ink-2);
+  font-weight: 500;
+}
+
+.mp-actions .mp-btn {
+  flex: 1 1 0;
+}
+
+.mp-field__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* 网易云扫码登录弹层 */
+.mp-qr {
+  padding-bottom: 18px;
+}
+
+.mp-qr__img {
+  display: block;
+  width: 200px;
+  height: 200px;
+  margin: 10px auto 6px;
+  border-radius: 12px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.mp-qr__tip {
+  padding: 4px 20px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: #9299a3;
+  line-height: 1.6;
+}
+
+/* ---------- 正在播放页 ---------- */
+
+.mp-now {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(4px + env(safe-area-inset-top)) 26px calc(18px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.mp-now__head {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 8px;
+}
+
+.mp-now__from {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-now__stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mp-now__cover {
+  flex: 0 0 auto;
+  width: min(76vw, 300px);
+  height: min(76vw, 300px);
+  margin: auto 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
+  overflow: hidden;
+  box-shadow: var(--mp-shadow);
+}
+
+.mp-now__cover svg {
+  width: 54px;
+  height: 54px;
+}
+
+.mp-now__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-now__meta {
+  flex: 0 0 auto;
+  width: 100%;
+  text-align: center;
+  margin-top: 18px;
+}
+
+.mp-now__name {
+  font-size: 18px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-now__artist {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-now__progress {
+  flex: 0 0 auto;
+  width: 100%;
+  margin-top: 16px;
+}
+
+.mp-now__track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--mp-soft-2);
+  cursor: pointer;
+  position: relative;
+}
+
+.mp-now__track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--mp-accent);
+}
+
+.mp-now__times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--mp-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-now__ctrl {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.mp-now__ctrl .mp-icon-btn {
+  width: 42px;
+  height: 42px;
+}
+
+.mp-now__ctrl .mp-icon-btn svg {
+  width: 23px;
+  height: 23px;
+}
+
+.mp-now__play {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mp-ink);
+  color: var(--mp-bg);
+}
+
+.mp-now__play svg {
+  width: 28px;
+  height: 28px;
+}
+
+.mp-now__extras {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  justify-content: space-around;
+  margin-top: 14px;
+  padding-bottom: 4px;
+}
+
+/* 正在播放：滚动歌词 */
+
+.mp-now__lyric {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  text-align: center;
+  padding: 4px 0 8px;
+  scrollbar-width: none;
+}
+
+.mp-now__lyric::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-lyric__line {
+  padding: 7px 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--mp-muted);
+  transition: color 0.15s, transform 0.15s, opacity 0.15s;
+  opacity: 0.7;
+}
+
+.mp-lyric__line.is-active {
+  color: var(--mp-accent);
+  font-weight: 600;
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.mp-lyric__empty {
+  padding: 46px 24px;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+  line-height: 1.8;
+}
+
+/* ---------- 设置 ---------- */
+
+.mp-group {
+  margin: 6px 16px 14px;
+  border-radius: var(--mp-r-md);
+  background: var(--mp-bg-2);
+  overflow: hidden;
+}
+
+.mp-group__title {
+  padding: 12px 14px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mp-muted);
+}
+
+.mp-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--mp-line);
+}
+
+/* 控件比较宽（比如三个按钮）时用它：标题和说明占一行，控件单独一行 */
+.mp-field--stack {
+  display: block;
+}
+
+.mp-field--stack .mp-field__label {
+  margin-bottom: 9px;
+}
+
+/* 右侧控件永远不被压扁 */
+.mp-field > .mp-btn,
+.mp-field > .mp-switch,
+.mp-field > .mp-field__value,
+.mp-field > .mp-dots,
+.mp-field > .mp-theme-row {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* 开关行：标题+说明占左侧，开关垂直居中靠右（原生设置页的常规布局） */
+.mp-field > .mp-switch {
+  align-self: center;
+}
+
+.mp-group__title + .mp-field {
+  border-top: 0;
+}
+
+.mp-field__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.mp-field__desc {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-muted);
+  line-height: 1.5;
+}
+
+.mp-field__value {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--mp-muted);
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-input {
+  flex: 0 0 auto;
+  width: 55%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--mp-ink);
+  font-size: 13px;
+  text-align: right;
+}
+
+.mp-switch {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 27px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--mp-soft-2);
+  position: relative;
+  transition: background 0.15s;
+  padding: 0;
+}
+
+.mp-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+
+.mp-switch.is-on {
+  background: var(--mp-accent);
+}
+
+.mp-switch.is-on::after {
+  transform: translateX(19px);
+}
+
+.mp-select {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--mp-muted);
+  font-size: 13px;
+  text-align: right;
+  outline: none;
+}
+
+.mp-slider {
+  flex: 0 0 auto;
+  width: 55%;
+  accent-color: var(--mp-accent);
+}
+
+/* ---------- TA 页：按角色的动态流 ---------- */
+
+.mp-ta-block {
+  padding: 16px 16px 6px;
+}
+
+.mp-ta-block + .mp-ta-block {
+  padding-top: 6px;
+}
+
+.mp-ta-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.mp-ta-head__avatar {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--mp-accent-soft, rgba(225, 75, 75, 0.14));
+  color: var(--mp-accent);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mp-ta-head__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-ta-head__name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  line-height: 1.3;
+}
+
+.mp-ta-head__stat {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 歌单横滑条 */
+.mp-ta-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 10px;
+  scrollbar-width: none;
+}
+
+.mp-ta-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-ta-pl {
+  flex: 0 0 auto;
+  width: 104px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-ta-pl__cover {
+  width: 104px;
+  height: 104px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-ta-pl__name {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta-pl__sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 评价气泡：左侧主题色竖线做引用标识 */
+.mp-ta-quote {
+  position: relative;
+  margin: 0 0 10px;
+  padding: 10px 12px 10px 14px;
+  border-radius: 12px;
+  background: var(--mp-bg-2);
+  border: 1px solid var(--mp-line);
+}
+
+.mp-ta-quote::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--mp-accent);
+}
+
+.mp-ta-quote__song {
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta-quote__artist {
+  opacity: 0.85;
+}
+
+.mp-ta-quote__text {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--mp-ink);
+  word-break: break-word;
+}
+
+.mp-ta-quote__text b {
+  color: var(--mp-accent);
+  font-weight: 700;
+}
+
+/* ---------- 推荐页 ---------- */
+
+.mp-rec__hello {
+  padding: 2px 16px 12px;
+  font-size: 12.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rec__card {
+  display: flex;
+  gap: 14px;
+  margin: 0 16px 14px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--mp-bg-2);
+  border: 1px solid var(--mp-line);
+}
+
+.mp-rec__mosaic {
+  flex: 0 0 auto;
+  width: 92px;
+  height: 92px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-line);
+}
+
+.mp-rec__tile {
+  overflow: hidden;
+  background: var(--mp-bg);
+}
+
+.mp-rec__tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-rec__info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.mp-rec__label {
+  font-size: 11px;
+  color: var(--mp-accent);
+  letter-spacing: 0.4px;
+}
+
+.mp-rec__name {
+  margin-top: 3px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec__meta {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rec__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.mp-rec__play {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mp-accent);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mp-rec__refresh {
+  padding: 6px 12px;
+  border: 1px solid var(--mp-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+}
+
+.mp-rec__hint {
+  margin: -4px 16px 12px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rec__list {
+  padding-bottom: 6px;
+}
+
+.mp-rec__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-rec__row:active {
+  background: var(--mp-bg-2);
+}
+
+.mp-rec__rowcover {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-rec__rowcover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-rec__rowmain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-rec__rowname {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec__rowsub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec__rank,
+.mp-rank-entry {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 10px 16px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--mp-line);
+  border-radius: 14px;
+  background: var(--mp-bg-2);
+  text-align: left;
+}
+
+.mp-rec__rankname,
+.mp-rank-entry__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-rec__ranksub,
+.mp-rank-entry__sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rank-entry-wrap {
+  padding-bottom: 12px;
+}
+
+/* ---------- 推荐偏好面板 ---------- */
+
+.mp-prefs__sheet {
+  max-height: 82vh;
+}
+
+.mp-prefs {
+  overflow-y: auto;
+}
+
+.mp-prefs__head {
+  padding: 4px 16px 12px;
+}
+
+.mp-prefs__title {
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-prefs__modes {
+  width: 100%;
+}
+
+.mp-prefs__hint {
+  padding: 0 16px 10px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  line-height: 1.5;
+}
+
+.mp-prefs__item {
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--mp-line);
+}
+
+.mp-prefs__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-prefs__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-prefs__weight {
+  font-size: 11.5px;
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+.mp-prefs__tag {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--mp-bg);
+  color: var(--mp-ink-2);
+  font-size: 10.5px;
+}
+
+.mp-prefs__slider {
+  width: 100%;
+  margin: 8px 0 6px;
+  appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--mp-line);
+  outline: none;
+}
+
+.mp-prefs__slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--mp-accent);
+  border: 2px solid var(--mp-bg-2);
+}
+
+.mp-prefs__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-prefs__prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-prefs__edit,
+.mp-prefs__del {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid var(--mp-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 11.5px;
+}
+
+.mp-prefs__del {
+  color: #d5544e;
+  border-color: rgba(213, 84, 78, 0.4);
+}
+
+.mp-prefs__add {
+  width: calc(100% - 32px);
+  margin: 12px 16px 18px;
+  padding: 10px;
+  border: 1px dashed var(--mp-line-strong, var(--mp-line));
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+}
+
+.mp-theme-row {
+  display: flex;
+  gap: 8px;
+  padding: 11px 14px;
+}
+
+.mp-theme-btn {
+  flex: 1 1 0;
+  padding: 8px 2px;
+  border-radius: var(--mp-r-sm);
+  border: 1px solid var(--mp-line-strong);
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.mp-theme-btn.is-active {
+  border-color: transparent;
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+.mp-dots {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mp-dot--custom {
+  position: relative;
+  overflow: hidden;
+}
+
+.mp-dot--custom .mp-color {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+
+.mp-color {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
+}
+
+.mp-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.mp-color::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+
+.mp-dot {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.mp-dot.is-active {
+  border-color: var(--mp-ink);
+}
+
+.mp-about {
+  padding: 6px 24px 28px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+  line-height: 1.8;
+}
+`;
 
   // src/ui/style.js
   var STYLE_ID = "music-player-style";
@@ -2912,8 +4432,148 @@
     return close;
   }
 
-  // src/ui/views/search.js
+  // src/ui/views/recommend.js
+  function greeting() {
+    var hour = (/* @__PURE__ */ new Date()).getHours();
+    if (hour < 6) return "夜深了，来点安静的歌";
+    if (hour < 11) return "早上好，今天听点什么";
+    if (hour < 14) return "中午好，放松一下";
+    if (hour < 18) return "下午好，给你挑了几首";
+    if (hour < 23) return "晚上好，适合慢慢听";
+    return "夜深了，来点安静的歌";
+  }
   function mount(host, ctx) {
+    var body = h("div", { class: "mp-body" });
+    var refreshing = false;
+    var header = h("div", { class: "mp-header" }, [
+      pageTitle("推荐", function() {
+        ctx.exitApp();
+      }),
+      iconBtn("search", { label: "搜索", onClick: function() {
+        ctx.goto("search");
+      } }),
+      iconBtn("more", { label: "推荐偏好", onClick: function() {
+        openPrefs();
+      } })
+    ]);
+    function coverTile(tracks) {
+      var grid = h("div", { class: "mp-rec__mosaic" });
+      var list = (tracks || []).slice(0, 4);
+      for (var i = 0; i < 4; i++) {
+        var t = list[i];
+        var cell = coverNode(t ? ctx.coverOf(t) : "", "mp-rec__tile");
+        if (t) cell.dataset.cover = trackKey(t);
+        grid.appendChild(cell);
+      }
+      return grid;
+    }
+    function aiCard(rec) {
+      var tracks = rec && rec.tracks || [];
+      var name = rec && rec.playlistName || "AI 为你挑的";
+      var playBtn = h("button", { class: "mp-rec__play", type: "button", text: "播放全部" });
+      playBtn.addEventListener("click", function() {
+        if (!tracks.length) return;
+        ctx.playRecommend(tracks, 0);
+      });
+      var refreshBtn = h("button", { class: "mp-rec__refresh", type: "button", text: refreshing ? "正在挑…" : "换一批" });
+      refreshBtn.addEventListener("click", function() {
+        if (refreshing) return;
+        refreshing = true;
+        render2();
+        ctx.refreshRecommend(true).then(function() {
+          refreshing = false;
+          render2();
+        }, function() {
+          refreshing = false;
+          render2();
+        });
+      });
+      return h("div", { class: "mp-rec__card" }, [
+        coverTile(tracks),
+        h("div", { class: "mp-rec__info" }, [
+          h("div", { class: "mp-rec__label", text: "AI 为你挑的" }),
+          h("div", { class: "mp-rec__name", text: name }),
+          h("div", { class: "mp-rec__meta", text: tracks.length ? tracks.length + " 首 · " + (rec.mode === "local" ? "按偏好" : "AI 挑选") : "还没有推荐" }),
+          h("div", { class: "mp-rec__actions" }, [playBtn, refreshBtn])
+        ])
+      ]);
+    }
+    function trackRow(track, index, tracks) {
+      var cover = coverNode(ctx.coverOf(track), "mp-rec__rowcover");
+      cover.dataset.cover = trackKey(track);
+      var row = h("button", { class: "mp-rec__row", type: "button" }, [
+        cover,
+        h("div", { class: "mp-rec__rowmain" }, [
+          h("div", { class: "mp-rec__rowname", text: track.name || "未知歌曲" }),
+          h("div", { class: "mp-rec__rowsub", text: track.artist || "" })
+        ])
+      ]);
+      row.addEventListener("click", function() {
+        ctx.playRecommend(tracks, index);
+      });
+      return row;
+    }
+    function render2() {
+      clear(body);
+      var rec = ctx.recommendCache ? ctx.recommendCache() : null;
+      var tracks = rec && rec.tracks || [];
+      body.appendChild(h("div", { class: "mp-rec__hello", text: greeting() }));
+      body.appendChild(aiCard(rec));
+      if (rec && rec.reason) {
+        body.appendChild(h("div", { class: "mp-rec__hint", text: rec.reason }));
+      }
+      if (tracks.length) {
+        body.appendChild(h("div", { class: "mp-section", text: "今日推荐" }));
+        var listBox = h("div", { class: "mp-rec__list" });
+        tracks.forEach(function(track, i) {
+          listBox.appendChild(trackRow(track, i, tracks));
+        });
+        body.appendChild(listBox);
+      }
+      if (ctx.neteaseReady && ctx.neteaseReady()) {
+        var rank = h("button", { class: "mp-rec__rank", type: "button" }, [
+          h("div", { class: "mp-rec__rankname", text: "排行榜" }),
+          h("div", { class: "mp-rec__ranksub", text: "网易云热歌榜 / 新歌榜" })
+        ]);
+        rank.addEventListener("click", function() {
+          ctx.goto("search", { focus: "toplist" });
+        });
+        body.appendChild(rank);
+      }
+    }
+    function openPrefs() {
+      if (ctx.openPrefsPanel) {
+        ctx.openPrefsPanel();
+        return;
+      }
+    }
+    var view = h("div", { class: "mp-view" }, [header, body]);
+    host.appendChild(view);
+    render2();
+    var mode = ctx.state.settings && ctx.state.settings.recMode || "manual";
+    var shouldFetch = !ctx.recommendCache() || ctx.recommendCache() && !ctx.recommendCache().tracks || mode === "auto" && !ctx.recommendCacheRefreshed;
+    if (shouldFetch && ctx.refreshRecommend) {
+      ctx.state.recommendCacheRefreshed = true;
+      refreshing = true;
+      render2();
+      ctx.refreshRecommend(mode === "auto").then(function() {
+        refreshing = false;
+        render2();
+      }, function() {
+        refreshing = false;
+        render2();
+      });
+    }
+    return {
+      refresh: render2,
+      destroy: function() {
+        refreshing = false;
+      }
+    };
+  }
+
+  // src/ui/views/search.js
+  function mount2(host, ctx) {
     var state = ctx.state;
     var resultsBox = h("div", { class: "mp-body" });
     var selecting = false;
@@ -2983,6 +4643,10 @@
       }));
     }
     var header = h("div", { class: "mp-header" }, [
+      // 搜索是推荐页的二级页面，左上角回推荐
+      iconBtn("back", { label: "返回推荐", onClick: function() {
+        ctx.goto("recommend");
+      } }),
       pageTitle("搜索", function() {
         ctx.exitApp();
       })
@@ -3122,11 +4786,22 @@
         }));
       });
     }
+    var rankBox = null;
+    if (ctx.neteaseReady && ctx.neteaseReady()) {
+      var rank = h("button", { class: "mp-rank-entry", type: "button" }, [
+        h("div", { class: "mp-rank-entry__name", text: "排行榜" }),
+        h("div", { class: "mp-rank-entry__sub", text: "网易云热歌榜 / 新歌榜 / 飙升榜" })
+      ]);
+      rank.addEventListener("click", function() {
+        if (ctx.openNeteaseToplist) ctx.openNeteaseToplist();
+      });
+      rankBox = h("div", { class: "mp-rank-entry-wrap" }, [rank]);
+    }
     var view = h("div", { class: "mp-view" }, [
       header,
       h("div", { class: "mp-search" }, [box]),
       resultsBox
-    ]);
+    ].concat(rankBox ? [rankBox] : []));
     host.appendChild(view);
     renderResults();
     return {
@@ -3152,7 +4827,7 @@
   }
 
   // src/ui/views/playlists.js
-  function mount2(host, ctx) {
+  function mount3(host, ctx) {
     var state = ctx.state;
     var listBox = h("div", { class: "mp-list mp-body" });
     var header = h("div", { class: "mp-header" }, [
@@ -3233,7 +4908,7 @@
   }
 
   // src/ui/views/playlistDetail.js
-  function mount3(host, ctx) {
+  function mount4(host, ctx) {
     var state = ctx.state;
     var listBox = h("div", { class: "mp-body" });
     function back2() {
@@ -3368,6 +5043,7 @@
   }
 
   // src/ui/views/favorites.js
+  var CHAR_KEY = "mp:taChar";
   function richText(text) {
     var parts = String(text || "").split(/(\*\*[^*]+\*\*)/g);
     return parts.map(function(seg) {
@@ -3377,25 +5053,60 @@
       return document.createTextNode(seg);
     });
   }
-  function mount4(host, ctx) {
+  function readSavedChar() {
+    try {
+      return localStorage.getItem(CHAR_KEY) || "";
+    } catch (err) {
+      return "";
+    }
+  }
+  function saveChar(id) {
+    try {
+      localStorage.setItem(CHAR_KEY, id || "");
+    } catch (err) {
+    }
+    try {
+      var api2 = typeof window !== "undefined" ? window.Roche : null;
+      if (api2 && api2.storage && typeof api2.storage.set === "function") {
+        api2.storage.set(CHAR_KEY, id || "");
+      }
+    } catch (err) {
+    }
+  }
+  function mount5(host, ctx) {
     var state = ctx.state;
     var listBox = h("div", { class: "mp-body" });
     var subEl = h("div", { class: "mp-header__sub", text: "" });
-    var currentChar = "";
-    var charNames = /* @__PURE__ */ Object.create(null);
+    var currentChar = readSavedChar();
+    var profiles = /* @__PURE__ */ Object.create(null);
     function loadCharacters() {
       var api2 = typeof window !== "undefined" && window.Roche ? window.Roche : null;
       if (!api2 || !api2.character || typeof api2.character.list !== "function") return Promise.resolve();
       return Promise.resolve(api2.character.list()).then(function(list) {
         (list || []).forEach(function(c) {
-          if (c && c.id) charNames[c.id] = c.handle || c.name || "";
+          if (!c) return;
+          var info = {
+            name: c.handle || c.name || c.displayName || "",
+            avatar: c.avatar || ""
+          };
+          [c.id, c.contactId, c.conversationId].forEach(function(key) {
+            if (key) profiles[String(key)] = info;
+          });
         });
       }).catch(function() {
       });
     }
+    function profileOf(id) {
+      return id && profiles[String(id)] || null;
+    }
     function nameOf(id) {
-      if (!id) return "全部角色";
-      return charNames[id] || "角色 " + String(id).slice(0, 8);
+      var p = profileOf(id);
+      if (p && p.name) return p.name;
+      return "角色";
+    }
+    function avatarOf(id) {
+      var p = profileOf(id);
+      return p ? p.avatar : "";
     }
     var switchBtn = iconBtn("more", { label: "切换角色", onClick: function() {
       openCharPicker();
@@ -3410,44 +5121,18 @@
       subEl,
       switchBtn
     ]);
-    function openCharPicker() {
-      var ids = /* @__PURE__ */ Object.create(null);
-      charPlaylistsAll().forEach(function(p) {
-        if (p.ownerId) ids[p.ownerId] = true;
-      });
-      (ctx.taComments ? ctx.taComments("") : []).forEach(function(c) {
-        if (c.characterId) ids[c.characterId] = true;
-      });
-      var list = Object.keys(ids);
-      var items = [{ label: "全部角色", icon: "check", hint: currentChar ? "" : "当前", onClick: function() {
-        currentChar = "";
-        renderList();
-      } }];
-      list.forEach(function(id) {
-        items.push({
-          label: nameOf(id),
-          icon: currentChar === id ? "check" : "music",
-          hint: currentChar === id ? "当前" : "",
-          onClick: function() {
-            currentChar = id;
-            renderList();
-          }
-        });
-      });
-      ctx.openSheet({ title: "切换角色", items });
-    }
-    function mirrorPlaylists() {
+    function mirrorOf(key) {
       try {
-        var raw = JSON.parse(localStorage.getItem("mp:mirror:mp:playlists") || "null");
-        return Array.isArray(raw) ? raw : [];
+        var raw = JSON.parse(localStorage.getItem("mp:mirror:" + key) || "null");
+        return raw;
       } catch (err) {
-        return [];
+        return null;
       }
     }
     function allPlaylists() {
       var fromState = state.playlists || [];
-      var mirror = mirrorPlaylists();
-      if (!mirror.length) return fromState;
+      var mirror = mirrorOf("mp:playlists");
+      if (!Array.isArray(mirror) || !mirror.length) return fromState;
       var byId = /* @__PURE__ */ Object.create(null);
       fromState.forEach(function(p) {
         if (p && p.id) byId[p.id] = p;
@@ -3464,68 +5149,147 @@
         return p && p.owner === "char";
       });
     }
-    function charPlaylists2() {
-      var all = charPlaylistsAll();
-      if (!currentChar) return all;
-      return all.filter(function(p) {
-        return String(p.ownerId || "") === currentChar;
+    function allComments() {
+      return ctx.taComments ? ctx.taComments("") : [];
+    }
+    function charIds() {
+      var seen = /* @__PURE__ */ Object.create(null);
+      var out = [];
+      charPlaylistsAll().forEach(function(p) {
+        var id = String(p.ownerId || "");
+        if (id && !seen[id]) {
+          seen[id] = true;
+          out.push(id);
+        }
       });
+      allComments().forEach(function(c) {
+        var id = String(c.characterId || "");
+        if (id && !seen[id]) {
+          seen[id] = true;
+          out.push(id);
+        }
+      });
+      return out;
+    }
+    function openCharPicker() {
+      var items = [{
+        label: "全部角色",
+        icon: "check",
+        hint: currentChar ? "" : "当前",
+        onClick: function() {
+          currentChar = "";
+          saveChar("");
+          renderList();
+        }
+      }];
+      charIds().forEach(function(id) {
+        items.push({
+          label: nameOf(id),
+          icon: currentChar === id ? "check" : "music",
+          hint: currentChar === id ? "当前" : "",
+          onClick: function() {
+            currentChar = id;
+            saveChar(id);
+            renderList();
+          }
+        });
+      });
+      ctx.openSheet({ title: "切换角色", items });
+    }
+    function avatarNode(id, name) {
+      var box = h("div", { class: "mp-ta-head__avatar" });
+      var url = avatarOf(id);
+      if (url) {
+        var img = h("img", { src: url, alt: "" });
+        img.addEventListener("error", function() {
+          img.remove();
+        });
+        box.appendChild(img);
+      } else {
+        box.appendChild(h("span", { text: String(name || "角").slice(0, 1) }));
+      }
+      return box;
+    }
+    function playlistCard(p) {
+      var first = (p.tracks || [])[0];
+      var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-ta-pl__cover");
+      if (first) cover.dataset.cover = trackKey(first);
+      var card = h("button", { class: "mp-ta-pl", type: "button" }, [
+        cover,
+        h("div", { class: "mp-ta-pl__name", text: p.name }),
+        h("div", { class: "mp-ta-pl__sub", text: fmtSummary((p.tracks || []).length, playlistDuration(p)) })
+      ]);
+      card.addEventListener("click", function() {
+        ctx.goto("playlist", { playlistId: p.id });
+      });
+      return card;
+    }
+    function commentBubble(item) {
+      return h("div", { class: "mp-ta-quote" }, [
+        h("div", { class: "mp-ta-quote__song" }, [
+          h("span", { text: item.name || "未知歌曲" }),
+          item.artist ? h("span", { class: "mp-ta-quote__artist", text: " · " + item.artist }) : null
+        ]),
+        h("div", { class: "mp-ta-quote__text" }, richText(item.text || ""))
+      ]);
+    }
+    function charBlock(id, playlists, comments) {
+      var name = nameOf(id);
+      var trackCount = playlists.reduce(function(sum, p) {
+        return sum + (p.tracks || []).length;
+      }, 0);
+      var stat = [playlists.length + " 个歌单", trackCount + " 首"].join(" · ");
+      var block = h("div", { class: "mp-ta-block" }, [
+        h("div", { class: "mp-ta-head" }, [
+          avatarNode(id, name),
+          h("div", { class: "mp-ta-head__main" }, [
+            h("div", { class: "mp-ta-head__name", text: name }),
+            h("div", { class: "mp-ta-head__stat", text: stat })
+          ])
+        ])
+      ]);
+      if (playlists.length) {
+        var strip = h("div", { class: "mp-ta-strip" });
+        playlists.forEach(function(p) {
+          strip.appendChild(playlistCard(p));
+        });
+        block.appendChild(strip);
+      }
+      comments.slice(0, 8).forEach(function(c) {
+        block.appendChild(commentBubble(c));
+      });
+      return block;
     }
     function renderList() {
       clear(listBox);
-      var list = charPlaylists2();
-      subEl.textContent = currentChar ? nameOf(currentChar) : list.length ? "全部 · " + list.length + " 个歌单" : "全部";
-      if (!list.length) {
+      var playlists = charPlaylistsAll();
+      var comments = allComments();
+      if (currentChar) {
+        playlists = playlists.filter(function(p) {
+          return String(p.ownerId || "") === currentChar;
+        });
+        comments = comments.filter(function(c) {
+          return String(c.characterId || "") === currentChar;
+        });
+      }
+      var ids = currentChar ? [currentChar] : charIds();
+      subEl.textContent = currentChar ? nameOf(currentChar) : ids.length ? ids.length + " 个角色" : "";
+      if (!ids.length) {
         listBox.appendChild(emptyHint(
-          "TA 还没有歌单",
-          "让 TA 在聊天里帮你建一个，或者在「一起听」里让 TA 把当前这首收进去\n你自己收藏的歌在「歌单 → 我的收藏」"
+          "TA 还没有歌单和评价",
+          "让 TA 在聊天里建个歌单、或在「一起听」时把当前这首收进去\n你自己收藏的歌在「歌单 → 我的收藏」"
         ));
-      } else {
-        var groups = /* @__PURE__ */ Object.create(null);
-        list.forEach(function(p) {
-          var id = p.ownerId || "";
-          if (!groups[id]) groups[id] = [];
-          groups[id].push(p);
-        });
-        var ids = Object.keys(groups);
-        ids.forEach(function(id) {
-          if (ids.length > 1) {
-            listBox.appendChild(h("div", {
-              class: "mp-section",
-              text: id ? "角色 " + String(id).slice(0, 8) : "未标记角色"
-            }));
-          }
-          groups[id].forEach(function(p) {
-            var first = (p.tracks || [])[0];
-            var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-pl__cover");
-            if (first) cover.dataset.cover = trackKey(first);
-            var row = h("button", { class: "mp-pl", type: "button" }, [
-              cover,
-              h("div", { class: "mp-pl__main" }, [
-                h("div", { class: "mp-pl__name", text: p.name }),
-                h("div", { class: "mp-pl__sub", text: fmtSummary((p.tracks || []).length, playlistDuration(p)) })
-              ])
-            ]);
-            row.addEventListener("click", function() {
-              ctx.goto("playlist", { playlistId: p.id });
-            });
-            listBox.appendChild(row);
-          });
-        });
+        return;
       }
-      var says = ctx.taComments ? ctx.taComments(currentChar) : [];
-      if (says.length) {
-        listBox.appendChild(h("div", { class: "mp-section", text: "TA 说" }));
-        says.slice(0, 20).forEach(function(item) {
-          listBox.appendChild(h("div", { class: "mp-ta-say" }, [
-            h("div", {
-              class: "mp-ta-say__title",
-              text: (item.name || "未知歌曲") + (item.artist ? " · " + item.artist : "")
-            }),
-            h("div", { class: "mp-ta-say__text" }, richText(item.text || ""))
-          ]));
+      ids.forEach(function(id) {
+        var mine = playlists.filter(function(p) {
+          return String(p.ownerId || "") === id;
         });
-      }
+        var words = comments.filter(function(c) {
+          return String(c.characterId || "") === id;
+        });
+        listBox.appendChild(charBlock(id, mine, words));
+      });
     }
     var view = h("div", { class: "mp-view" }, [header, listBox]);
     host.appendChild(view);
@@ -3567,7 +5331,7 @@
     });
     return btn;
   }
-  function mount5(host, ctx) {
+  function mount6(host, ctx) {
     var state = ctx.state;
     var body = h("div", { class: "mp-body" });
     var statsTimer = null;
@@ -3800,17 +5564,25 @@
           });
           return row;
         })(), "混合：点歌走工具（有卡片），其余用注释指令；标记：全部注释；工具：全部 function calling"),
-        field("推荐搜索词", (function() {
-          var input = h("input", {
-            class: "mp-input",
-            type: "text",
-            value: s.chatRecommendSeed || "华语流行"
+        field("推荐模式", (function() {
+          var row = h("div", { class: "mp-theme-row" });
+          [
+            { id: "manual", name: "换一批才调" },
+            { id: "auto", name: "每次进入调" },
+            { id: "local", name: "不调模型" }
+          ].forEach(function(item) {
+            var btn = h("button", {
+              class: "mp-theme-btn" + ((s.recMode || "manual") === item.id ? " is-active" : ""),
+              type: "button",
+              text: item.name
+            });
+            btn.addEventListener("click", function() {
+              ctx.updateSettings({ recMode: item.id });
+            });
+            row.appendChild(btn);
           });
-          input.addEventListener("change", function() {
-            ctx.updateSettings({ chatRecommendSeed: String(input.value || "").trim() });
-          });
-          return input;
-        })(), "TA 给你挑歌时会用这个词搜索"),
+          return row;
+        })(), "推荐页刷新策略：手动只在你点「换一批」时调模型，最省"),
         field(
           "点卡片播放",
           switchEl(!!s.cardTapPlay, function(v) {
@@ -4012,7 +5784,7 @@
   }
 
   // src/ui/views/now.js
-  function mount6(host, ctx) {
+  function mount7(host, ctx) {
     var state = ctx.state;
     var coverCheck = "";
     var timer = null;
@@ -4207,7 +5979,7 @@
 
   // src/app/shell.js
   var TABS = [
-    { id: "search", name: "搜索", icon: "search" },
+    { id: "recommend", name: "推荐", icon: "search" },
     { id: "playlists", name: "歌单", icon: "folder" },
     { id: "favorites", name: "TA", icon: "heart" },
     { id: "settings", name: "设置", icon: "gear" }
@@ -4241,6 +6013,7 @@
     }
     function activeTab() {
       if (ctx.state.route === "playlist") return "playlists";
+      if (ctx.state.route === "search") return "recommend";
       return ctx.state.route;
     }
     function hexToRgba(hex, alpha) {
@@ -4378,12 +6151,13 @@
       page = null;
       clear(viewHost);
       var route = ctx.state.route;
-      if (route === "search") page = mount(viewHost, ctx);
-      else if (route === "playlists") page = mount2(viewHost, ctx);
-      else if (route === "playlist") page = mount3(viewHost, ctx);
-      else if (route === "favorites") page = mount4(viewHost, ctx);
-      else if (route === "settings") page = mount5(viewHost, ctx);
-      else if (route === "now") page = mount6(viewHost, ctx);
+      if (route === "recommend") page = mount(viewHost, ctx);
+      else if (route === "search") page = mount2(viewHost, ctx);
+      else if (route === "playlists") page = mount3(viewHost, ctx);
+      else if (route === "playlist") page = mount4(viewHost, ctx);
+      else if (route === "favorites") page = mount5(viewHost, ctx);
+      else if (route === "settings") page = mount6(viewHost, ctx);
+      else if (route === "now") page = mount7(viewHost, ctx);
     }
     function renderAll() {
       applyAppearance();
@@ -4422,6 +6196,136 @@
       var ratio = rect.width ? (e.clientX - rect.left) / rect.width : 0;
       ctx.seek(Math.max(0, Math.min(1, ratio)) * dur);
     });
+    function openPrefsPanel() {
+      if (!ctx.prefs || !ctx.savePrefs) return;
+      var mask = h("div", { class: "mp-mask" });
+      var body = h("div", { class: "mp-sheet__body mp-prefs" });
+      function close() {
+        if (mask.parentNode) mask.parentNode.removeChild(mask);
+      }
+      function renderPanel() {
+        clear(body);
+        var mode = ctx.state.settings && ctx.state.settings.recMode || "manual";
+        var modeRow = h("div", { class: "mp-theme-row mp-prefs__modes" });
+        [
+          { id: "manual", name: "换一批才调" },
+          { id: "auto", name: "每次进入调" },
+          { id: "local", name: "不调模型" }
+        ].forEach(function(item) {
+          var btn = h("button", {
+            class: "mp-theme-btn" + (mode === item.id ? " is-active" : ""),
+            type: "button",
+            text: item.name
+          });
+          btn.addEventListener("click", function() {
+            ctx.updateSettings({ recMode: item.id });
+            renderPanel();
+          });
+          modeRow.appendChild(btn);
+        });
+        body.appendChild(h("div", { class: "mp-prefs__head" }, [
+          h("div", { class: "mp-prefs__title", text: "推荐模式" }),
+          modeRow
+        ]));
+        var list = ctx.prefs();
+        body.appendChild(h("div", { class: "mp-prefs__hint", text: "拖动条表示这类偏好的重要程度，越靠右越影响推荐" }));
+        list.forEach(function(pref) {
+          var weightText = h("span", { class: "mp-prefs__weight", text: pref.weight + "%" });
+          var slider = h("input", {
+            class: "mp-prefs__slider",
+            type: "range",
+            min: "0",
+            max: "100",
+            step: "5",
+            value: String(pref.weight)
+          });
+          slider.addEventListener("input", function() {
+            weightText.textContent = slider.value + "%";
+          });
+          slider.addEventListener("change", function() {
+            ctx.savePrefs(updatePref(ctx.prefs(), pref.id, { weight: Number(slider.value) }));
+            renderPanel();
+          });
+          var editBtn = h("button", { class: "mp-prefs__edit", type: "button", text: pref.prompt ? "改提示词" : "写提示词" });
+          editBtn.addEventListener("click", function() {
+            openPrompt({
+              title: pref.label + " · 提示词",
+              value: pref.prompt || "",
+              placeholder: "例如：偏华语流行、独立民谣",
+              onSubmit: function(text) {
+                ctx.savePrefs(updatePref(ctx.prefs(), pref.id, { prompt: text }));
+                renderPanel();
+              }
+            });
+          });
+          var row = h("div", { class: "mp-prefs__item" }, [
+            h("div", { class: "mp-prefs__row" }, [
+              h("div", { class: "mp-prefs__label", text: pref.label }),
+              weightText,
+              pref.builtin ? h("span", { class: "mp-prefs__tag", text: "内置" }) : null
+            ]),
+            slider,
+            h("div", { class: "mp-prefs__foot" }, [
+              h("div", { class: "mp-prefs__prompt", text: pref.prompt || "（还没有提示词）" }),
+              editBtn,
+              pref.builtin ? null : (function() {
+                var del = h("button", { class: "mp-prefs__del", type: "button", text: "删除" });
+                del.addEventListener("click", function() {
+                  var res = removePref(ctx.prefs(), pref.id);
+                  if (!res.removed) {
+                    ctx.toast(res.reason === "builtin" ? "内置偏好不能删" : "至少保留一条偏好");
+                    return;
+                  }
+                  ctx.savePrefs(res.list);
+                  renderPanel();
+                });
+                return del;
+              })()
+            ].filter(Boolean))
+          ]);
+          body.appendChild(row);
+        });
+        var addBtn = h("button", { class: "mp-prefs__add", type: "button", text: "＋ 新增偏好" });
+        addBtn.addEventListener("click", function() {
+          openPrompt({
+            title: "新增偏好",
+            value: "",
+            placeholder: "例如：通勤路上 / 健身房",
+            onSubmit: function(label) {
+              var res = addPref(ctx.prefs(), label, "");
+              if (!res.pref) {
+                ctx.toast("偏好数量已达上限");
+                return;
+              }
+              ctx.savePrefs(res.list);
+              renderPanel();
+            }
+          });
+        });
+        body.appendChild(addBtn);
+      }
+      var sheet = h("div", { class: "mp-sheet mp-prefs__sheet" }, [
+        h("div", { class: "mp-sheet__head" }, [
+          h("div", { class: "mp-sheet__title", text: "推荐偏好" }),
+          (function() {
+            var btn = h(
+              "button",
+              { class: "mp-icon-btn", type: "button", "aria-label": "关闭" },
+              [h("span", { html: icon("close") })]
+            );
+            btn.addEventListener("click", close);
+            return btn;
+          })()
+        ]),
+        body
+      ]);
+      mask.addEventListener("click", function(e) {
+        if (e.target === mask) close();
+      });
+      mask.appendChild(sheet);
+      root.appendChild(mask);
+      renderPanel();
+    }
     applyAppearance();
     renderAll();
     return {
@@ -4436,6 +6340,9 @@
       refreshPage,
       applyAppearance,
       applyCover,
+      openPrefsPanel: function() {
+        openPrefsPanel();
+      },
       openSheet: function(options) {
         return openSheet(root, options);
       },
@@ -5425,9 +7332,10 @@
     var saved = await saveComment(roche, runtime.characterId, track, text);
     return saved.ok ? { ok: true, text: saved.text } : { ok: false, reason: saved.reason };
   }
-  async function doRecommend(roche, settings) {
+  async function doRecommend(roche, settings, keyword) {
     var sources = createSources();
-    var seed = settings && settings.chatRecommendSeed || "华语流行";
+    var seed = String(keyword || "").trim();
+    if (!seed) seed = "华语流行";
     try {
       var found = await sources.search(seed, settings, { limit: 8 });
       if (!found.tracks.length) return { ok: false, reason: "没找到可推荐的歌" };
@@ -5456,7 +7364,7 @@
         case "comment":
           return await doComment(cmd.arg, roche);
         case "recommend":
-          return await doRecommend(roche, settings);
+          return await doRecommend(roche, settings, cmd.arg);
         case "new": {
           var made = await createCharPlaylist(roche, runtime.characterId, cmd.arg, []);
           return made.ok ? { ok: true, playlist: made.playlist } : { ok: false, reason: made.reason };
@@ -5855,10 +7763,13 @@
       var saved = await saveComment(roche, characterId, track, text);
       return saved.ok ? { ok: true, text: saved.text, track: track.name } : { ok: false, reason: saved.reason };
     }),
-    tool("music_recommend", "按对方最近的喜好挑几首歌，放进名为「为你挑的」的歌单。", {}, async function(args, ctx, roche) {
+    tool("music_recommend", "按对方最近的喜好挑几首歌，放进名为「为你挑的」的歌单。keyword 由你根据对话决定（例如「城市夜晚」）。", { keyword: "string" }, async function(args, ctx, roche) {
       var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
       var sources = createSources();
-      var seed = settings.chatRecommendSeed || "华语流行";
+      var seed = String(args.keyword || "").trim() || (/^(华语流行)$/.test(String(args.keyword || "")) ? "" : "") || (function() {
+        var recent = (runtime2.recentNames || [])[0];
+        return recent || "华语流行";
+      })();
       var found = await sources.search(seed, settings, { limit: 8 });
       if (!found.tracks.length) return { ok: false, reason: "没找到可推荐的歌" };
       var characterId = ctx && ctx.contact ? ctx.contact.id : "";
@@ -5888,7 +7799,7 @@
     var lyrics = createLyrics();
     var state = {
       version,
-      route: "search",
+      route: "recommend",
       nowBack: "search",
       playlistId: "",
       settings: null,
@@ -5898,6 +7809,10 @@
       search: { keyword: "", busy: false, tracks: [], errors: [], counts: {}, at: 0 },
       searches: [],
       comments: {},
+      prefs: [],
+      // 推荐偏好
+      rec: null,
+      // 推荐缓存 { at, playlistName, tracks }
       queue: null,
       player: { status: "idle", track: null, time: 0, duration: 0, error: "", volume: 0.8 },
       lyrics: { lines: [], loading: false, error: "" },
@@ -6580,7 +8495,23 @@
     }
     async function reloadComments() {
       try {
-        state.comments = await store.loadComments();
+        var fromHost = await store.loadComments();
+        var mirror = null;
+        try {
+          mirror = JSON.parse(localStorage.getItem("mp:mirror:mp:comments") || "null");
+        } catch (err) {
+          mirror = null;
+        }
+        if (mirror && typeof mirror === "object" && !Array.isArray(mirror)) {
+          var merged = Object.assign({}, fromHost);
+          Object.keys(mirror).forEach(function(key) {
+            var base2 = merged[key] && typeof merged[key] === "object" ? merged[key] : {};
+            merged[key] = Object.assign({}, base2, mirror[key] || {});
+          });
+          state.comments = merged;
+        } else {
+          state.comments = fromHost;
+        }
         return state.comments;
       } catch (err) {
         return state.comments;
@@ -6891,6 +8822,9 @@
       minimizeLabel: function() {
         return state.settings.floating ? "最小化" : "退出并后台播放";
       },
+      toast: function(text) {
+        toast(text);
+      },
       isNative: function() {
         return !!engine;
       },
@@ -6908,31 +8842,81 @@
           return p.owner === "char";
         });
       },
-      /** characterId 为空 = 全部角色；否则只返回这个角色写的评价 */
+      /**
+       * characterId 为空 = 返回**所有角色**的每条评价（一首歌可能被多个角色评过）；
+       * 非空 = 只返回这个角色的，没有就跳过（不要回退到别的角色）。
+       */
       taComments: function(characterId) {
         var map2 = state.comments || {};
         var want = String(characterId || "");
-        return Object.keys(map2).map(function(key) {
+        var out = [];
+        Object.keys(map2).forEach(function(key) {
           var entry = map2[key] || {};
-          var ids = Object.keys(entry);
-          if (!ids.length) return null;
-          var pickId2 = want && entry[want] ? want : want ? "" : ids[0];
-          if (!pickId2) return null;
-          var one = entry[pickId2] || {};
-          return {
-            key,
-            characterId: pickId2,
-            name: one.name || "",
-            artist: one.artist || "",
-            text: one.text || "",
-            at: one.at || 0
-          };
-        }).filter(Boolean).sort(function(a, b) {
+          Object.keys(entry).forEach(function(cid) {
+            if (want && String(cid) !== want) return;
+            var one = entry[cid] || {};
+            out.push({
+              key,
+              characterId: String(cid),
+              name: one.name || "",
+              artist: one.artist || "",
+              text: one.text || "",
+              at: one.at || 0
+            });
+          });
+        });
+        return out.sort(function(a, b) {
           return b.at - a.at;
         });
       },
       reloadComments,
       reloadPlaylists,
+      /* ---------------- 推荐 ---------------- */
+      prefs: function() {
+        return state.prefs && state.prefs.length ? state.prefs : defaultPrefs();
+      },
+      savePrefs: async function(list) {
+        state.prefs = normalizePrefs(list);
+        await host.storage.set("mp:prefs", state.prefs);
+        return state.prefs;
+      },
+      recommendCache: function() {
+        return state.rec;
+      },
+      /** 有没有接入网易云（决定推荐/搜索页要不要显示排行榜） */
+      neteaseReady: function() {
+        try {
+          return isLoggedIn(state.settings);
+        } catch (err) {
+          return false;
+        }
+      },
+      openPrefsPanel: function() {
+        if (shell) shell.openPrefsPanel();
+      },
+      /** force=true 表示用户点了「换一批」；否则 30 分钟内直接用缓存 */
+      refreshRecommend: async function(force) {
+        var cache = state.rec;
+        var fresh = cache && cache.at && Date.now() - cache.at < 30 * 60 * 1e3;
+        if (!force && fresh) return cache;
+        var res = await generate({
+          sources,
+          settings: state.settings,
+          prefs: state.prefs && state.prefs.length ? state.prefs : defaultPrefs(),
+          recent: state.recent,
+          favorites: state.favorites
+        });
+        state.rec = Object.assign({ at: Date.now() }, res);
+        await host.storage.set("mp:rec", state.rec);
+        return state.rec;
+      },
+      playRecommend: async function(tracks, index) {
+        var list = (tracks || []).filter(Boolean);
+        if (!list.length) return { ok: false, reason: "没有可播放的歌" };
+        await playTracks(list, index || 0);
+        refresh();
+        return { ok: true };
+      },
       addCurrentToCharPlaylist,
       commentCurrent,
       engineStats: function() {
@@ -6959,6 +8943,8 @@
     state.recent = loaded[3];
     state.searches = loaded[4];
     state.comments = loaded[5] || {};
+    state.prefs = normalizePrefs(await host.storage.get("mp:prefs", null));
+    state.rec = await host.storage.get("mp:rec", null);
     state.player.volume = state.settings.volume;
     state.queue = await loadQueue() || createQueue([], {
       repeat: state.settings.repeat,
@@ -7102,10 +9088,10 @@
 
   // src/main.js
   var app = null;
-  async function mount7(container, roche) {
+  async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.36.0" });
+    app = await createApp({ container, roche, version: "0.37.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -7121,7 +9107,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.36.0",
+    version: "0.37.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
@@ -7137,7 +9123,7 @@
           width: 300,
           height: 220
         },
-        mount: mount7,
+        mount: mount8,
         unmount
       }
     ],
