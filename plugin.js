@@ -1,4 +1,4 @@
-/* music-player v0.37.0 | built 2026-11-05T10:49:18.716Z */
+/* music-player v0.38.0 | built 2026-11-05T11:33:22.272Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -3930,6 +3930,86 @@
   padding-bottom: 12px;
 }
 
+/* 搜索页：进入即展示的榜单网格 */
+.mp-rank {
+  padding-bottom: 16px;
+}
+
+.mp-rank__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 12px;
+  padding: 8px 16px 0;
+}
+
+.mp-rank__card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-rank__cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-rank__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-rank__count {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 10.5px;
+}
+
+.mp-rank__name {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rank__card.is-skeleton .is-skeleton,
+.mp-rank__cover.is-skeleton {
+  background: linear-gradient(90deg, var(--mp-bg-2) 25%, var(--mp-line) 37%, var(--mp-bg-2) 63%);
+  background-size: 400% 100%;
+  animation: mp-skeleton 1.2s ease infinite;
+}
+
+@keyframes mp-skeleton {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.mp-rank__retry {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 8px 16px 0;
+  padding: 12px;
+  border: 1px dashed var(--mp-line-strong, var(--mp-line));
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+}
+
 /* ---------- 推荐偏好面板 ---------- */
 
 .mp-prefs__sheet {
@@ -4432,6 +4512,29 @@
     return close;
   }
 
+  // src/core/routes.js
+  var TAB_ITEMS = [
+    { id: "recommend", name: "推荐", icon: "search" },
+    { id: "playlists", name: "歌单", icon: "folder" },
+    { id: "favorites", name: "TA", icon: "heart" },
+    { id: "settings", name: "设置", icon: "gear" }
+  ];
+  var TABS = TAB_ITEMS.map(function(item) {
+    return item.id;
+  });
+  var SECONDARY_ROUTES = ["search", "playlist", "now"];
+  var DEFAULT_ROUTE = "recommend";
+  function isValidRoute(route) {
+    var id = String(route || "");
+    if (!id) return false;
+    return TABS.indexOf(id) !== -1 || SECONDARY_ROUTES.indexOf(id) !== -1;
+  }
+  function tabOf(route) {
+    if (route === "playlist") return "playlists";
+    if (route === "search") return "recommend";
+    return route;
+  }
+
   // src/ui/views/recommend.js
   function greeting() {
     var hour = (/* @__PURE__ */ new Date()).getHours();
@@ -4445,9 +4548,10 @@
   function mount(host, ctx) {
     var body = h("div", { class: "mp-body" });
     var refreshing = false;
+    var autoFetched = false;
     var header = h("div", { class: "mp-header" }, [
       pageTitle("推荐", function() {
-        ctx.exitApp();
+        ctx.exitOrMinimize();
       }),
       iconBtn("search", { label: "搜索", onClick: function() {
         ctx.goto("search");
@@ -4513,8 +4617,7 @@
       });
       return row;
     }
-    function render2() {
-      clear(body);
+    function renderBody() {
       var rec = ctx.recommendCache ? ctx.recommendCache() : null;
       var tracks = rec && rec.tracks || [];
       body.appendChild(h("div", { class: "mp-rec__hello", text: greeting() }));
@@ -4533,12 +4636,26 @@
       if (ctx.neteaseReady && ctx.neteaseReady()) {
         var rank = h("button", { class: "mp-rec__rank", type: "button" }, [
           h("div", { class: "mp-rec__rankname", text: "排行榜" }),
-          h("div", { class: "mp-rec__ranksub", text: "网易云热歌榜 / 新歌榜" })
+          h("div", { class: "mp-rec__ranksub", text: "去搜索页看热歌榜 / 新歌榜" })
         ]);
         rank.addEventListener("click", function() {
-          ctx.goto("search", { focus: "toplist" });
+          ctx.goto("search");
         });
         body.appendChild(rank);
+      }
+    }
+    function render2() {
+      clear(body);
+      try {
+        renderBody();
+      } catch (err) {
+        clear(body);
+        body.appendChild(h("div", { class: "mp-rec__hint", text: "推荐加载失败" }));
+        var retry = h("button", { class: "mp-rec__refresh", type: "button", text: "重试" });
+        retry.addEventListener("click", function() {
+          render2();
+        });
+        body.appendChild(retry);
       }
     }
     function openPrefs() {
@@ -4551,9 +4668,10 @@
     host.appendChild(view);
     render2();
     var mode = ctx.state.settings && ctx.state.settings.recMode || "manual";
-    var shouldFetch = !ctx.recommendCache() || ctx.recommendCache() && !ctx.recommendCache().tracks || mode === "auto" && !ctx.recommendCacheRefreshed;
+    var cache = ctx.recommendCache ? ctx.recommendCache() : null;
+    var shouldFetch = !cache || !cache.tracks || mode === "auto" && !autoFetched;
     if (shouldFetch && ctx.refreshRecommend) {
-      ctx.state.recommendCacheRefreshed = true;
+      if (mode === "auto") autoFetched = true;
       refreshing = true;
       render2();
       ctx.refreshRecommend(mode === "auto").then(function() {
@@ -4634,14 +4752,6 @@
         renderResults();
       }
     }));
-    if (ctx.canMinimize()) {
-      headerRight.push(iconBtn("down", {
-        label: ctx.minimizeLabel ? ctx.minimizeLabel() : "最小化",
-        onClick: function() {
-          ctx.minimizeApp();
-        }
-      }));
-    }
     var header = h("div", { class: "mp-header" }, [
       // 搜索是推荐页的二级页面，左上角回推荐
       iconBtn("back", { label: "返回推荐", onClick: function() {
@@ -4787,15 +4897,73 @@
       });
     }
     var rankBox = null;
-    if (ctx.neteaseReady && ctx.neteaseReady()) {
-      var rank = h("button", { class: "mp-rank-entry", type: "button" }, [
-        h("div", { class: "mp-rank-entry__name", text: "排行榜" }),
-        h("div", { class: "mp-rank-entry__sub", text: "网易云热歌榜 / 新歌榜 / 飙升榜" })
-      ]);
-      rank.addEventListener("click", function() {
-        if (ctx.openNeteaseToplist) ctx.openNeteaseToplist();
+    var rankCancelled = false;
+    function renderRankSkeleton() {
+      clear(rankBox);
+      rankBox.appendChild(h("div", { class: "mp-section", text: "排行榜" }));
+      var grid = h("div", { class: "mp-rank__grid" });
+      for (var i = 0; i < 4; i++) {
+        grid.appendChild(h("div", { class: "mp-rank__card is-skeleton" }, [
+          h("div", { class: "mp-rank__cover is-skeleton" }),
+          h("div", { class: "mp-rank__name is-skeleton", text: "加载中" })
+        ]));
+      }
+      rankBox.appendChild(grid);
+    }
+    function renderRanks(list) {
+      clear(rankBox);
+      if (!list.length) return;
+      rankBox.appendChild(h("div", { class: "mp-section", text: "排行榜" }));
+      var grid = h("div", { class: "mp-rank__grid" });
+      list.slice(0, 6).forEach(function(item) {
+        var cover = h("div", { class: "mp-rank__cover" });
+        var url = String(item.cover || "").replace(/^http:/, "https:");
+        if (url) {
+          var img = h("img", { src: url, alt: "" });
+          img.addEventListener("error", function() {
+            img.remove();
+          });
+          cover.appendChild(img);
+        }
+        if (item.count) cover.appendChild(h("span", { class: "mp-rank__count", text: item.count + " 首" }));
+        var card = h("button", { class: "mp-rank__card", type: "button" }, [
+          cover,
+          h("div", { class: "mp-rank__name", text: item.name || "榜单" })
+        ]);
+        card.addEventListener("click", function() {
+          if (ctx.playNeteaseToplist) ctx.playNeteaseToplist(item.id, item.name);
+        });
+        grid.appendChild(card);
       });
-      rankBox = h("div", { class: "mp-rank-entry-wrap" }, [rank]);
+      rankBox.appendChild(grid);
+    }
+    function renderRankError() {
+      clear(rankBox);
+      var btn = h("button", { class: "mp-rank__retry", type: "button", text: "榜单加载失败 · 点这里重试" });
+      btn.addEventListener("click", function() {
+        loadRanks();
+      });
+      rankBox.appendChild(btn);
+    }
+    async function loadRanks() {
+      if (!rankBox) return;
+      renderRankSkeleton();
+      var res = null;
+      try {
+        res = await ctx.fetchNeteaseToplists();
+      } catch (err) {
+        res = { ok: false, list: [] };
+      }
+      if (rankCancelled) return;
+      if (!res || !res.ok || !res.list || !res.list.length) {
+        renderRankError();
+        return;
+      }
+      renderRanks(res.list);
+    }
+    if (ctx.neteaseApiReady && ctx.neteaseApiReady()) {
+      rankBox = h("div", { class: "mp-rank" });
+      loadRanks();
     }
     var view = h("div", { class: "mp-view" }, [
       header,
@@ -4805,7 +4973,10 @@
     host.appendChild(view);
     renderResults();
     return {
-      refresh: renderResults
+      refresh: renderResults,
+      destroy: function() {
+        rankCancelled = true;
+      }
     };
   }
 
@@ -4832,7 +5003,7 @@
     var listBox = h("div", { class: "mp-list mp-body" });
     var header = h("div", { class: "mp-header" }, [
       pageTitle("歌单", function() {
-        ctx.exitApp();
+        ctx.exitOrMinimize();
       }),
       iconBtn("plus", {
         label: "新建歌单",
@@ -5112,11 +5283,8 @@
       openCharPicker();
     } });
     var header = h("div", { class: "mp-header" }, [
-      iconBtn("back", { label: "返回", onClick: function() {
-        ctx.goto("playlists");
-      } }),
       pageTitle("TA 的歌单", function() {
-        ctx.exitApp();
+        ctx.exitOrMinimize();
       }),
       subEl,
       switchBtn
@@ -5337,7 +5505,7 @@
     var statsTimer = null;
     var header = h("div", { class: "mp-header" }, [
       pageTitle("设置", function() {
-        ctx.exitApp();
+        ctx.exitOrMinimize();
       })
     ]);
     function setSource(key, value) {
@@ -5978,12 +6146,6 @@
   }
 
   // src/app/shell.js
-  var TABS = [
-    { id: "recommend", name: "推荐", icon: "search" },
-    { id: "playlists", name: "歌单", icon: "folder" },
-    { id: "favorites", name: "TA", icon: "heart" },
-    { id: "settings", name: "设置", icon: "gear" }
-  ];
   function createShell(container, ctx) {
     ensureStyle();
     var root = h("div", { class: "mp-root" });
@@ -6012,9 +6174,7 @@
       return ctx.state.route === "now";
     }
     function activeTab() {
-      if (ctx.state.route === "playlist") return "playlists";
-      if (ctx.state.route === "search") return "recommend";
-      return ctx.state.route;
+      return tabOf(ctx.state.route);
     }
     function hexToRgba(hex, alpha) {
       var text = String(hex || "").replace("#", "");
@@ -6081,7 +6241,7 @@
       clear(dockEl);
       dockEl.style.display = isNow() ? "none" : "flex";
       var active = activeTab();
-      TABS.forEach(function(tab) {
+      TAB_ITEMS.forEach(function(tab) {
         var btn = h("button", {
           class: "mp-dock__btn" + (tab.id === active ? " is-active" : ""),
           type: "button"
@@ -6248,7 +6408,7 @@
           });
           var editBtn = h("button", { class: "mp-prefs__edit", type: "button", text: pref.prompt ? "改提示词" : "写提示词" });
           editBtn.addEventListener("click", function() {
-            openPrompt({
+            openPrompt(root, {
               title: pref.label + " · 提示词",
               value: pref.prompt || "",
               placeholder: "例如：偏华语流行、独立民谣",
@@ -6287,7 +6447,7 @@
         });
         var addBtn = h("button", { class: "mp-prefs__add", type: "button", text: "＋ 新增偏好" });
         addBtn.addEventListener("click", function() {
-          openPrompt({
+          openPrompt(root, {
             title: "新增偏好",
             value: "",
             placeholder: "例如：通勤路上 / 健身房",
@@ -7785,7 +7945,6 @@
   ];
 
   // src/app/container.js
-  var TABS2 = ["search", "playlists", "favorites", "settings"];
   function uid() {
     return "pl_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
@@ -7800,7 +7959,7 @@
     var state = {
       version,
       route: "recommend",
-      nowBack: "search",
+      nowBack: "recommend",
       playlistId: "",
       settings: null,
       playlists: [],
@@ -8679,7 +8838,7 @@
     }
     function goto(route, options) {
       var o = options || {};
-      if (TABS2.indexOf(route) === -1 && route !== "playlist" && route !== "now") return;
+      if (!isValidRoute(route)) return;
       if (route === "playlist") {
         state.playlistId = o.playlistId || state.playlistId;
       }
@@ -8688,12 +8847,12 @@
     }
     function openNow() {
       if (state.route === "now") return;
-      state.nowBack = TABS2.indexOf(state.route) !== -1 ? state.route : "search";
+      state.nowBack = TABS.indexOf(state.route) !== -1 ? state.route : DEFAULT_ROUTE;
       state.route = "now";
       if (shell) shell.renderAll();
     }
     function closeNow() {
-      state.route = state.nowBack || "search";
+      state.route = state.nowBack || DEFAULT_ROUTE;
       if (shell) shell.renderAll();
     }
     async function updateSettings(patch) {
@@ -8822,6 +8981,17 @@
       minimizeLabel: function() {
         return state.settings.floating ? "最小化" : "退出并后台播放";
       },
+      /**
+       * 一级页左上角的统一行为：
+       * 悬浮窗开 → 缩成悬浮球（音乐继续）；关 → 直接退出 App（音乐同样继续）
+       */
+      exitOrMinimize: function() {
+        try {
+          if (state.settings.floating && host.caps.minimizeApp) host.ui.minimizeApp();
+          else host.ui.closeApp();
+        } catch (err) {
+        }
+      },
       toast: function(text) {
         toast(text);
       },
@@ -8883,13 +9053,33 @@
       recommendCache: function() {
         return state.rec;
       },
-      /** 有没有接入网易云（决定推荐/搜索页要不要显示排行榜） */
+      /** 有没有登录网易云（决定推荐页要不要显示排行榜入口） */
       neteaseReady: function() {
         try {
           return isLoggedIn(state.settings);
         } catch (err) {
           return false;
         }
+      },
+      /** 网易云服务是否可用（搜索页直接展示榜单只看这个，公开榜单不需要登录） */
+      neteaseApiReady: function() {
+        try {
+          return isReady(state.settings);
+        } catch (err) {
+          return false;
+        }
+      },
+      /** 拉榜单列表；失败不弹 toast，交给页面显示重试 */
+      fetchNeteaseToplists: async function() {
+        try {
+          var list = await toplists(state.settings);
+          return { ok: true, list: list || [] };
+        } catch (err) {
+          return { ok: false, list: [], reason: String(err && err.message || err) };
+        }
+      },
+      playNeteaseToplist: async function(id, name) {
+        return playNeteasePlaylist({ id, name: name || "网易云榜单" });
       },
       openPrefsPanel: function() {
         if (shell) shell.openPrefsPanel();
@@ -9091,7 +9281,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.37.0" });
+    app = await createApp({ container, roche, version: "0.38.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -9107,7 +9297,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.37.0",
+    version: "0.38.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
