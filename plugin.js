@@ -1,4 +1,4 @@
-/* music-player v0.39.0 | built 2026-11-05T12:42:59.611Z */
+/* music-player v0.40.0 | built 2026-11-06T12:01:50.711Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -486,6 +486,10 @@
       recCount: 20,
       /** 只推荐能解析出播放地址的歌（每批会多花 2~4 秒） */
       recFilterPlayable: true,
+      /** TA 页花瓣飘落动效 */
+      taMotion: true,
+      /** 自定义手写字体链接（留空用系统楷体） */
+      taFontUrl: "",
       // 指令通道：hybrid = 点歌用工具、其余用注释（默认）；
       // tool = 全走工具（多一次调用但最稳）；mark = 全走注释（最省调用）
       chatCommandMode: "hybrid",
@@ -569,6 +573,12 @@
         return Math.max(5, Math.min(50, n));
       })(),
       recFilterPlayable: bool(s.recFilterPlayable, def.recFilterPlayable),
+      taMotion: bool(s.taMotion, def.taMotion),
+      taFontUrl: (function() {
+        var url = String(s.taFontUrl == null ? "" : s.taFontUrl).trim();
+        if (!/^https?:\/\//i.test(url)) return "";
+        return url.slice(0, 300);
+      })(),
       chatPromptTool: (function() {
         var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
         if (!text) return def.chatPromptTool;
@@ -3991,6 +4001,71 @@
   color: var(--mp-ink-2);
 }
 
+/* 推荐页：我的歌单横滑条（中间亮、两侧灰） */
+.mp-rec-railwrap {
+  margin-bottom: 6px;
+}
+
+.mp-rec-rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 8px 16px 10px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+
+.mp-rec-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-rec-rail__card {
+  flex: 0 0 auto;
+  width: 132px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  transition: opacity 0.18s ease, filter 0.18s ease, transform 0.18s ease;
+  scroll-snap-align: center;
+}
+
+.mp-rec-rail__card.is-center {
+  transform: scale(1.02);
+}
+
+.mp-rec-rail__cover {
+  width: 132px;
+  height: 132px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.mp-rec-rail__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-rec-rail__name {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec-rail__sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-ink-2);
+}
+
 .mp-rec__list {
   padding-bottom: 6px;
 }
@@ -4358,6 +4433,425 @@
   background: transparent;
   color: var(--mp-ink-2);
   font-size: 12.5px;
+}
+
+/* ========== TA 页（0.40 主题化版）：背景 + 手写体 + 乐评卡 ========== */
+
+:root {
+  --mp-hand-font: "STKaiti", "KaiTi", "Kaiti SC", "楷体", "Songti SC", cursive;
+}
+
+.mp-ta {
+  position: relative;
+  overflow: hidden;
+}
+
+.mp-ta-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* 没有自定义背景时的默认氛围 */
+  background-image:
+    radial-gradient(120% 80% at 80% 0%, rgba(225, 75, 75, 0.10), transparent 60%),
+    radial-gradient(90% 70% at 10% 100%, rgba(120, 140, 180, 0.10), transparent 65%);
+}
+
+.mp-ta-bg.has-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 10, 14, 0.42) 0%, rgba(8, 10, 14, 0.78) 100%);
+}
+
+.mp-root[data-theme="light"] .mp-ta-bg {
+  background-image:
+    radial-gradient(120% 80% at 80% 0%, rgba(225, 75, 75, 0.08), transparent 60%),
+    radial-gradient(90% 70% at 10% 100%, rgba(120, 140, 180, 0.10), transparent 65%);
+}
+
+.mp-root[data-theme="light"] .mp-ta-bg.has-bg::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.9) 100%);
+}
+
+.mp-ta-hero,
+.mp-ta-body,
+.mp-ta-petals {
+  position: relative;
+  z-index: 1;
+}
+
+.mp-ta-hero {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 10px;
+}
+
+.mp-ta-hero__title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--mp-ink);
+}
+
+.mp-ta-hero__sub {
+  margin-top: 1px;
+  font-family: var(--mp-hand-font);
+  font-size: 16px;
+  font-style: italic;
+  letter-spacing: 1px;
+  opacity: 0.5;
+  color: var(--mp-ink);
+}
+
+.mp-ta-hero__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+
+.mp-ta-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+/* 花瓣 */
+.mp-ta-petals {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 340px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mp-ta-petal {
+  position: absolute;
+  top: -14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 60% 0 60% 60%;
+  background: rgba(255, 255, 255, 0.72);
+  opacity: 0.8;
+  animation-name: mp-petal-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.mp-root[data-theme="light"] .mp-ta-petal {
+  background: rgba(225, 75, 75, 0.35);
+}
+
+.mp-ta-petal:nth-child(1) { left: 6%; animation-duration: 11s; animation-delay: 0s; }
+.mp-ta-petal:nth-child(2) { left: 15%; animation-duration: 14s; animation-delay: 1.4s; width: 6px; height: 6px; }
+.mp-ta-petal:nth-child(3) { left: 24%; animation-duration: 12s; animation-delay: 3s; }
+.mp-ta-petal:nth-child(4) { left: 33%; animation-duration: 16s; animation-delay: 0.8s; width: 9px; height: 9px; }
+.mp-ta-petal:nth-child(5) { left: 42%; animation-duration: 13s; animation-delay: 2.2s; }
+.mp-ta-petal:nth-child(6) { left: 51%; animation-duration: 15s; animation-delay: 4s; width: 6px; height: 6px; }
+.mp-ta-petal:nth-child(7) { left: 60%; animation-duration: 12s; animation-delay: 1.1s; }
+.mp-ta-petal:nth-child(8) { left: 69%; animation-duration: 17s; animation-delay: 2.8s; width: 9px; height: 9px; }
+.mp-ta-petal:nth-child(9) { left: 77%; animation-duration: 13s; animation-delay: 0.5s; }
+.mp-ta-petal:nth-child(10) { left: 84%; animation-duration: 15s; animation-delay: 3.6s; width: 6px; height: 6px; }
+.mp-ta-petal:nth-child(11) { left: 90%; animation-duration: 12s; animation-delay: 1.8s; }
+.mp-ta-petal:nth-child(12) { left: 96%; animation-duration: 14s; animation-delay: 2.5s; width: 7px; height: 7px; }
+
+@keyframes mp-petal-fall {
+  0% { transform: translate3d(0, -20px, 0) rotate(0deg); opacity: 0; }
+  12% { opacity: 0.85; }
+  50% { transform: translate3d(14px, 160px, 0) rotate(180deg); }
+  100% { transform: translate3d(-10px, 340px, 0) rotate(360deg); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-ta-petal { animation: none; display: none; }
+}
+
+/* 角色块 */
+.mp-ta .mp-ta-block {
+  padding: 6px 18px 4px;
+}
+
+.mp-ta .mp-ta-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 14px;
+}
+
+.mp-ta .mp-ta-head__avatar {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mp-ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.mp-ta .mp-ta-head__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-ta .mp-ta-head__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-ta .mp-ta-head__stat {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--mp-ink-2);
+}
+
+/* 歌单横滑 */
+.mp-ta .mp-ta-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.mp-ta .mp-ta-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-ta .mp-ta-pl {
+  flex: 0 0 auto;
+  width: 104px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-ta .mp-ta-pl__cover {
+  width: 104px;
+  height: 104px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mp-ta .mp-ta-pl__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-ta .mp-ta-pl__name {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta .mp-ta-pl__sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 乐评标题 */
+.mp-ta .mp-ta-review__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 4px;
+}
+
+.mp-ta .mp-ta-review__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mp-accent);
+}
+
+.mp-ta .mp-ta-review__dot--lead {
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 10px var(--mp-accent);
+}
+
+.mp-ta .mp-ta-review__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  letter-spacing: 0.3px;
+}
+
+.mp-ta .mp-ta-review__rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.22), transparent);
+}
+
+.mp-root[data-theme="light"] .mp-ta .mp-ta-review__rule {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.16), transparent);
+}
+
+.mp-ta .mp-ta-review__count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-ta .mp-ta-review__empty {
+  padding: 16px 0 8px;
+  font-family: var(--mp-hand-font);
+  font-size: 14px;
+  font-style: italic;
+  opacity: 0.55;
+  color: var(--mp-ink-2);
+}
+
+/* 乐评卡 */
+.mp-ta .mp-ta-review {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 0 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mp-root[data-theme="light"] .mp-ta .mp-ta-review {
+  border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
+.mp-ta .mp-ta-review:last-child {
+  border-bottom: 0;
+}
+
+.mp-ta .mp-ta-review__art {
+  position: relative;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mp-ta .mp-ta-review__cover {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mp-ta .mp-ta-review__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 封面右侧露出的黑胶唱片 */
+.mp-ta .mp-ta-review__disc {
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  margin-top: -17px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, #2b2b31 0 18%, #16161b 19% 42%, #232329 43% 60%, #101014 61% 100%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.mp-ta .mp-ta-review__disc::after {
+  content: '';
+  position: absolute;
+  inset: 40%;
+  border-radius: 50%;
+  background: var(--mp-accent);
+  opacity: 0.85;
+}
+
+.mp-ta .mp-ta-review__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 6px;
+}
+
+.mp-ta .mp-ta-review__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta .mp-ta-review__name {
+  margin: 4px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta .mp-ta-review__text {
+  font-family: var(--mp-hand-font);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--mp-ink);
+  opacity: 0.92;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mp-ta .mp-ta-review__text b {
+  color: var(--mp-accent);
+  font-weight: 700;
+}
+
+.mp-ta .mp-ta-review__sign {
+  position: absolute;
+  right: 0;
+  bottom: 14px;
+  font-family: var(--mp-hand-font);
+  font-size: 20px;
+  color: var(--mp-ink);
+  opacity: 0.22;
+  transform: rotate(-8deg);
+  pointer-events: none;
+  user-select: none;
 }
 
 .mp-theme-row {
@@ -4826,6 +5320,49 @@
         ])
       ]);
     }
+    function updateRailFade(rail) {
+      var mid = rail.scrollLeft + rail.clientWidth / 2;
+      var half = rail.clientWidth / 2 || 1;
+      Array.prototype.forEach.call(rail.children, function(card) {
+        var center = card.offsetLeft + card.offsetWidth / 2;
+        var dist = Math.abs(center - mid) / half;
+        var near = Math.max(0, 1 - dist);
+        card.classList.toggle("is-center", dist < 0.36);
+        card.style.opacity = String((0.45 + near * 0.55).toFixed(3));
+        card.style.filter = dist < 0.36 ? "none" : "grayscale(0.6)";
+      });
+    }
+    function playlistsRail() {
+      var list = (ctx.state.playlists || []).filter(function(p) {
+        return p && p.id;
+      });
+      if (!list.length) return null;
+      var rail = h("div", { class: "mp-rec-rail" });
+      list.slice(0, 20).forEach(function(p) {
+        var first = (p.tracks || [])[0];
+        var cover = h("div", { class: "mp-rec-rail__cover" });
+        fillCover(cover, first ? ctx.coverOf(first) : "");
+        var card = h("button", { class: "mp-rec-rail__card", type: "button" }, [
+          cover,
+          h("div", { class: "mp-rec-rail__name", text: p.name }),
+          h("div", { class: "mp-rec-rail__sub", text: (p.tracks || []).length + " 首" })
+        ]);
+        card.addEventListener("click", function() {
+          ctx.goto("playlist", { playlistId: p.id });
+        });
+        rail.appendChild(card);
+      });
+      rail.addEventListener("scroll", function() {
+        updateRailFade(rail);
+      }, { passive: true });
+      requestAnimationFrame(function() {
+        updateRailFade(rail);
+      });
+      return h("div", { class: "mp-rec-railwrap" }, [
+        h("div", { class: "mp-section", text: "我的歌单" }),
+        rail
+      ]);
+    }
     function trackRow(track, index, tracks) {
       var cover = coverNode(ctx.coverOf(track), "mp-rec__rowcover");
       cover.dataset.cover = trackKey(track);
@@ -4846,6 +5383,8 @@
       var tracks = rec && rec.tracks || [];
       body.appendChild(h("div", { class: "mp-rec__hello", text: greeting() }));
       body.appendChild(aiCard(rec));
+      var rail = playlistsRail();
+      if (rail) body.appendChild(rail);
       if (rec && rec.reason) {
         body.appendChild(h("div", { class: "mp-rec__hint", text: rec.reason }));
       }
@@ -5447,8 +5986,166 @@
     return { refresh: renderList };
   }
 
+  // src/services/taBg.js
+  var KEY = "mp:taBg";
+  var MAX_WIDTH = 900;
+  var SOFT_SIZE = 350 * 1024;
+  var HARD_SIZE = 500 * 1024;
+  function mirrorRead2() {
+    try {
+      if (typeof localStorage === "undefined") return null;
+      var text = localStorage.getItem("mp:mirror:" + KEY);
+      return text ? JSON.parse(text) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+  function mirrorWrite2(map2) {
+    try {
+      if (typeof localStorage === "undefined") return;
+      localStorage.setItem("mp:mirror:" + KEY, JSON.stringify(map2));
+    } catch (err) {
+    }
+  }
+  function normalizeBg(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    var type = raw.type === "url" ? "url" : "data";
+    var value = String(raw.value || "").trim();
+    if (!value) return null;
+    if (type === "url" && !/^https?:\/\//i.test(value)) return null;
+    if (type === "data" && value.indexOf("data:image/") !== 0) return null;
+    return { type, value, at: Number(raw.at) || 0 };
+  }
+  function normalizeBgs(raw) {
+    var out = /* @__PURE__ */ Object.create(null);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+    Object.keys(raw).forEach(function(id) {
+      var one = normalizeBg(raw[id]);
+      if (id && one) out[id] = one;
+    });
+    return out;
+  }
+  async function loadBgs(roche) {
+    var fromHost = null;
+    try {
+      if (roche && roche.storage && typeof roche.storage.get === "function") {
+        fromHost = await roche.storage.get(KEY);
+      }
+    } catch (err) {
+      fromHost = null;
+    }
+    var map2 = normalizeBgs(fromHost);
+    if (!Object.keys(map2).length) {
+      map2 = normalizeBgs(mirrorRead2());
+    }
+    return map2;
+  }
+  async function persist(roche, map2) {
+    mirrorWrite2(map2);
+    try {
+      if (roche && roche.storage && typeof roche.storage.set === "function") {
+        await roche.storage.set(KEY, map2);
+        return true;
+      }
+    } catch (err) {
+    }
+    return false;
+  }
+  async function saveBg(roche, characterId, bg) {
+    var id = String(characterId || "").trim();
+    var one = normalizeBg(bg);
+    if (!id || !one) return { ok: false, reason: "背景数据不合法" };
+    var map2 = await loadBgs(roche);
+    map2[id] = one;
+    var ok = await persist(roche, map2);
+    return ok ? { ok: true, bg: one } : { ok: false, reason: "存储写入失败，换个更小的图试试" };
+  }
+  async function clearBg(roche, characterId) {
+    var id = String(characterId || "").trim();
+    if (!id) return { ok: false, reason: "没有角色" };
+    var map2 = await loadBgs(roche);
+    delete map2[id];
+    await persist(roche, map2);
+    return { ok: true };
+  }
+  function readImage(file) {
+    return new Promise(function(resolve, reject) {
+      var url = null;
+      try {
+        url = URL.createObjectURL(file);
+      } catch (err) {
+        reject(new Error("读不到这个文件"));
+        return;
+      }
+      var img = new Image();
+      img.decoding = "async";
+      img.onload = function() {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (err) {
+        }
+        resolve(img);
+      };
+      img.onerror = function() {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (err) {
+        }
+        reject(new Error("这张图解码失败"));
+      };
+      img.src = url;
+    });
+  }
+  function drawToDataUrl(img, quality) {
+    var width = img.naturalWidth || img.width || MAX_WIDTH;
+    var height = img.naturalHeight || img.height || MAX_WIDTH;
+    var ratio = Math.min(1, MAX_WIDTH / Math.max(1, width));
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * ratio));
+    canvas.height = Math.max(1, Math.round(height * ratio));
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+  async function compressImage(file) {
+    if (!file) return { ok: false, reason: "没有选择图片" };
+    if (String(file.type || "").indexOf("image/") !== 0) {
+      return { ok: false, reason: "只能选图片文件" };
+    }
+    if (typeof document === "undefined" || !document.createElement) {
+      return { ok: false, reason: "当前环境不支持压缩" };
+    }
+    var img = null;
+    try {
+      img = await readImage(file);
+    } catch (err) {
+      return { ok: false, reason: String(err && err.message || err) };
+    }
+    var qualities = [0.72, 0.55, 0.42];
+    var lastSize = 0;
+    for (var i = 0; i < qualities.length; i++) {
+      var dataUrl = "";
+      try {
+        dataUrl = drawToDataUrl(img, qualities[i]);
+      } catch (err) {
+        return { ok: false, reason: "压缩失败，换一张图试试" };
+      }
+      if (!dataUrl) return { ok: false, reason: "压缩失败，换一张图试试" };
+      lastSize = Math.round(dataUrl.length * 0.75);
+      if (lastSize <= SOFT_SIZE) {
+        return { ok: true, dataUrl, size: lastSize, width: Math.min(MAX_WIDTH, img.naturalWidth || MAX_WIDTH) };
+      }
+    }
+    if (lastSize > HARD_SIZE) {
+      return { ok: false, reason: "这张图太大了（>" + Math.round(HARD_SIZE / 1024) + "KB），换一张小一点的" };
+    }
+    return { ok: true, dataUrl: drawToDataUrl(img, 0.3), size: lastSize, width: MAX_WIDTH };
+  }
+
   // src/ui/views/favorites.js
   var CHAR_KEY = "mp:taChar";
+  var PETAL_COUNT = 12;
   function richText(text) {
     var parts = String(text || "").split(/(\*\*[^*]+\*\*)/g);
     return parts.map(function(seg) {
@@ -5480,20 +6177,17 @@
   }
   function mount5(host, ctx) {
     var state = ctx.state;
-    var listBox = h("div", { class: "mp-body" });
-    var subEl = h("div", { class: "mp-header__sub", text: "" });
     var currentChar = readSavedChar();
     var profiles = /* @__PURE__ */ Object.create(null);
+    var bgs = /* @__PURE__ */ Object.create(null);
+    var compressBusy = false;
     function loadCharacters() {
       var api2 = typeof window !== "undefined" && window.Roche ? window.Roche : null;
       if (!api2 || !api2.character || typeof api2.character.list !== "function") return Promise.resolve();
       return Promise.resolve(api2.character.list()).then(function(list) {
         (list || []).forEach(function(c) {
           if (!c) return;
-          var info = {
-            name: c.handle || c.name || c.displayName || "",
-            avatar: c.avatar || ""
-          };
+          var info = { name: c.handle || c.name || c.displayName || "", avatar: c.avatar || "" };
           [c.id, c.contactId, c.conversationId].forEach(function(key) {
             if (key) profiles[String(key)] = info;
           });
@@ -5506,27 +6200,20 @@
     }
     function nameOf(id) {
       var p = profileOf(id);
-      if (p && p.name) return p.name;
-      return "角色";
+      return p && p.name || "角色";
+    }
+    function signOf(id) {
+      var name = nameOf(id);
+      if (!name || name === "角色") return "";
+      return name.length <= 2 ? name : name.slice(0, 1);
     }
     function avatarOf(id) {
       var p = profileOf(id);
       return p ? p.avatar : "";
     }
-    var switchBtn = iconBtn("more", { label: "切换角色", onClick: function() {
-      openCharPicker();
-    } });
-    var header = h("div", { class: "mp-header" }, [
-      pageTitle("TA 的歌单", function() {
-        ctx.exitOrMinimize();
-      }),
-      subEl,
-      switchBtn
-    ]);
     function mirrorOf(key) {
       try {
-        var raw = JSON.parse(localStorage.getItem("mp:mirror:" + key) || "null");
-        return raw;
+        return JSON.parse(localStorage.getItem("mp:mirror:" + key) || "null");
       } catch (err) {
         return null;
       }
@@ -5573,6 +6260,51 @@
       });
       return out;
     }
+    var bgLayer = h("div", { class: "mp-ta-bg" });
+    var heroTitle = h("div", { class: "mp-ta-hero__title", text: "TA 的歌单" });
+    heroTitle.addEventListener("click", function() {
+      ctx.exitOrMinimize();
+    });
+    var switchBtn = iconBtn("more", { label: "切换角色", onClick: function() {
+      openCharPicker();
+    } });
+    var menuBtn = iconBtn("more", { label: "更多", onClick: function() {
+      openMenu();
+    } });
+    var hero = h("div", { class: "mp-ta-hero" }, [
+      h("div", { class: "mp-ta-hero__main" }, [
+        heroTitle,
+        h("div", { class: "mp-ta-hero__sub", text: "Playlist" })
+      ]),
+      h("div", { class: "mp-ta-hero__actions" }, [switchBtn, menuBtn])
+    ]);
+    var petals = null;
+    var body = h("div", { class: "mp-ta-body" });
+    var view = h("div", { class: "mp-view mp-ta" }, [bgLayer, hero, body]);
+    host.appendChild(view);
+    function applyBg() {
+      var id = currentChar;
+      var bg = id ? bgs[id] : null;
+      if (!bg && !id) {
+        var first = Object.keys(bgs)[0];
+        if (first) bg = bgs[first];
+      }
+      if (bg && bg.value) {
+        bgLayer.style.backgroundImage = "url(" + JSON.stringify(bg.value) + ")";
+        bgLayer.classList.add("has-bg");
+      } else {
+        bgLayer.style.backgroundImage = "";
+        bgLayer.classList.remove("has-bg");
+      }
+    }
+    async function reloadBgs() {
+      try {
+        bgs = await loadBgs(window.Roche || null);
+      } catch (err) {
+        bgs = /* @__PURE__ */ Object.create(null);
+      }
+      applyBg();
+    }
     function openCharPicker() {
       var items = [{
         label: "全部角色",
@@ -5581,7 +6313,7 @@
         onClick: function() {
           currentChar = "";
           saveChar("");
-          renderList();
+          renderAll();
         }
       }];
       charIds().forEach(function(id) {
@@ -5592,30 +6324,121 @@
           onClick: function() {
             currentChar = id;
             saveChar(id);
-            renderList();
+            renderAll();
           }
         });
       });
       ctx.openSheet({ title: "切换角色", items });
     }
-    function avatarNode(id, name) {
-      var box = h("div", { class: "mp-ta-head__avatar" });
-      var url = avatarOf(id);
-      if (url) {
-        var img = h("img", { src: url, alt: "" });
-        img.addEventListener("error", function() {
-          img.remove();
+    function openMenu() {
+      var items = [];
+      items.push({
+        label: compressBusy ? "正在压缩…" : "从相册换背景",
+        icon: "plus",
+        onClick: function() {
+          pickFile();
+        }
+      });
+      items.push({
+        label: "填图片链接",
+        icon: "more",
+        onClick: function() {
+          ctx.openPrompt({
+            title: "背景图片链接",
+            value: currentChar && bgs[currentChar] && bgs[currentChar].type === "url" ? bgs[currentChar].value : "",
+            placeholder: "https://… 图片地址",
+            onSubmit: async function(text) {
+              var url = String(text || "").trim();
+              if (!/^https?:\/\//i.test(url)) {
+                if (ctx.toast) ctx.toast("请填 http(s) 开头的图片地址");
+                return;
+              }
+              var target = currentChar || charIds()[0] || "";
+              if (!target) {
+                if (ctx.toast) ctx.toast("先让 TA 有一个歌单或评论");
+                return;
+              }
+              await saveBg(window.Roche || null, target, { type: "url", value: url, at: Date.now() });
+              await reloadBgs();
+              if (ctx.toast) ctx.toast("背景已更新");
+            }
+          });
+        }
+      });
+      items.push({
+        label: state.settings.taMotion !== false ? "关掉花瓣动效" : "打开花瓣动效",
+        icon: "check",
+        onClick: function() {
+          ctx.updateSettings({ taMotion: !(state.settings.taMotion !== false) });
+          renderPetals();
+        }
+      });
+      if (currentChar && bgs[currentChar]) {
+        items.push({
+          label: "清除当前角色背景",
+          icon: "close",
+          danger: true,
+          onClick: async function() {
+            await clearBg(window.Roche || null, currentChar);
+            await reloadBgs();
+            if (ctx.toast) ctx.toast("已恢复默认背景");
+          }
         });
-        box.appendChild(img);
-      } else {
-        box.appendChild(h("span", { text: String(name || "角").slice(0, 1) }));
       }
-      return box;
+      ctx.openSheet({ title: "TA 页外观", items });
+    }
+    function pickFile() {
+      if (compressBusy) return;
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.style.display = "none";
+      document.body.appendChild(input);
+      input.addEventListener("change", async function() {
+        var file = input.files && input.files[0];
+        try {
+          document.body.removeChild(input);
+        } catch (err) {
+        }
+        if (!file) return;
+        var target = currentChar || charIds()[0] || "";
+        if (!target) {
+          if (ctx.toast) ctx.toast("先让 TA 有一个歌单或评论");
+          return;
+        }
+        compressBusy = true;
+        if (ctx.toast) ctx.toast("正在压缩图片…");
+        var res = await compressImage(file);
+        compressBusy = false;
+        if (!res.ok) {
+          if (ctx.toast) ctx.toast(res.reason || "图片处理失败");
+          return;
+        }
+        var saved = await saveBg(window.Roche || null, target, { type: "data", value: res.dataUrl, at: Date.now() });
+        if (!saved.ok) {
+          if (ctx.toast) ctx.toast(saved.reason || "保存失败");
+          return;
+        }
+        await reloadBgs();
+        if (ctx.toast) ctx.toast("背景已更新");
+      });
+      input.click();
+    }
+    function renderPetals() {
+      if (petals && petals.parentNode) petals.parentNode.removeChild(petals);
+      petals = null;
+      var on = state.settings.taMotion !== false;
+      if (!on) return;
+      petals = h("div", { class: "mp-ta-petals" });
+      for (var i = 0; i < PETAL_COUNT; i++) {
+        petals.appendChild(h("span", { class: "mp-ta-petal" }));
+      }
+      view.insertBefore(petals, body);
     }
     function playlistCard(p) {
       var first = (p.tracks || [])[0];
-      var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-ta-pl__cover");
-      if (first) cover.dataset.cover = trackKey(first);
+      var cover = h("div", { class: "mp-ta-pl__cover" });
+      fillCover(cover, first ? ctx.coverOf(first) : "");
       var card = h("button", { class: "mp-ta-pl", type: "button" }, [
         cover,
         h("div", { class: "mp-ta-pl__name", text: p.name }),
@@ -5626,27 +6449,53 @@
       });
       return card;
     }
-    function commentBubble(item) {
-      return h("div", { class: "mp-ta-quote" }, [
-        h("div", { class: "mp-ta-quote__song" }, [
-          h("span", { text: item.name || "未知歌曲" }),
-          item.artist ? h("span", { class: "mp-ta-quote__artist", text: " · " + item.artist }) : null
-        ]),
-        h("div", { class: "mp-ta-quote__text" }, richText(item.text || ""))
+    function reviewCard(item) {
+      var cover = h("div", { class: "mp-ta-review__cover" });
+      fillCover(cover, item.cover || "");
+      var art = h("button", { class: "mp-ta-review__art", type: "button", "aria-label": "播放这首" }, [
+        cover,
+        h("div", { class: "mp-ta-review__disc" })
       ]);
+      art.addEventListener("click", function(e) {
+        e.stopPropagation();
+        if (ctx.playComment) ctx.playComment(item);
+      });
+      var main = h("div", { class: "mp-ta-review__main" }, [
+        h("div", { class: "mp-ta-review__meta" }, [
+          h("span", { class: "mp-ta-review__dot" }),
+          h("span", { text: item.album || item.artist || "未知歌手" })
+        ]),
+        h("div", { class: "mp-ta-review__name", text: item.name || "未知歌曲" }),
+        h("div", { class: "mp-ta-review__text" }, richText("“" + (item.text || "") + "”"))
+      ]);
+      main.addEventListener("click", function() {
+        if (ctx.playComment) ctx.playComment(item);
+      });
+      var sign = h("div", { class: "mp-ta-review__sign", text: signOf(item.characterId) });
+      return h("div", { class: "mp-ta-review" }, [art, main, sign]);
     }
     function charBlock(id, playlists, comments) {
       var name = nameOf(id);
       var trackCount = playlists.reduce(function(sum, p) {
         return sum + (p.tracks || []).length;
       }, 0);
-      var stat = [playlists.length + " 个歌单", trackCount + " 首"].join(" · ");
+      var avatar = h("div", { class: "mp-ta-head__avatar" });
+      var url = avatarOf(id);
+      if (url) {
+        var img = h("img", { src: url, alt: "" });
+        img.addEventListener("error", function() {
+          img.remove();
+        });
+        avatar.appendChild(img);
+      } else {
+        avatar.appendChild(h("span", { text: String(name || "角").slice(0, 1) }));
+      }
       var block = h("div", { class: "mp-ta-block" }, [
         h("div", { class: "mp-ta-head" }, [
-          avatarNode(id, name),
+          avatar,
           h("div", { class: "mp-ta-head__main" }, [
             h("div", { class: "mp-ta-head__name", text: name }),
-            h("div", { class: "mp-ta-head__stat", text: stat })
+            h("div", { class: "mp-ta-head__stat", text: playlists.length + " 个歌单 · " + trackCount + " 首" })
           ])
         ])
       ]);
@@ -5657,13 +6506,25 @@
         });
         block.appendChild(strip);
       }
-      comments.slice(0, 8).forEach(function(c) {
-        block.appendChild(commentBubble(c));
-      });
+      var head = h("div", { class: "mp-ta-review__head" }, [
+        h("span", { class: "mp-ta-review__dot mp-ta-review__dot--lead" }),
+        h("span", { class: "mp-ta-review__title", text: "TA 的乐评" }),
+        h("span", { class: "mp-ta-review__rule" }),
+        h("span", { class: "mp-ta-review__count", text: comments.length + " 条评论" })
+      ]);
+      block.appendChild(head);
+      if (!comments.length) {
+        block.appendChild(h("div", { class: "mp-ta-review__empty", text: "TA 还没有写下乐评" }));
+      } else {
+        comments.slice(0, 20).forEach(function(c) {
+          block.appendChild(reviewCard(c));
+        });
+      }
       return block;
     }
-    function renderList() {
-      clear(listBox);
+    function renderAll() {
+      clear(body);
+      applyBg();
       var playlists = charPlaylistsAll();
       var comments = allComments();
       if (currentChar) {
@@ -5675,11 +6536,10 @@
         });
       }
       var ids = currentChar ? [currentChar] : charIds();
-      subEl.textContent = currentChar ? nameOf(currentChar) : ids.length ? ids.length + " 个角色" : "";
       if (!ids.length) {
-        listBox.appendChild(emptyHint(
+        body.appendChild(emptyHint(
           "TA 还没有歌单和评价",
-          "让 TA 在聊天里建个歌单、或在「一起听」时把当前这首收进去\n你自己收藏的歌在「歌单 → 我的收藏」"
+          "让 TA 在聊天里建个歌单、或在「一起听」时把当前这首收进去"
         ));
         return;
       }
@@ -5690,21 +6550,27 @@
         var words = comments.filter(function(c) {
           return String(c.characterId || "") === id;
         });
-        listBox.appendChild(charBlock(id, mine, words));
+        body.appendChild(charBlock(id, mine, words));
       });
     }
-    var view = h("div", { class: "mp-view" }, [header, listBox]);
-    host.appendChild(view);
-    renderList();
+    renderPetals();
+    renderAll();
     Promise.all([
       ctx.reloadPlaylists ? ctx.reloadPlaylists() : Promise.resolve(),
       ctx.reloadComments ? ctx.reloadComments() : Promise.resolve(),
-      loadCharacters()
+      loadCharacters(),
+      reloadBgs()
     ]).then(function() {
-      renderList();
+      renderAll();
     }).catch(function() {
     });
-    return { refresh: renderList };
+    return {
+      refresh: renderAll,
+      destroy: function() {
+        if (petals && petals.parentNode) petals.parentNode.removeChild(petals);
+        petals = null;
+      }
+    };
   }
 
   // src/ui/views/settings.js
@@ -5893,6 +6759,33 @@
       var appearanceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "外观" }),
         field("主题", themeRow, "跟随系统 / 白天白色 / 夜间深色"),
+        field(
+          "TA 页花瓣",
+          switchEl(s.taMotion !== false, function(v) {
+            ctx.updateSettings({ taMotion: v });
+          }),
+          "关闭后 TA 页不再飘花瓣，省电一些"
+        ),
+        field("手写字体", (function() {
+          var box = h("div", { class: "mp-count" });
+          var input = h("input", {
+            class: "mp-input mp-count__input",
+            type: "text",
+            value: s.taFontUrl || "",
+            placeholder: "https://… .woff2（留空用系统楷体）"
+          });
+          input.addEventListener("change", function() {
+            ctx.updateSettings({ taFontUrl: String(input.value || "").trim() });
+          });
+          var clear2 = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "清除" });
+          clear2.addEventListener("click", function() {
+            input.value = "";
+            ctx.updateSettings({ taFontUrl: "" });
+          });
+          box.appendChild(input);
+          box.appendChild(clear2);
+          return box;
+        })(), "字体文件建议 woff2 且 <1MB；超过 5MB 容易卡顿甚至闪退"),
         field(
           "主色调",
           h("div", { class: "mp-dots" }, [dotRow, customDot]),
@@ -6446,9 +7339,38 @@
       var b = parseInt(text.slice(4, 6), 16);
       return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
     }
+    var HAND_FALLBACK = '"STKaiti","KaiTi","Kaiti SC","楷体","Songti SC",cursive';
+    var loadedFontUrl = "";
+    function applyHandFont(url) {
+      if (!url) {
+        if (loadedFontUrl) {
+          root.style.removeProperty("--mp-hand-font");
+          loadedFontUrl = "";
+        }
+        return;
+      }
+      if (url === loadedFontUrl) return;
+      loadedFontUrl = url;
+      try {
+        if (typeof FontFace === "undefined" || !document.fonts) return;
+        var face = new FontFace("mpHandCustom", "url(" + JSON.stringify(url) + ")");
+        face.load().then(function(f) {
+          try {
+            document.fonts.add(f);
+          } catch (err) {
+          }
+          root.style.setProperty("--mp-hand-font", '"mpHandCustom", ' + HAND_FALLBACK);
+        }).catch(function() {
+          loadedFontUrl = "";
+        });
+      } catch (err) {
+        loadedFontUrl = "";
+      }
+    }
     function applyAppearance() {
       var s = ctx.state.settings;
       root.dataset.accent = s.accent || "red";
+      applyHandFont(s.taFontUrl || "");
       if (s.accentColor) {
         root.style.setProperty("--mp-accent", s.accentColor);
         root.style.setProperty("--mp-accent-soft", hexToRgba(s.accentColor, 0.16));
@@ -9327,6 +10249,14 @@
         var map2 = state.comments || {};
         var want = String(characterId || "");
         var out = [];
+        var covers = /* @__PURE__ */ Object.create(null);
+        [state.queue ? state.queue.tracks : [], state.favorites || [], state.recent || []].forEach(function(list) {
+          (list || []).forEach(function(t) {
+            if (!t) return;
+            var k = trackKey(t);
+            if (k && t.cover) covers[k] = t.cover;
+          });
+        });
         Object.keys(map2).forEach(function(key) {
           var entry = map2[key] || {};
           Object.keys(entry).forEach(function(cid) {
@@ -9337,6 +10267,8 @@
               characterId: String(cid),
               name: one.name || "",
               artist: one.artist || "",
+              album: one.album || "",
+              cover: one.cover || covers[key] || "",
               text: one.text || "",
               at: one.at || 0
             });
@@ -9345,6 +10277,30 @@
         return out.sort(function(a, b) {
           return b.at - a.at;
         });
+      },
+      /** 点乐评封面/唱片：优先在队列里跳，没有就按歌名搜一首播 */
+      playComment: async function(item) {
+        if (!item) return { ok: false, reason: "没有这首歌" };
+        var q = state.queue;
+        if (q && item.key) {
+          for (var i = 0; i < q.tracks.length; i++) {
+            if (trackKey(q.tracks[i]) === item.key) {
+              await playQueueAt(i);
+              return { ok: true };
+            }
+          }
+        }
+        var keyword = (item.name + " " + (item.artist || "")).trim();
+        if (!keyword) return { ok: false, reason: "没有这首歌" };
+        try {
+          var res = await sources.search(keyword, state.settings, { limit: 5 });
+          if (res && res.tracks && res.tracks.length) {
+            await playTracks([res.tracks[0]], 0);
+            return { ok: true };
+          }
+        } catch (err) {
+        }
+        return { ok: false, reason: "没找到这首歌" };
       },
       reloadComments,
       reloadPlaylists,
@@ -9637,7 +10593,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.39.0" });
+    app = await createApp({ container, roche, version: "0.40.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -9653,7 +10609,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.39.0",
+    version: "0.40.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
