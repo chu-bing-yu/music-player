@@ -1,4 +1,4 @@
-/* music-player v0.40.0 | built 2026-11-06T12:01:50.711Z */
+/* music-player v0.41.0 | built 2026-11-06T12:45:17.248Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -488,8 +488,10 @@
       recFilterPlayable: true,
       /** TA 页花瓣飘落动效 */
       taMotion: true,
-      /** 自定义手写字体链接（留空用系统楷体） */
+      /** 自定义手写字体链接（留空用内置 Italianno） */
       taFontUrl: "",
+      /** 角色签名文字（英文花体；留空则自动用角色 handle，再没有就不显示） */
+      taSign: "",
       // 指令通道：hybrid = 点歌用工具、其余用注释（默认）；
       // tool = 全走工具（多一次调用但最稳）；mark = 全走注释（最省调用）
       chatCommandMode: "hybrid",
@@ -579,6 +581,7 @@
         if (!/^https?:\/\//i.test(url)) return "";
         return url.slice(0, 300);
       })(),
+      taSign: String(s.taSign == null ? "" : s.taSign).trim().slice(0, 16),
       chatPromptTool: (function() {
         var text = String(s.chatPromptTool == null ? "" : s.chatPromptTool).trim();
         if (!text) return def.chatPromptTool;
@@ -4437,8 +4440,111 @@
 
 /* ========== TA 页（0.40 主题化版）：背景 + 手写体 + 乐评卡 ========== */
 
+/* 英文装饰花体：CDN 拉不到就回退 cursive，不影响正文 */
+@font-face {
+  font-family: 'MPItalianno';
+  src: url('https://cdn.jsdelivr.net/npm/@fontsource/italianno@5.0.8/files/italianno-latin-400-normal.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --mp-hand-font: "STKaiti", "KaiTi", "Kaiti SC", "楷体", "Songti SC", cursive;
+  /* 中文：思源宋体 → 系统宋体；不内嵌（整包几 MB），加载不到就用系统字体 */
+  --mp-serif: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  /* 辅助信息：MiSans → HarmonyOS Sans → 系统无衬线 */
+  --mp-sans-cn: "MiSans", "HarmonyOS Sans", "PingFang SC", system-ui, sans-serif;
+  /* 英文花体 */
+  --mp-hand-font: "MPItalianno", "STKaiti", cursive;
+  --mp-silver: #A8B4B8;
+}
+
+/* TA 页：宋体正文 + 花体装饰 */
+.mp-ta .mp-ta-hero__title,
+.mp-ta .mp-ta-head__name,
+.mp-ta .mp-ta-review__title,
+.mp-ta .mp-ta-review__name,
+.mp-ta .mp-ta-review__text,
+.mp-ta .mp-ta-pl__name {
+  font-family: var(--mp-serif);
+}
+
+.mp-ta .mp-ta-hero__title {
+  font-size: clamp(26px, 8.2vw, 34px);
+  font-weight: 500;
+  letter-spacing: 1px;
+  line-height: 1.2;
+}
+
+.mp-ta .mp-ta-hero__sub {
+  font-family: var(--mp-hand-font);
+  font-size: clamp(32px, 11vw, 42px);
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 1px;
+  line-height: 1.25;
+  color: var(--mp-silver);
+  opacity: 0.75;
+  margin-top: -6px;
+  overflow: visible;
+  padding: 2px 0 6px;
+}
+
+.mp-ta .mp-ta-head__name {
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.mp-ta .mp-ta-head__stat,
+.mp-ta .mp-ta-pl__sub,
+.mp-ta .mp-ta-review__count,
+.mp-ta .mp-ta-review__meta {
+  font-family: var(--mp-sans-cn);
+  font-size: 15px;
+}
+
+.mp-ta .mp-ta-review__title {
+  font-size: clamp(22px, 7vw, 28px);
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+
+.mp-ta .mp-ta-review__notes {
+  font-family: var(--mp-hand-font);
+  font-size: clamp(30px, 10vw, 42px);
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.25;
+  letter-spacing: 1px;
+  color: var(--mp-silver);
+  opacity: 0.7;
+  margin-left: 8px;
+  overflow: visible;
+  padding: 0 2px;
+  transform: translateY(2px);
+}
+
+.mp-ta .mp-ta-review__name {
+  font-size: clamp(18px, 5.6vw, 23px);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.mp-ta .mp-ta-review__text {
+  font-family: var(--mp-serif);
+  font-size: clamp(15px, 4.6vw, 18px);
+  font-weight: 400;
+  line-height: 1.75;
+  letter-spacing: 0.3px;
+}
+
+.mp-ta .mp-ta-review__sign {
+  font-family: var(--mp-hand-font);
+  font-size: clamp(22px, 6.4vw, 26px);
+  font-weight: 400;
+  color: var(--mp-silver);
+  opacity: 0.5;
 }
 
 .mp-ta {
@@ -4489,7 +4595,8 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 18px 10px;
+  /* 与其它页（设置/歌单）的 .mp-header 完全一致，标题左上角齐平 */
+  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
 }
 
 .mp-ta-hero__title {
@@ -4775,6 +4882,12 @@
   display: block;
 }
 
+.mp-ta .mp-ta-review__cover.is-loading {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.06) 25%, rgba(255, 255, 255, 0.14) 37%, rgba(255, 255, 255, 0.06) 63%);
+  background-size: 400% 100%;
+  animation: mp-skeleton 1.2s ease infinite;
+}
+
 /* 封面右侧露出的黑胶唱片 */
 .mp-ta .mp-ta-review__disc {
   position: absolute;
@@ -4786,6 +4899,27 @@
   border-radius: 50%;
   background: radial-gradient(circle at 50% 50%, #2b2b31 0 18%, #16161b 19% 42%, #232329 43% 60%, #101014 61% 100%);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.mp-ta .mp-ta-review__disc {
+  /* 精绘黑胶：多层沟槽 + 斜向高光 */
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0) 38%),
+    repeating-radial-gradient(circle at 50% 50%, #17171c 0 1.5px, #232329 1.5px 3px),
+    radial-gradient(circle at 50% 50%, #2b2b31 0 18%, #16161b 19% 42%, #232329 43% 60%, #101014 61% 100%);
+}
+
+.mp-ta .mp-ta-review__disc.is-spinning {
+  animation: mp-disc-spin 6s linear infinite;
+}
+
+@keyframes mp-disc-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-ta .mp-ta-review__disc.is-spinning { animation: none; }
 }
 
 .mp-ta .mp-ta-review__disc::after {
@@ -6187,7 +6321,11 @@
       return Promise.resolve(api2.character.list()).then(function(list) {
         (list || []).forEach(function(c) {
           if (!c) return;
-          var info = { name: c.handle || c.name || c.displayName || "", avatar: c.avatar || "" };
+          var info = {
+            name: c.handle || c.name || c.displayName || "",
+            handle: c.handle || "",
+            avatar: c.avatar || ""
+          };
           [c.id, c.contactId, c.conversationId].forEach(function(key) {
             if (key) profiles[String(key)] = info;
           });
@@ -6203,9 +6341,11 @@
       return p && p.name || "角色";
     }
     function signOf(id) {
-      var name = nameOf(id);
-      if (!name || name === "角色") return "";
-      return name.length <= 2 ? name : name.slice(0, 1);
+      var p = profileOf(id);
+      var handle = p && p.handle ? String(p.handle).trim() : "";
+      if (handle && /^[A-Za-z0-9 ._\-]+$/.test(handle)) return handle;
+      var manual = String(state.settings && state.settings.taSign || "").trim();
+      return manual;
     }
     function avatarOf(id) {
       var p = profileOf(id);
@@ -6265,9 +6405,6 @@
     heroTitle.addEventListener("click", function() {
       ctx.exitOrMinimize();
     });
-    var switchBtn = iconBtn("more", { label: "切换角色", onClick: function() {
-      openCharPicker();
-    } });
     var menuBtn = iconBtn("more", { label: "更多", onClick: function() {
       openMenu();
     } });
@@ -6276,7 +6413,7 @@
         heroTitle,
         h("div", { class: "mp-ta-hero__sub", text: "Playlist" })
       ]),
-      h("div", { class: "mp-ta-hero__actions" }, [switchBtn, menuBtn])
+      h("div", { class: "mp-ta-hero__actions" }, [menuBtn])
     ]);
     var petals = null;
     var body = h("div", { class: "mp-ta-body" });
@@ -6332,6 +6469,30 @@
     }
     function openMenu() {
       var items = [];
+      items.push({
+        label: "切换角色",
+        icon: "music",
+        hint: currentChar ? nameOf(currentChar) : "全部",
+        onClick: function() {
+          openCharPicker();
+        }
+      });
+      items.push({
+        label: "签名文字",
+        icon: "more",
+        hint: signOf(currentChar) || "未设置",
+        onClick: function() {
+          ctx.openPrompt({
+            title: "角色签名（英文）",
+            value: String(state.settings && state.settings.taSign || ""),
+            placeholder: "例如 nori / arthur",
+            onSubmit: function(text) {
+              ctx.updateSettings({ taSign: String(text || "").trim().slice(0, 16) });
+              renderAll();
+            }
+          });
+        }
+      });
       items.push({
         label: compressBusy ? "正在压缩…" : "从相册换背景",
         icon: "plus",
@@ -6451,10 +6612,22 @@
     }
     function reviewCard(item) {
       var cover = h("div", { class: "mp-ta-review__cover" });
-      fillCover(cover, item.cover || "");
+      if (item.cover) {
+        fillCover(cover, item.cover);
+      } else if (ctx.resolveCommentCover) {
+        cover.classList.add("is-loading");
+        ctx.resolveCommentCover(item).then(function(url) {
+          cover.classList.remove("is-loading");
+          if (url) fillCover(cover, url);
+        }).catch(function() {
+          cover.classList.remove("is-loading");
+        });
+      }
+      var curKey = state.player && state.player.track ? trackKey(state.player.track) : "";
+      var spinning = !!(curKey && item.key && curKey === item.key);
       var art = h("button", { class: "mp-ta-review__art", type: "button", "aria-label": "播放这首" }, [
         cover,
-        h("div", { class: "mp-ta-review__disc" })
+        h("div", { class: "mp-ta-review__disc" + (spinning ? " is-spinning" : "") })
       ]);
       art.addEventListener("click", function(e) {
         e.stopPropagation();
@@ -6471,8 +6644,9 @@
       main.addEventListener("click", function() {
         if (ctx.playComment) ctx.playComment(item);
       });
-      var sign = h("div", { class: "mp-ta-review__sign", text: signOf(item.characterId) });
-      return h("div", { class: "mp-ta-review" }, [art, main, sign]);
+      var signText = signOf(item.characterId);
+      var sign = signText ? h("div", { class: "mp-ta-review__sign", text: signText }) : null;
+      return h("div", { class: "mp-ta-review" }, [art, main, sign].filter(Boolean));
     }
     function charBlock(id, playlists, comments) {
       var name = nameOf(id);
@@ -6509,6 +6683,7 @@
       var head = h("div", { class: "mp-ta-review__head" }, [
         h("span", { class: "mp-ta-review__dot mp-ta-review__dot--lead" }),
         h("span", { class: "mp-ta-review__title", text: "TA 的乐评" }),
+        h("span", { class: "mp-ta-review__notes", text: "Notes" }),
         h("span", { class: "mp-ta-review__rule" }),
         h("span", { class: "mp-ta-review__count", text: comments.length + " 条评论" })
       ]);
@@ -10278,6 +10453,39 @@
           return b.at - a.at;
         });
       },
+      /**
+       * 评论缺封面时按需联网补一张（缓存 7 天）。
+       * 评价值只存了歌名/歌手，很多歌不在队列/收藏里，所以必须能补。
+       */
+      resolveCommentCover: async function(item) {
+        if (!item || !item.name) return "";
+        var key = item.key || item.name + "|" + (item.artist || "");
+        var CACHE_KEY = "mp:commentCover";
+        var cache = null;
+        try {
+          cache = await host.storage.get(CACHE_KEY, null);
+        } catch (err) {
+          cache = null;
+        }
+        if (cache && cache[key] && Date.now() - (cache[key].at || 0) < 7 * 24 * 3600 * 1e3) {
+          return cache[key].url || "";
+        }
+        try {
+          var res = await sources.search((item.name + " " + (item.artist || "")).trim(), state.settings, { limit: 3 });
+          var first = res && res.tracks && res.tracks[0];
+          var url = first && first.cover ? String(first.cover).replace(/^http:/, "https:") : "";
+          if (!url) return "";
+          var next2 = cache && typeof cache === "object" ? cache : {};
+          next2[key] = { url, at: Date.now() };
+          try {
+            await host.storage.set(CACHE_KEY, next2);
+          } catch (err) {
+          }
+          return url;
+        } catch (err) {
+          return "";
+        }
+      },
       /** 点乐评封面/唱片：优先在队列里跳，没有就按歌名搜一首播 */
       playComment: async function(item) {
         if (!item) return { ok: false, reason: "没有这首歌" };
@@ -10593,7 +10801,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.40.0" });
+    app = await createApp({ container, roche, version: "0.41.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -10609,7 +10817,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.40.0",
+    version: "0.41.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
