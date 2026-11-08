@@ -1,4 +1,4 @@
-/* music-player v0.46.0 | built 2026-11-08T13:09:09.966Z */
+/* music-player v0.47.0 | built 2026-11-08T13:30:10.661Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -5198,39 +5198,53 @@
   padding: 0 24px 40px;
 }
 
+/* 报头：居中日期行 + 居中大标题 + 双线收边 */
 .mp-mag__top {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  padding: calc(18px + env(safe-area-inset-top)) 0 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  padding: calc(20px + env(safe-area-inset-top)) 0 14px;
 }
 
-.mp-root[data-theme="light"] .mp-mag__top {
-  border-bottom-color: rgba(0, 0, 0, 0.06);
+.mp-mag__mast {
+  text-align: center;
+  padding: 0 56px;
 }
 
 .mp-mag__date {
-  flex: 0 0 auto;
   font-family: var(--mp-sans-cn);
-  font-size: 11px;
-  letter-spacing: 1.5px;
+  font-size: 10.5px;
+  letter-spacing: 3px;
   color: var(--mp-ink-2);
+  text-transform: uppercase;
 }
 
 .mp-mag__greet {
-  flex: 1 1 auto;
+  margin-top: 5px;
   font-family: var(--mp-serif);
-  font-size: 22px;
+  font-size: 23px;
   font-weight: 500;
   color: var(--mp-ink);
-  letter-spacing: 2px;
-  line-height: 1.2;
+  letter-spacing: 4px;
+  line-height: 1.25;
+}
+
+.mp-mag__doublerule {
+  margin: 13px 0 0;
+  height: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.mp-root[data-theme="light"] .mp-mag__doublerule {
+  border-top-color: rgba(0, 0, 0, 0.24);
+  border-bottom-color: rgba(0, 0, 0, 0.12);
 }
 
 .mp-mag__acts {
+  position: absolute;
+  right: 0;
+  top: calc(14px + env(safe-area-inset-top));
   display: flex;
-  gap: 2px;
+  gap: 6px;
 }
 
 .mp-mag__head {
@@ -5267,8 +5281,7 @@
 
 .mp-mag__cover {
   width: 100%;
-  aspect-ratio: 3 / 4;
-  max-height: 46vh;
+  aspect-ratio: 4 / 5;
   background: var(--mp-bg-2);
 }
 
@@ -5406,64 +5419,60 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 书脊 */
-.mp-mag__spines {
+/* 我的歌单：小封面横滑卡 */
+.mp-mag__shelf {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   overflow-x: auto;
-  padding: 2px 0 6px;
+  padding: 2px 0 8px;
   scrollbar-width: none;
 }
 
-.mp-mag__spines::-webkit-scrollbar {
+.mp-mag__shelf::-webkit-scrollbar {
   display: none;
 }
 
-.mp-mag__spine {
-  position: relative;
+.mp-mag__shelfcard {
   flex: 0 0 auto;
-  width: 72px;
-  height: 148px;
+  width: 96px;
   padding: 0;
-  border: 1px solid var(--mp-line);
-  border-radius: 3px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-mag__shelfcover {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--mp-bg-2);
 }
 
-.mp-mag__spinebg {
-  position: absolute;
-  inset: 0;
-  opacity: 0.5;
-}
-
-.mp-mag__spinebg img {
+.mp-mag__shelfcover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
 
-.mp-mag__spinebg::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.62));
+.mp-mag__shelfname {
+  margin-top: 7px;
+  font-family: var(--mp-serif);
+  font-size: 12.5px;
+  color: var(--mp-ink);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.mp-mag__spinetext {
-  position: relative;
-  z-index: 1;
-  display: block;
-  height: 100%;
-  padding: 12px 8px;
-  writing-mode: vertical-rl;
-  text-orientation: upright;
-  font-family: var(--mp-serif);
-  font-size: 12px;
-  letter-spacing: 3px;
-  color: #fff;
-  overflow: hidden;
+.mp-mag__shelfsub {
+  margin-top: 3px;
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  color: var(--mp-ink-2);
 }
 
 /* 榜单目录 */
@@ -5946,15 +5955,16 @@
     var body = h("div", { class: "mp-mag" });
     var refreshing = false;
     var autoFetched = false;
+    var greet = h("div", { class: "mp-mag__greet", text: greeting() });
+    greet.addEventListener("click", function() {
+      ctx.exitOrMinimize();
+    });
     var header = h("div", { class: "mp-mag__top" }, [
-      h("div", { class: "mp-mag__date", text: today() }),
-      (function() {
-        var greet = h("div", { class: "mp-mag__greet", text: greeting() });
-        greet.addEventListener("click", function() {
-          ctx.exitOrMinimize();
-        });
-        return greet;
-      })(),
+      h("div", { class: "mp-mag__mast" }, [
+        h("div", { class: "mp-mag__date", text: today() + "  星期" + "日一二三四五六"[(/* @__PURE__ */ new Date()).getDay()] }),
+        greet,
+        h("div", { class: "mp-mag__doublerule" })
+      ]),
       h("div", { class: "mp-mag__acts" }, [
         iconBtn("search", { label: "搜索", onClick: function() {
           ctx.goto("search");
@@ -6032,26 +6042,25 @@
       });
       return list;
     }
-    function spines() {
+    function shelf() {
       var list = (ctx.state.playlists || []).filter(function(p) {
         return p && p.id;
       });
       if (!list.length) return null;
-      var rail = h("div", { class: "mp-mag__spines" });
+      var rail = h("div", { class: "mp-mag__shelf" });
       list.slice(0, 20).forEach(function(p) {
         var first = (p.tracks || [])[0];
-        var spine = h("button", { class: "mp-mag__spine", type: "button" }, [
-          (function() {
-            var cover = h("div", { class: "mp-mag__spinebg" });
-            fillCover(cover, first ? ctx.coverOf(first) : "");
-            return cover;
-          })(),
-          h("span", { class: "mp-mag__spinetext", text: p.name })
+        var cover = h("div", { class: "mp-mag__shelfcover" });
+        fillCover(cover, first ? ctx.coverOf(first) : "");
+        var card = h("button", { class: "mp-mag__shelfcard", type: "button" }, [
+          cover,
+          h("div", { class: "mp-mag__shelfname", text: p.name }),
+          h("div", { class: "mp-mag__shelfsub", text: (p.tracks || []).length + " 首" })
         ]);
-        spine.addEventListener("click", function() {
+        card.addEventListener("click", function() {
           ctx.goto("playlist", { playlistId: p.id });
         });
-        rail.appendChild(spine);
+        rail.appendChild(card);
       });
       return h("div", {}, [headRow("我的歌单"), rail]);
     }
@@ -6076,7 +6085,7 @@
         body.appendChild(headRow("每日推荐"));
         body.appendChild(tracklist(tracks));
       }
-      var sp = spines();
+      var sp = shelf();
       if (sp) {
         body.appendChild(h("div", { class: "mp-mag__gap" }));
         body.appendChild(sp);
@@ -11536,7 +11545,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.46.0" });
+    app = await createApp({ container, roche, version: "0.47.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11552,7 +11561,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.46.0",
+    version: "0.47.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
