@@ -1,4 +1,4 @@
-/* music-player v0.47.0 | built 2026-11-08T13:30:10.661Z */
+/* music-player v0.48.0 | built 2026-11-08T13:39:15.255Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -5519,6 +5519,167 @@
   opacity: 0.5;
 }
 
+/* ========== 歌单页：与推荐页同一套杂志语言 ========== */
+
+.mp-plpage__top {
+  position: relative;
+  flex: 0 0 auto;
+  padding: calc(20px + env(safe-area-inset-top)) 24px 12px;
+}
+
+.mp-plpage__mast {
+  text-align: center;
+  padding: 0 44px;
+}
+
+.mp-plpage__date {
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  letter-spacing: 3px;
+  color: var(--mp-ink-2);
+}
+
+.mp-plpage__title {
+  margin-top: 2px;
+  font-family: var(--mp-hand-font);
+  font-size: clamp(34px, 10vw, 42px);
+  line-height: 1.15;
+  letter-spacing: 1px;
+  color: var(--mp-ink);
+}
+
+.mp-plpage__rule {
+  margin-top: 8px;
+  height: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.mp-root[data-theme="light"] .mp-plpage__rule {
+  border-top-color: rgba(0, 0, 0, 0.24);
+  border-bottom-color: rgba(0, 0, 0, 0.12);
+}
+
+.mp-plpage__add {
+  position: absolute;
+  right: 18px;
+  top: calc(16px + env(safe-area-inset-top));
+}
+
+.mp-plpage__body {
+  padding: 0 24px 28px;
+}
+
+/* 收藏：单独一行 */
+.mp-plfeat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  text-align: left;
+}
+
+.mp-root[data-theme="light"] .mp-plfeat {
+  border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
+.mp-plfeat__cover {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-plfeat__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-plfeat__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-plfeat__name {
+  font-family: var(--mp-serif);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--mp-ink);
+}
+
+.mp-plfeat__sub {
+  margin-top: 3px;
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 分组小标题 */
+.mp-plpage__head {
+  margin: 22px 0 10px;
+  font-family: var(--mp-serif);
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--mp-ink-2);
+}
+
+/* 两列网格 */
+.mp-plgrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 14px;
+}
+
+.mp-plcard {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-plcard__cover {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-plcard__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-plcard__name {
+  margin-top: 8px;
+  font-family: var(--mp-serif);
+  font-size: 13.5px;
+  color: var(--mp-ink);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mp-plcard__sub {
+  margin-top: 3px;
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  color: var(--mp-ink-2);
+}
+
 .mp-theme-row {
   display: flex;
   gap: 8px;
@@ -6472,47 +6633,81 @@
   // src/ui/views/playlists.js
   function mount3(host, ctx) {
     var state = ctx.state;
-    var listBox = h("div", { class: "mp-list mp-body" });
-    var header = h("div", { class: "mp-header" }, [
-      pageTitle("歌单", function() {
-        ctx.exitOrMinimize();
-      }),
-      iconBtn("plus", {
-        label: "新建歌单",
-        onClick: function() {
-          ctx.openPrompt({
-            title: "新建歌单",
-            placeholder: "给歌单起个名字",
-            onSubmit: function(name) {
-              ctx.createPlaylist(name);
-            }
-          });
-        }
-      })
+    var listBox = h("div", { class: "mp-list mp-body mp-plpage__body" });
+    function openPlaylist(p) {
+      if (p.virtual === "favorites") {
+        ctx.goto("playlist", { playlistId: "__favorites__" });
+        return;
+      }
+      ctx.goto("playlist", { playlistId: p.id });
+    }
+    var titleEl = h("div", { class: "mp-plpage__title", text: "Playlists" });
+    titleEl.addEventListener("click", function() {
+      ctx.exitOrMinimize();
+    });
+    var addBtn = iconBtn("plus", {
+      label: "新建歌单",
+      onClick: function() {
+        ctx.openPrompt({
+          title: "新建歌单",
+          placeholder: "给歌单起个名字",
+          onSubmit: function(name) {
+            ctx.createPlaylist(name);
+          }
+        });
+      }
+    });
+    addBtn.classList.add("mp-plpage__add");
+    var d = /* @__PURE__ */ new Date();
+    var dateText = String(d.getMonth() + 1).padStart(2, "0") + " / " + String(d.getDate()).padStart(2, "0") + "  星期" + "日一二三四五六"[d.getDay()];
+    var header = h("div", { class: "mp-plpage__top" }, [
+      h("div", { class: "mp-plpage__mast" }, [
+        h("div", { class: "mp-plpage__date", text: dateText }),
+        titleEl,
+        h("div", { class: "mp-plpage__rule" })
+      ]),
+      addBtn
     ]);
-    function plRow(p) {
+    function featureRow(p) {
       var first = p.tracks[0];
-      var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-pl__cover");
+      var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-plfeat__cover");
       if (first) cover.dataset.cover = trackKey(first);
-      var row = h("button", { class: "mp-pl", type: "button" }, [
+      var row = h("button", { class: "mp-plfeat", type: "button" }, [
         cover,
-        h("div", { class: "mp-pl__main" }, [
-          h("div", { class: "mp-pl__name", text: p.name }),
-          h("div", { class: "mp-pl__sub", text: fmtSummary(p.tracks.length, playlistDuration(p)) })
+        h("div", { class: "mp-plfeat__main" }, [
+          h("div", { class: "mp-plfeat__name", text: p.name }),
+          h("div", { class: "mp-plfeat__sub", text: fmtSummary(p.tracks.length, playlistDuration(p)) })
         ])
       ]);
       row.addEventListener("click", function() {
-        if (p.virtual === "favorites") {
-          ctx.goto("playlist", { playlistId: "__favorites__" });
-          return;
-        }
-        ctx.goto("playlist", { playlistId: p.id });
+        openPlaylist(p);
       });
       return row;
     }
+    function plCard(p) {
+      var first = p.tracks[0];
+      var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-plcard__cover");
+      if (first) cover.dataset.cover = trackKey(first);
+      var card = h("button", { class: "mp-plcard", type: "button" }, [
+        cover,
+        h("div", { class: "mp-plcard__name", text: p.name }),
+        h("div", { class: "mp-plcard__sub", text: fmtSummary(p.tracks.length, playlistDuration(p)) })
+      ]);
+      card.addEventListener("click", function() {
+        openPlaylist(p);
+      });
+      return card;
+    }
+    function grid(list) {
+      var box = h("div", { class: "mp-plgrid" });
+      list.forEach(function(p) {
+        box.appendChild(plCard(p));
+      });
+      return box;
+    }
     function renderList() {
       clear(listBox);
-      listBox.appendChild(plRow({
+      listBox.appendChild(featureRow({
         id: "__favorites__",
         virtual: "favorites",
         name: "我的收藏",
@@ -6526,16 +6721,12 @@
         return p.owner === "char";
       });
       if (mine.length) {
-        listBox.appendChild(h("div", { class: "mp-section", text: "我的歌单" }));
-        mine.forEach(function(p) {
-          listBox.appendChild(plRow(p));
-        });
+        listBox.appendChild(h("div", { class: "mp-plpage__head", text: "我的歌单" }));
+        listBox.appendChild(grid(mine));
       }
       if (theirs.length) {
-        listBox.appendChild(h("div", { class: "mp-section", text: "TA 的歌单" }));
-        theirs.forEach(function(p) {
-          listBox.appendChild(plRow(p));
-        });
+        listBox.appendChild(h("div", { class: "mp-plpage__head", text: "TA 的歌单" }));
+        listBox.appendChild(grid(theirs));
       }
       if (!mine.length && !theirs.length) {
         listBox.appendChild(emptyHint(
@@ -11545,7 +11736,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.47.0" });
+    app = await createApp({ container, roche, version: "0.48.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11561,7 +11752,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.47.0",
+    version: "0.48.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
