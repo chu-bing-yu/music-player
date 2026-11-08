@@ -1,4 +1,4 @@
-/* music-player v0.42.0 | built 2026-11-08T10:07:06.903Z */
+/* music-player v0.43.0 | built 2026-11-08T11:27:40.837Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -221,7 +221,10 @@
       duration: Number.isFinite(duration) ? duration : 0,
       url: String(raw.url || raw.previewUrl || ""),
       picId: String(raw.picId || raw.pic_id || ""),
-      lyricId: String(raw.lyricId || raw.lyric_id || "")
+      lyricId: String(raw.lyricId || raw.lyric_id || ""),
+      // 版权标记：>0 基本等于要会员/付费，QQ 无版权的歌常落在这里
+      payplay: Number(raw.payplay) || 0,
+      paydownload: Number(raw.paydownload) || 0
     };
   }
   function dedupeTracks(list) {
@@ -937,7 +940,10 @@
         artist: item.singer || item.singerName,
         album: item.album,
         cover: item.cover,
-        duration: parseInterval(item.interval)
+        duration: parseInterval(item.interval),
+        // payplay > 0 基本等于「要会员/付费」，用来挡无版权歌
+        payplay: item.payplay != null ? Number(item.payplay) : item.pay && item.pay.payplay != null ? Number(item.pay.payplay) : 0,
+        paydownload: item.paydownload != null ? Number(item.paydownload) : item.pay && item.pay.paydownload != null ? Number(item.pay.paydownload) : 0
       }, "tencent");
     }).filter(Boolean);
   }
@@ -2615,6 +2621,16 @@
     await writeJson(roche, "mp:comments", map2);
     return { ok: true, text: clean, key };
   }
+  async function deleteComment(roche, characterId, key) {
+    var id = String(characterId || "");
+    var map2 = await loadComments(roche);
+    var entry = key && map2[key] && typeof map2[key] === "object" ? map2[key] : null;
+    if (!entry || !entry[id]) return { ok: false, reason: "没有这条短评" };
+    delete entry[id];
+    if (!Object.keys(entry).length) delete map2[key];
+    await writeJson(roche, "mp:comments", map2);
+    return { ok: true };
+  }
 
   // src/core/prefs.js
   var MAX_PREFS = 12;
@@ -2884,6 +2900,7 @@
     var seen = /* @__PURE__ */ Object.create(null);
     var checked = /* @__PURE__ */ Object.create(null);
     function blocked(track) {
+      if (opts.filterPlayable && Number(track.payplay) > 0) return true;
       if (!avoid.length) return false;
       var text = (track.name || "") + " " + (track.artist || "");
       return avoid.some(function(word) {
@@ -2988,7 +3005,7 @@
     } catch (err) {
       logged = false;
     }
-    if (logged && mode !== "local") {
+    if (logged) {
       try {
         var daily = await dailySongs(settings, count);
         if (daily && daily.length) {
@@ -4901,11 +4918,42 @@
 /* 乐评卡 */
 .mp-ta .mp-ta-review {
   position: relative;
+  overflow: hidden;
+  padding: 16px 0 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* 左滑露出的删除按钮 */
+.mp-ta .mp-ta-review__inner {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: flex-start;
   gap: 14px;
-  padding: 16px 0 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  transition: transform 0.18s ease;
+  will-change: transform;
+}
+
+.mp-ta .mp-ta-review__del {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 72px;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: #d5544e;
+  color: #fff;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.mp-ta .mp-ta-review.is-open .mp-ta-review__del {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .mp-root[data-theme="light"] .mp-ta .mp-ta-review {
@@ -6701,6 +6749,65 @@
       });
       return card;
     }
+    function attachSwipe(row, inner) {
+      var OPEN = -72;
+      var startX = 0;
+      var startY = 0;
+      var dx = 0;
+      var open = false;
+      var tracking = false;
+      function begin(x, y) {
+        startX = x;
+        startY = y;
+        dx = open ? OPEN : 0;
+        tracking = true;
+        inner.style.transition = "none";
+      }
+      function move(x, y) {
+        if (!tracking) return;
+        var mx = x - startX;
+        var my = y - startY;
+        if (Math.abs(my) > Math.abs(mx) && Math.abs(my) > 8) return;
+        dx = Math.max(OPEN, Math.min(0, (open ? OPEN : 0) + mx));
+        inner.style.transform = "translateX(" + dx + "px)";
+        row.classList.toggle("is-open", dx < -36);
+      }
+      function end() {
+        if (!tracking) return;
+        tracking = false;
+        open = dx < -36;
+        inner.style.transition = "transform .18s ease";
+        inner.style.transform = open ? "translateX(" + OPEN + "px)" : "translateX(0)";
+        row.classList.toggle("is-open", open);
+      }
+      inner.addEventListener("touchstart", function(e) {
+        var t = e.touches[0];
+        if (t) begin(t.clientX, t.clientY);
+      }, { passive: true });
+      inner.addEventListener("touchmove", function(e) {
+        var t = e.touches[0];
+        if (t) move(t.clientX, t.clientY);
+      }, { passive: true });
+      inner.addEventListener("touchend", end);
+      var holdTimer = null;
+      inner.addEventListener("mousedown", function() {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = setTimeout(function() {
+          open = true;
+          inner.style.transition = "transform .18s ease";
+          inner.style.transform = "translateX(" + OPEN + "px)";
+          row.classList.add("is-open");
+        }, 500);
+      });
+      inner.addEventListener("mouseup", function() {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = null;
+      });
+      inner.addEventListener("mouseleave", function() {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = null;
+      });
+    }
     function reviewCard(item) {
       var cover = h("div", { class: "mp-ta-review__cover" });
       if (item.cover) {
@@ -6737,7 +6844,23 @@
       });
       var signText = signOf(item.characterId);
       var sign = signText ? h("div", { class: "mp-ta-review__sign", text: signText }) : null;
-      return h("div", { class: "mp-ta-review" }, [art, main, sign].filter(Boolean));
+      var inner = h("div", { class: "mp-ta-review__inner" }, [art, main, sign].filter(Boolean));
+      var del = h("button", { class: "mp-ta-review__del", type: "button", text: "删除" });
+      del.addEventListener("click", function(e) {
+        e.stopPropagation();
+        if (!ctx.deleteTaComment) return;
+        ctx.deleteTaComment(item).then(function(res) {
+          if (res && res.ok) {
+            if (ctx.toast) ctx.toast("已删除");
+            renderAll();
+          } else if (ctx.toast) {
+            ctx.toast(res && res.reason || "删除失败");
+          }
+        });
+      });
+      var row = h("div", { class: "mp-ta-review" }, [inner, del]);
+      attachSwipe(row, inner);
+      return row;
     }
     function charBlock(id, playlists, comments) {
       var name = nameOf(id);
@@ -6829,8 +6952,39 @@
         body.appendChild(charBlock(id, mine, words));
       });
     }
+    var lastSig = "";
+    var refreshTimer = null;
+    function signature() {
+      var plays = charPlaylistsAll();
+      var says = allComments();
+      return plays.length + "|" + says.length + "|" + says.slice(0, 8).map(function(c) {
+        return c.key + ":" + (c.at || 0);
+      }).join(",");
+    }
+    function softReload() {
+      return Promise.all([
+        ctx.reloadPlaylists ? ctx.reloadPlaylists() : Promise.resolve(),
+        ctx.reloadComments ? ctx.reloadComments() : Promise.resolve()
+      ]).then(function() {
+        var sig = signature();
+        if (sig !== lastSig) {
+          lastSig = sig;
+          renderAll();
+        }
+      }).catch(function() {
+      });
+    }
+    function onVisible() {
+      if (typeof document !== "undefined" && document.hidden) return;
+      softReload();
+    }
     renderPetals();
     renderAll();
+    lastSig = signature();
+    refreshTimer = setInterval(onVisible, 8e3);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisible);
+    }
     Promise.all([
       ctx.reloadPlaylists ? ctx.reloadPlaylists() : Promise.resolve(),
       ctx.reloadComments ? ctx.reloadComments() : Promise.resolve(),
@@ -6843,6 +6997,11 @@
     return {
       refresh: renderAll,
       destroy: function() {
+        if (refreshTimer) clearInterval(refreshTimer);
+        refreshTimer = null;
+        if (typeof document !== "undefined") {
+          document.removeEventListener("visibilitychange", onVisible);
+        }
         if (petals && petals.parentNode) petals.parentNode.removeChild(petals);
         petals = null;
       }
@@ -7035,13 +7194,7 @@
       var appearanceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "外观" }),
         field("主题", themeRow, "跟随系统 / 白天白色 / 夜间深色"),
-        field(
-          "TA 页花瓣",
-          switchEl(s.taMotion !== false, function(v) {
-            ctx.updateSettings({ taMotion: v });
-          }),
-          "关闭后 TA 页不再飘花瓣，省电一些"
-        ),
+        // TA 页花瓣开关在 TA 页右上角 ⋯ 里，设置页不重复
         field("手写字体", (function() {
           var box = h("div", { class: "mp-count" });
           var input = h("input", {
@@ -7135,53 +7288,7 @@
           });
           return row;
         })(), "混合：点歌走工具（有卡片），其余用注释指令；标记：全部注释；工具：全部 function calling"),
-        field("推荐模式", (function() {
-          var row = h("div", { class: "mp-theme-row" });
-          [
-            { id: "manual", name: "换一批才调" },
-            { id: "auto", name: "每次进入调" },
-            { id: "local", name: "不调模型" }
-          ].forEach(function(item) {
-            var btn = h("button", {
-              class: "mp-theme-btn" + ((s.recMode || "manual") === item.id ? " is-active" : ""),
-              type: "button",
-              text: item.name
-            });
-            btn.addEventListener("click", function() {
-              ctx.updateSettings({ recMode: item.id });
-            });
-            row.appendChild(btn);
-          });
-          return row;
-        })(), "推荐页刷新策略：手动只在你点「换一批」时调模型，最省"),
-        field("推荐数量", (function() {
-          var box = h("div", { class: "mp-count" });
-          var value = h("span", { class: "mp-count__value", text: (s.recCount || 20) + " 首" });
-          var slider = h("input", {
-            class: "mp-prefs__slider",
-            type: "range",
-            min: "5",
-            max: "50",
-            step: "5",
-            value: String(s.recCount || 20)
-          });
-          slider.addEventListener("input", function() {
-            value.textContent = slider.value + " 首";
-          });
-          slider.addEventListener("change", function() {
-            ctx.updateSettings({ recCount: Number(slider.value) });
-          });
-          box.appendChild(slider);
-          box.appendChild(value);
-          return box;
-        })(), "每次推荐多少首（5~50）"),
-        field(
-          "只推荐能播放的",
-          switchEl(s.recFilterPlayable !== false, function(v) {
-            ctx.updateSettings({ recFilterPlayable: v });
-          }),
-          "开启后推荐时逐首试解析，拿不到播放地址的会被剔除（每批多花 2~4 秒）"
-        ),
+        // 推荐模式 / 推荐数量 / 只推荐能播放的：都在推荐页「偏好」面板里，设置页不再重复
         field(
           "点卡片播放",
           switchEl(!!s.cardTapPlay, function(v) {
@@ -7211,7 +7318,7 @@
             row.appendChild(btn);
           });
           return row;
-        })(), "多源混合时：网易云会员优先，否则 QQ 优先"),
+        })()),
         field("主源", (function() {
           var row = h("div", { class: "mp-theme-row" });
           [
@@ -7231,7 +7338,7 @@
             row.appendChild(btn);
           });
           return row;
-        })(), "选「只用主源」时生效；搜索结果只会来自这一个源"),
+        })()),
         field(
           "QQ 音乐",
           switchEl(s.sources.tencent, function(v) {
@@ -7272,7 +7379,7 @@
       });
       var netGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "网络" }),
-        field("请求前缀", prefixInput, "接口访问不了时填代理前缀；含 {url} 会替换，否则把编码后的地址接在后面"),
+        // 请求前缀已合并进「API 地址」，不再单独暴露
         field("音源自检", (function() {
           var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "运行" });
           btn.addEventListener("click", runSelfTest);
@@ -7302,13 +7409,7 @@
           h("div", { class: "mp-field__value", text: s.neteaseCookie ? s.neteaseProfile || "已登录" : "未登录" }),
           s.neteaseCookie ? "登录后可用自己账号的曲库/歌单" : "填好地址后扫码登录"
         ),
-        field("排行榜", (function() {
-          var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "查看" });
-          btn.addEventListener("click", function() {
-            ctx.openNeteaseToplist();
-          });
-          return btn;
-        })(), "从网易云拉官方榜单，点一个直接播该榜前 30 首"),
+        // 排行榜在搜索页底部直接铺开，设置页不再放入口
         field(
           s.neteaseCookie ? "重新登录" : "扫码登录",
           h("div", { class: "mp-field__actions" }, [
@@ -7889,7 +7990,7 @@
           type: "range",
           min: "5",
           max: "50",
-          step: "5",
+          step: "1",
           value: String(countValue)
         });
         countSlider.addEventListener("input", function() {
@@ -8608,8 +8709,19 @@
       settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
     } catch (err) {
     }
-    var track = normalizeTrack(message && message.cardData ? message.cardData.track : null, "local");
-    if (settings.cardTapPlay && track) {
+    var cardData = message && message.cardData || {};
+    var track = cardData.track && cardData.track.name ? normalizeTrack(cardData.track, "local") : null;
+    if (!track) {
+      var fallbackName = String(cardData.title || cardData.name || "").trim();
+      if (!fallbackName) {
+        var m = String(message && message.modelText || "").match(/《([^》]+)》/);
+        fallbackName = m ? m[1] : "";
+      }
+      if (fallbackName) {
+        track = normalizeTrack({ name: fallbackName, artist: String(cardData.artist || ""), source: "local" }, "local");
+      }
+    }
+    if (settings.cardTapPlay && track && track.name) {
       var snap = getSnapshot();
       if (!(snap && snap.track && trackKey(snap.track) === trackKey(track))) {
         playCardTrack(track, roche).catch(function() {
@@ -10556,6 +10668,13 @@
        * characterId 为空 = 返回**所有角色**的每条评价（一首歌可能被多个角色评过）；
        * 非空 = 只返回这个角色的，没有就跳过（不要回退到别的角色）。
        */
+      /** TA 页左滑删除一条短评 */
+      deleteTaComment: async function(item) {
+        if (!item || !item.key) return { ok: false, reason: "没有这条短评" };
+        var res = await deleteComment(window.Roche || null, item.characterId, item.key);
+        if (res.ok) await reloadComments();
+        return res;
+      },
       taComments: function(characterId) {
         var map2 = state.comments || {};
         var want = String(characterId || "");
@@ -10937,7 +11056,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.42.0" });
+    app = await createApp({ container, roche, version: "0.43.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -10953,7 +11072,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.42.0",
+    version: "0.43.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
