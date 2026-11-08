@@ -1,4 +1,4 @@
-/* music-player v0.41.0 | built 2026-11-06T12:45:17.248Z */
+/* music-player v0.42.0 | built 2026-11-08T10:07:06.903Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -486,6 +486,10 @@
       recCount: 20,
       /** 只推荐能解析出播放地址的歌（每批会多花 2~4 秒） */
       recFilterPlayable: true,
+      /** 音源策略：single = 只用主源；multi = 全开（会员时网易云优先） */
+      sourceMode: "single",
+      /** 单选时的主源 */
+      primarySource: "tencent",
       /** TA 页花瓣飘落动效 */
       taMotion: true,
       /** 自定义手写字体链接（留空用内置 Italianno） */
@@ -575,6 +579,12 @@
         return Math.max(5, Math.min(50, n));
       })(),
       recFilterPlayable: bool(s.recFilterPlayable, def.recFilterPlayable),
+      sourceMode: s.sourceMode === "multi" ? "multi" : "single",
+      primarySource: (function() {
+        var list = ["tencent", "netease", "itunes", "audius"];
+        var v = String(s.primarySource || "");
+        return list.indexOf(v) !== -1 ? v : "tencent";
+      })(),
       taMotion: bool(s.taMotion, def.taMotion),
       taFontUrl: (function() {
         var url = String(s.taFontUrl == null ? "" : s.taFontUrl).trim();
@@ -1139,7 +1149,7 @@
   }
   async function dailySongs(settings, limit) {
     var data = await call(settings, "/recommend/songs");
-    var songs = data && data.data && data.data.dailySongs || [];
+    var songs = data && data.data && data.data.dailySongs || data && data.recommend || data && data.songs || [];
     var max = Math.max(1, Math.min(50, Number(limit) || 20));
     return songs.slice(0, max).map(function(song) {
       var artists = (song.ar || []).map(function(a) {
@@ -1254,12 +1264,33 @@
     }).filter(Boolean);
   }
   function createSources() {
+    function sourcePlan(settings) {
+      var base2 = settings && settings.sources || {};
+      var mode = settings && settings.sourceMode === "multi" ? "multi" : "single";
+      var primary = String(settings && settings.primarySource || "tencent");
+      if (mode === "single") {
+        return {
+          tencent: primary === "tencent",
+          itunes: primary === "itunes",
+          audius: primary === "audius",
+          netease: primary === "netease"
+        };
+      }
+      return {
+        tencent: base2.tencent !== false,
+        itunes: base2.itunes === true,
+        audius: base2.audius === true,
+        netease: base2.netease === true,
+        vipFirst: !!(settings && settings.__neteaseVip)
+      };
+    }
     async function search2(keyword, settings, opts) {
       var kw = String(keyword || "").trim();
       if (!kw) return { tracks: [], errors: [], counts: {} };
       var limit = opts && opts.limit || 25;
       var tasks = [];
-      if (settings.sources.tencent) {
+      var plan = sourcePlan(settings);
+      if (plan.tencent) {
         tasks.push(
           tencentSearch(kw, settings, limit).then(function(tracks) {
             return { source: "tencent", tracks };
@@ -1268,7 +1299,7 @@
           })
         );
       }
-      if (settings.sources.itunes) {
+      if (plan.itunes) {
         tasks.push(
           itunesSearch(kw, settings, Math.min(limit, 15)).then(function(tracks) {
             return { source: "itunes", tracks };
@@ -1277,7 +1308,7 @@
           })
         );
       }
-      if (settings.sources.audius) {
+      if (plan.audius) {
         tasks.push(
           audiusSearch(kw, settings, Math.min(limit, 12)).then(function(tracks) {
             return { source: "audius", tracks };
@@ -2706,6 +2737,7 @@
   var AI_TIMEOUT = 2e4;
   var RESOLVE_TIMEOUT = 8e3;
   var RESOLVE_CONCURRENCY = 4;
+  var MAX_PER_ARTIST = 2;
   var SCENES = ["夜晚", "通勤", "雨天", "健身", "独处", "周末", "开车", "睡前"];
   var DEFAULT_COUNT = 20;
   var MIN_COUNT = 5;
@@ -2733,32 +2765,41 @@
     return arr;
   }
   function pickSeeds(prefs, recent, favorites, now) {
-    var pool = [];
+    var artistPool = [];
+    var wordPool = [];
     (recent || []).forEach(function(t) {
-      if (t && t.artist) pool.push(String(t.artist));
+      if (t && t.artist) artistPool.push(String(t.artist));
     });
     (favorites || []).forEach(function(t) {
-      if (t && t.artist) pool.push(String(t.artist));
+      if (t && t.artist) artistPool.push(String(t.artist));
     });
     (prefs || []).forEach(function(p) {
-      if (p && p.label !== "避雷" && p.prompt) pool.push(String(p.prompt));
+      if (p && p.label !== "避雷" && p.prompt) wordPool.push(String(p.prompt));
     });
     SCENES.forEach(function(s) {
-      pool.push(s);
+      wordPool.push(s);
     });
-    var seen = /* @__PURE__ */ Object.create(null);
-    var uniq = [];
-    pool.forEach(function(word) {
-      var text = String(word || "").replace(/\s+/g, " ").trim();
-      if (!text || seen[text]) return;
-      seen[text] = true;
-      uniq.push(text);
-    });
-    if (!uniq.length) return ["华语流行"];
+    function uniqWords(list) {
+      var seen = /* @__PURE__ */ Object.create(null);
+      var out = [];
+      list.forEach(function(word) {
+        var text = String(word || "").replace(/\s+/g, " ").trim();
+        if (!text || seen[text]) return;
+        seen[text] = true;
+        out.push(text);
+      });
+      return out;
+    }
+    var words = uniqWords(wordPool);
+    var artists = uniqWords(artistPool);
+    if (!words.length && !artists.length) return ["华语流行"];
     var rnd = makeRandom(now);
-    var shuffled = shuffle(uniq, rnd);
     var take = 2 + Math.floor(rnd() * 2);
-    return shuffled.slice(0, Math.min(take, shuffled.length));
+    var seeds = shuffle(words, rnd).slice(0, take);
+    if (artists.length && rnd() < 0.75) {
+      seeds.push(shuffle(artists, rnd)[0]);
+    }
+    return seeds.slice(0, 3);
   }
   function buildProfilePrompt(prefs, recent, favorites, count) {
     var want = clampCount(count);
@@ -2861,13 +2902,17 @@
       } catch (err) {
       }
     }
-    for (var j = 0; j < (opts.keywords || []).length && picks.length < want * 2; j++) {
-      try {
-        var res = await sources.search(opts.keywords[j], settings, { limit: Math.min(30, want) });
-        (res && res.tracks ? res.tracks : []).forEach(function(t) {
-          picks.push(t);
-        });
-      } catch (err) {
+    var keywords = opts.keywords || [];
+    var perKeyword = Math.max(3, Math.ceil(want / Math.max(1, keywords.length)) + 2);
+    for (var round = 0; round < 3 && picks.length < want * 2; round++) {
+      for (var j = 0; j < keywords.length && picks.length < want * 2; j++) {
+        try {
+          var res = await sources.search(keywords[j], settings, { limit: perKeyword + round * 2 });
+          (res && res.tracks ? res.tracks : []).forEach(function(t) {
+            picks.push(t);
+          });
+        } catch (err) {
+        }
       }
     }
     var candidates = [];
@@ -2880,7 +2925,21 @@
       candidates.push(track);
     });
     if (!opts.filterPlayable) {
-      return candidates.slice(0, want);
+      var limited = [];
+      candidates.forEach(function(t) {
+        if (limited.length < want && takeSlot(t)) limited.push(t);
+      });
+      return limited;
+    }
+    var artistCount = /* @__PURE__ */ Object.create(null);
+    function artistOf(track) {
+      return String(track.artist || "").split("/")[0].split("&")[0].trim() || "未知";
+    }
+    function takeSlot(track) {
+      var artist = artistOf(track);
+      if ((artistCount[artist] || 0) >= MAX_PER_ARTIST) return false;
+      artistCount[artist] = (artistCount[artist] || 0) + 1;
+      return true;
     }
     var cursor = 0;
     async function worker() {
@@ -2890,7 +2949,7 @@
         if (checked[key]) continue;
         checked[key] = true;
         var ok = await playable(track, sources, settings);
-        if (ok && out.length < want) out.push(track);
+        if (ok && out.length < want && takeSlot(track)) out.push(track);
       }
     }
     var workers = [];
@@ -5587,6 +5646,38 @@
     };
   }
 
+  // src/core/sourceLabel.js
+  var LABELS = {
+    tencent: "QQ 音乐",
+    qq: "QQ 音乐",
+    netease: "网易云音乐",
+    itunes: "iTunes 试听",
+    audius: "Audius",
+    local: "本地"
+  };
+  function guessPlatform(track) {
+    if (!track) return "";
+    var raw = String(track.source || "") + " " + String(track.platform || "") + " " + String(track.id || "");
+    var text = raw.toLowerCase();
+    if (text.indexOf("netease") !== -1) return "netease";
+    if (text.indexOf("itunes") !== -1) return "itunes";
+    if (text.indexOf("audius") !== -1) return "audius";
+    if (text.indexOf("qq") !== -1 || text.indexOf("tencent") !== -1) return "tencent";
+    if (text.indexOf("local") !== -1) return "local";
+    return "";
+  }
+  function sourceKey(track) {
+    if (!track) return "";
+    var key = String(track.source || "").toLowerCase();
+    if (LABELS[key]) return key === "qq" ? "tencent" : key;
+    return guessPlatform(track);
+  }
+  function sourceLabel(track) {
+    var key = sourceKey(track);
+    if (!key) return "未知来源";
+    return LABELS[key] || "未知来源";
+  }
+
   // src/ui/views/search.js
   function mount2(host, ctx) {
     var state = ctx.state;
@@ -5726,7 +5817,7 @@
         return;
       }
       (s.errors || []).forEach(function(err) {
-        var label = err.source === "itunes" ? "iTunes" : "QQ 音乐";
+        var label = sourceLabel({ source: err.source });
         resultsBox.appendChild(h("div", { class: "mp-error", text: label + " 搜索失败：" + err.error }));
       });
       if (!s.tracks.length) {
@@ -6689,7 +6780,17 @@
       ]);
       block.appendChild(head);
       if (!comments.length) {
-        block.appendChild(h("div", { class: "mp-ta-review__empty", text: "TA 还没有写下乐评" }));
+        var retry = h("button", { class: "mp-ta-review__retry", type: "button", text: "没看到乐评？重新读取" });
+        retry.addEventListener("click", function() {
+          retry.textContent = "读取中…";
+          Promise.resolve(ctx.reloadComments ? ctx.reloadComments() : null).then(function() {
+            renderAll();
+          });
+        });
+        block.appendChild(h("div", { class: "mp-ta-review__empty" }, [
+          h("div", { text: "TA 还没有写下乐评" }),
+          retry
+        ]));
       } else {
         comments.slice(0, 20).forEach(function(c) {
           block.appendChild(reviewCard(c));
@@ -7096,6 +7197,41 @@
       ]);
       var sourceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "音源" }),
+        field("音源策略", (function() {
+          var row = h("div", { class: "mp-theme-row" });
+          [{ id: "single", name: "只用主源" }, { id: "multi", name: "多源混合" }].forEach(function(item) {
+            var btn = h("button", {
+              class: "mp-theme-btn" + ((s.sourceMode || "single") === item.id ? " is-active" : ""),
+              type: "button",
+              text: item.name
+            });
+            btn.addEventListener("click", function() {
+              ctx.updateSettings({ sourceMode: item.id });
+            });
+            row.appendChild(btn);
+          });
+          return row;
+        })(), "多源混合时：网易云会员优先，否则 QQ 优先"),
+        field("主源", (function() {
+          var row = h("div", { class: "mp-theme-row" });
+          [
+            { id: "tencent", name: "QQ" },
+            { id: "netease", name: "网易云" },
+            { id: "itunes", name: "iTunes" },
+            { id: "audius", name: "Audius" }
+          ].forEach(function(item) {
+            var btn = h("button", {
+              class: "mp-theme-btn" + ((s.primarySource || "tencent") === item.id ? " is-active" : ""),
+              type: "button",
+              text: item.name
+            });
+            btn.addEventListener("click", function() {
+              ctx.updateSettings({ primarySource: item.id });
+            });
+            row.appendChild(btn);
+          });
+          return row;
+        })(), "选「只用主源」时生效；搜索结果只会来自这一个源"),
         field(
           "QQ 音乐",
           switchEl(s.sources.tencent, function(v) {
@@ -7442,7 +7578,7 @@
       }
       nameEl.textContent = track.name;
       artistEl.textContent = track.artist + (track.album ? " · " + track.album : "");
-      fromEl.textContent = track.source === "itunes" ? "iTunes 试听" : "QQ 音乐";
+      fromEl.textContent = sourceLabel(track);
       var dur = st.duration || track.duration || 0;
       var cur = Math.min(st.time || 0, dur || st.time || 0);
       curEl.textContent = fmtTime(cur);
@@ -10801,7 +10937,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.41.0" });
+    app = await createApp({ container, roche, version: "0.42.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -10817,7 +10953,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.41.0",
+    version: "0.42.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
