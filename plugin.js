@@ -1,4 +1,4 @@
-/* music-player v0.45.0 | built 2026-11-08T12:34:30.955Z */
+/* music-player v0.46.0 | built 2026-11-08T13:09:09.966Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1273,22 +1273,12 @@
   function createSources() {
     function sourcePlan(settings) {
       var base2 = settings && settings.sources || {};
-      var mode = settings && settings.sourceMode === "multi" ? "multi" : "single";
-      var primary = String(settings && settings.primarySource || "tencent");
-      if (mode === "single") {
-        return {
-          tencent: primary === "tencent",
-          itunes: primary === "itunes",
-          audius: primary === "audius",
-          netease: primary === "netease"
-        };
-      }
       return {
         tencent: base2.tencent !== false,
         itunes: base2.itunes === true,
         audius: base2.audius === true,
         netease: base2.netease === true,
-        vipFirst: !!(settings && settings.__neteaseVip)
+        primary: String(settings && settings.primarySource || "tencent")
       };
     }
     async function search2(keyword, settings, opts) {
@@ -4786,21 +4776,34 @@
   100% { transform: translate3d(-10px, 340px, 0) rotate(360deg); opacity: 0; }
 }
 
-/* 雪：24 片小圆点，慢速下落 + 轻微漂移 */
+/* 雪：28 片，大小交错 + 轻微模糊，远看像真的在飘 */
 .mp-ta-petals.is-snow .mp-ta-petal {
-  width: 3px;
-  height: 3px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.9);
+  filter: blur(0.3px);
   animation-name: mp-snow-fall;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
 }
 
-.mp-ta-petals.is-snow .mp-ta-petal:nth-child(odd) {
-  width: 4px;
-  height: 4px;
-  opacity: 0.6;
+.mp-ta-petals.is-snow .mp-ta-petal:nth-child(3n) {
+  width: 6px;
+  height: 6px;
+  opacity: 0.55;
+  filter: blur(0.8px);
+}
+
+.mp-ta-petals.is-snow .mp-ta-petal:nth-child(3n + 1) {
+  width: 5px;
+  height: 5px;
+  opacity: 0.75;
+}
+
+/* 花瓣：两档颜色（白 / 淡粉） */
+.mp-ta-petals:not(.is-snow) .mp-ta-petal:nth-child(3n) {
+  background: rgba(240, 190, 200, 0.65);
 }
 
 @keyframes mp-snow-fall {
@@ -5180,23 +5183,37 @@
 /* ========== 推荐页：东方杂志 / 册页 ========== */
 
 .mp-recpage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
   background: transparent;
 }
 
 .mp-mag {
-  padding: 0 20px 32px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 24px 40px;
 }
 
 .mp-mag__top {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: calc(14px + env(safe-area-inset-top)) 0 18px;
+  gap: 14px;
+  padding: calc(18px + env(safe-area-inset-top)) 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mp-root[data-theme="light"] .mp-mag__top {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
 }
 
 .mp-mag__date {
+  flex: 0 0 auto;
   font-family: var(--mp-sans-cn);
-  font-size: 11.5px;
+  font-size: 11px;
   letter-spacing: 1.5px;
   color: var(--mp-ink-2);
 }
@@ -5204,9 +5221,11 @@
 .mp-mag__greet {
   flex: 1 1 auto;
   font-family: var(--mp-serif);
-  font-size: 15px;
+  font-size: 22px;
+  font-weight: 500;
   color: var(--mp-ink);
-  letter-spacing: 0.5px;
+  letter-spacing: 2px;
+  line-height: 1.2;
 }
 
 .mp-mag__acts {
@@ -5248,7 +5267,8 @@
 
 .mp-mag__cover {
   width: 100%;
-  aspect-ratio: 4 / 5;
+  aspect-ratio: 3 / 4;
+  max-height: 46vh;
   background: var(--mp-bg-2);
 }
 
@@ -5275,9 +5295,9 @@
   text-orientation: upright;
   max-height: 60%;
   font-family: var(--mp-serif);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 500;
-  letter-spacing: 6px;
+  letter-spacing: 5px;
   line-height: 1.1;
   color: #fff;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
@@ -5287,7 +5307,7 @@
 
 .mp-mag__foryou {
   font-family: var(--mp-hand-font);
-  font-size: 30px;
+  font-size: 26px;
   line-height: 1;
   color: rgba(255, 255, 255, 0.86);
   transform: translateY(-2px);
@@ -6815,7 +6835,6 @@
 
   // src/ui/views/favorites.js
   var CHAR_KEY = "mp:taChar";
-  var PETAL_COUNT = 12;
   function richText(text) {
     var parts = String(text || "").split(/(\*\*[^*]+\*\*)/g);
     return parts.map(function(seg) {
@@ -7076,15 +7095,19 @@
           });
         }
       });
-      items.push({
-        label: "页面动效",
-        icon: "check",
-        hint: motionType() === "snow" ? "下雪" : motionType() === "petal" ? "花瓣" : "已关闭",
-        onClick: function() {
-          var next = motionType() === "snow" ? "petal" : motionType() === "petal" ? "none" : "snow";
-          ctx.updateSettings({ taMotion: next });
-          renderPetals();
-        }
+      [
+        { id: "snow", name: "动效 · 下雪" },
+        { id: "petal", name: "动效 · 花瓣" },
+        { id: "none", name: "动效 · 关闭" }
+      ].forEach(function(opt) {
+        items.push({
+          label: opt.name,
+          icon: motionType() === opt.id ? "check" : "more",
+          hint: motionType() === opt.id ? "当前" : "",
+          onClick: function() {
+            setMotion(opt.id);
+          }
+        });
       });
       if (currentChar && bgs[currentChar]) {
         items.push({
@@ -7137,18 +7160,25 @@
       });
       input.click();
     }
+    var motionCache = "";
     function motionType() {
+      if (motionCache) return motionCache;
       var v = state.settings.taMotion;
       if (v === "none" || v === "petal" || v === "snow") return v;
       return v === false ? "none" : "snow";
     }
-    function renderPetals() {
+    function setMotion(type) {
+      motionCache = type;
+      ctx.updateSettings({ taMotion: type });
+      renderPetals(type);
+    }
+    function renderPetals(type) {
       if (petals && petals.parentNode) petals.parentNode.removeChild(petals);
       petals = null;
-      var type = motionType();
-      if (type === "none") return;
-      petals = h("div", { class: "mp-ta-petals" + (type === "snow" ? " is-snow" : "") });
-      var count = type === "snow" ? 24 : PETAL_COUNT;
+      var t = type || motionType();
+      if (t === "none") return;
+      petals = h("div", { class: "mp-ta-petals" + (t === "snow" ? " is-snow" : "") });
+      var count = t === "snow" ? 28 : 18;
       for (var i = 0; i < count; i++) {
         petals.appendChild(h("span", { class: "mp-ta-petal" }));
       }
@@ -11506,7 +11536,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.45.0" });
+    app = await createApp({ container, roche, version: "0.46.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11522,7 +11552,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.45.0",
+    version: "0.46.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
