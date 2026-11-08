@@ -1,4 +1,4 @@
-/* music-player v0.44.0 | built 2026-11-08T12:15:11.248Z */
+/* music-player v0.44.0 | built 2026-11-08T12:30:41.174Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -491,7 +491,7 @@
       /** 只推荐能解析出播放地址的歌（每批会多花 2~4 秒） */
       recFilterPlayable: true,
       /** 音源策略：single = 只用主源；multi = 全开（会员时网易云优先） */
-      sourceMode: "single",
+      sourceMode: "multi",
       /** 单选时的主源 */
       primarySource: "tencent",
       /** TA 页花瓣飘落动效 */
@@ -583,7 +583,7 @@
         return Math.max(5, Math.min(50, n));
       })(),
       recFilterPlayable: bool(s.recFilterPlayable, def.recFilterPlayable),
-      sourceMode: s.sourceMode === "multi" ? "multi" : "single",
+      sourceMode: s.sourceMode === "single" ? "single" : "multi",
       primarySource: (function() {
         var list = ["tencent", "netease", "itunes", "audius"];
         var v = String(s.primarySource || "");
@@ -3031,10 +3031,16 @@
     }
     if (logged) {
       try {
-        var daily = await dailySongs(settings, count);
+        var daily = await dailySongs(settings, 50);
         if (daily && daily.length) {
-          var filled = daily.slice(0, count);
-          return result("netease", "网易云每日推荐", filled, "");
+          var pool = daily.slice();
+          for (var si = pool.length - 1; si > 0; si--) {
+            var sj = Math.floor(Math.random() * (si + 1));
+            var tmp = pool[si];
+            pool[si] = pool[sj];
+            pool[sj] = tmp;
+          }
+          return result("netease", "网易云每日推荐", pool.slice(0, count), "");
         }
       } catch (err) {
       }
@@ -5038,7 +5044,23 @@
   display: block;
 }
 
-/* 顶部标题去掉后，右上角只留一个浮动的 ⋯ */
+/* 左上角只留英文 Playlist，中文标题已去掉 */
+.mp-ta-headline {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  left: max(16px, env(safe-area-inset-left));
+  z-index: 3;
+  font-family: var(--mp-hand-font);
+  font-size: clamp(30px, 9.5vw, 40px);
+  font-style: normal;
+  letter-spacing: 1px;
+  line-height: 1.2;
+  color: var(--mp-silver);
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+/* 右上角只留一个浮动的 ⋯ */
 .mp-ta-menu {
   position: absolute;
   top: calc(14px + env(safe-area-inset-top));
@@ -5153,6 +5175,319 @@
   opacity: 0.22;
   pointer-events: none;
   user-select: none;
+}
+
+/* ========== 推荐页：东方杂志 / 册页 ========== */
+
+.mp-recpage {
+  background: transparent;
+}
+
+.mp-mag {
+  padding: 0 20px 32px;
+}
+
+.mp-mag__top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: calc(14px + env(safe-area-inset-top)) 0 18px;
+}
+
+.mp-mag__date {
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  letter-spacing: 1.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-mag__greet {
+  flex: 1 1 auto;
+  font-family: var(--mp-serif);
+  font-size: 15px;
+  color: var(--mp-ink);
+  letter-spacing: 0.5px;
+}
+
+.mp-mag__acts {
+  display: flex;
+  gap: 2px;
+}
+
+.mp-mag__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.mp-mag__headtext {
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--mp-ink);
+}
+
+.mp-mag__rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.22), transparent);
+}
+
+.mp-root[data-theme="light"] .mp-mag__rule {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.16), transparent);
+}
+
+/* 首篇 */
+.mp-mag__feature {
+  position: relative;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-mag__cover {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  background: var(--mp-bg-2);
+}
+
+.mp-mag__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-mag__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 16px 18px 18px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.55) 100%);
+  pointer-events: none;
+}
+
+.mp-mag__vtitle {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  max-height: 60%;
+  font-family: var(--mp-serif);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 6px;
+  line-height: 1.1;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  border-right: 2px solid var(--mp-accent);
+  padding-right: 8px;
+}
+
+.mp-mag__foryou {
+  font-family: var(--mp-hand-font);
+  font-size: 30px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.86);
+  transform: translateY(-2px);
+}
+
+.mp-mag__featurefoot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 2px 0;
+}
+
+.mp-mag__count {
+  flex: 1 1 auto;
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-mag__play {
+  padding: 5px 14px;
+  border: 1px solid var(--mp-accent);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--mp-accent);
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.mp-mag__swap {
+  padding: 5px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mp-mag__hint {
+  padding: 8px 2px 0;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 曲目单 */
+.mp-mag__tracks {
+  display: block;
+}
+
+.mp-mag__track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  text-align: left;
+}
+
+.mp-root[data-theme="light"] .mp-mag__track {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.mp-mag__track:active {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mp-mag__no {
+  flex: 0 0 24px;
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  color: var(--mp-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-mag__tname {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-mag__time {
+  flex: 0 0 auto;
+  font-family: var(--mp-sans-cn);
+  font-size: 11px;
+  color: var(--mp-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 书脊 */
+.mp-mag__spines {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+  scrollbar-width: none;
+}
+
+.mp-mag__spines::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-mag__spine {
+  position: relative;
+  flex: 0 0 auto;
+  width: 72px;
+  height: 148px;
+  padding: 0;
+  border: 1px solid var(--mp-line);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-mag__spinebg {
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+}
+
+.mp-mag__spinebg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-mag__spinebg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.62));
+}
+
+.mp-mag__spinetext {
+  position: relative;
+  z-index: 1;
+  display: block;
+  height: 100%;
+  padding: 12px 8px;
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  font-family: var(--mp-serif);
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: #fff;
+  overflow: hidden;
+}
+
+/* 榜单目录 */
+.mp-mag__rankrow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  text-align: left;
+}
+
+.mp-mag__rankno {
+  font-family: var(--mp-sans-cn);
+  font-size: 13px;
+  color: var(--mp-accent);
+}
+
+.mp-mag__rankname {
+  flex: 1 1 auto;
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  color: var(--mp-ink);
+}
+
+.mp-mag__ranksub {
+  font-size: 11px;
+  color: var(--mp-ink-2);
+}
+
+.mp-mag__gap {
+  height: 28px;
+}
+
+.mp-mag__end {
+  margin-top: 26px;
+  text-align: center;
+  font-family: var(--mp-hand-font);
+  font-size: 18px;
+  color: var(--mp-ink-2);
+  opacity: 0.5;
 }
 
 .mp-theme-row {
@@ -5554,52 +5889,86 @@
     return route;
   }
 
+  // src/core/format.js
+  function fmtTime(ms) {
+    var total = Math.max(0, Math.round((Number(ms) || 0) / 1e3));
+    var h2 = Math.floor(total / 3600);
+    var m = Math.floor(total % 3600 / 60);
+    var s = total % 60;
+    var mm = String(m).padStart(2, "0");
+    var ss = String(s).padStart(2, "0");
+    return h2 > 0 ? h2 + ":" + mm + ":" + ss : mm + ":" + ss;
+  }
+  function fmtSummary(count, totalMs) {
+    var songs = Number(count) || 0;
+    if (!songs) return "空歌单";
+    if (!totalMs) return songs + " 首";
+    return songs + " 首 · " + Math.round(totalMs / 6e4) + " 分钟";
+  }
+
   // src/ui/views/recommend.js
   function greeting() {
     var hour = (/* @__PURE__ */ new Date()).getHours();
-    if (hour < 6) return "夜深了，来点安静的歌";
-    if (hour < 11) return "早上好，今天听点什么";
-    if (hour < 14) return "中午好，放松一下";
-    if (hour < 18) return "下午好，给你挑了几首";
-    if (hour < 23) return "晚上好，适合慢慢听";
-    return "夜深了，来点安静的歌";
+    if (hour < 6) return "夜深了";
+    if (hour < 11) return "早上好";
+    if (hour < 14) return "中午好";
+    if (hour < 18) return "下午好";
+    if (hour < 23) return "晚上好";
+    return "夜深了";
+  }
+  function today() {
+    var d = /* @__PURE__ */ new Date();
+    var mm = String(d.getMonth() + 1).padStart(2, "0");
+    var dd = String(d.getDate()).padStart(2, "0");
+    return mm + " / " + dd;
   }
   function mount(host, ctx) {
-    var body = h("div", { class: "mp-body" });
+    var body = h("div", { class: "mp-mag" });
     var refreshing = false;
     var autoFetched = false;
-    var header = h("div", { class: "mp-header" }, [
-      pageTitle("推荐", function() {
-        ctx.exitOrMinimize();
-      }),
-      iconBtn("search", { label: "搜索", onClick: function() {
-        ctx.goto("search");
-      } }),
-      iconBtn("more", { label: "推荐偏好", onClick: function() {
-        openPrefs();
-      } })
+    var header = h("div", { class: "mp-mag__top" }, [
+      h("div", { class: "mp-mag__date", text: today() }),
+      (function() {
+        var greet = h("div", { class: "mp-mag__greet", text: greeting() });
+        greet.addEventListener("click", function() {
+          ctx.exitOrMinimize();
+        });
+        return greet;
+      })(),
+      h("div", { class: "mp-mag__acts" }, [
+        iconBtn("search", { label: "搜索", onClick: function() {
+          ctx.goto("search");
+        } }),
+        iconBtn("gear", { label: "推荐偏好", onClick: function() {
+          if (ctx.openPrefsPanel) ctx.openPrefsPanel();
+        } })
+      ])
     ]);
-    function coverTile(tracks) {
-      var grid = h("div", { class: "mp-rec__mosaic" });
-      var list = (tracks || []).slice(0, 4);
-      for (var i = 0; i < 4; i++) {
-        var t = list[i];
-        var cell = coverNode(t ? ctx.coverOf(t) : "", "mp-rec__tile");
-        if (t) cell.dataset.cover = trackKey(t);
-        grid.appendChild(cell);
-      }
-      return grid;
+    function headRow(text, action) {
+      var row = h("div", { class: "mp-mag__head" }, [
+        h("span", { class: "mp-mag__headtext", text }),
+        h("span", { class: "mp-mag__rule" })
+      ]);
+      if (action) row.appendChild(action);
+      return row;
     }
-    function aiCard(rec) {
+    function feature(rec) {
       var tracks = rec && rec.tracks || [];
-      var name = rec && rec.playlistName || "AI 为你挑的";
-      var playBtn = h("button", { class: "mp-rec__play", type: "button", text: "播放全部" });
+      var first = tracks[0];
+      var cover = h("div", { class: "mp-mag__cover" });
+      fillCover(cover, first ? ctx.coverOf(first) : "");
+      var titleText = rec && rec.playlistName || "为你挑的";
+      var title = h("div", { class: "mp-mag__vtitle", text: String(titleText).slice(0, 6) });
+      var playBtn = h("button", { class: "mp-mag__play", type: "button", text: "播放全部" });
       playBtn.addEventListener("click", function() {
-        if (!tracks.length) return;
-        ctx.playRecommend(tracks, 0);
+        if (tracks.length) ctx.playRecommend(tracks, 0);
       });
-      var refreshBtn = h("button", { class: "mp-rec__refresh", type: "button", text: refreshing ? "正在挑…" : "换一批" });
-      refreshBtn.addEventListener("click", function() {
+      var swap = h("button", {
+        class: "mp-mag__swap",
+        type: "button",
+        text: refreshing ? "正在挑…" : "换一批"
+      });
+      swap.addEventListener("click", function() {
         if (refreshing) return;
         refreshing = true;
         render2();
@@ -5611,102 +5980,93 @@
           render2();
         });
       });
-      return h("div", { class: "mp-rec__card" }, [
-        coverTile(tracks),
-        h("div", { class: "mp-rec__info" }, [
-          h("div", { class: "mp-rec__label", text: "AI 为你挑的" }),
-          h("div", { class: "mp-rec__name", text: name }),
-          h("div", { class: "mp-rec__meta", text: tracks.length ? tracks.length + " 首 · " + (rec.mode === "local" ? "按偏好" : "AI 挑选") : "还没有推荐" }),
-          h("div", { class: "mp-rec__actions" }, [playBtn, refreshBtn])
+      var foot = h("div", { class: "mp-mag__featurefoot" }, [
+        h("span", { class: "mp-mag__count", text: tracks.length ? tracks.length + " 首" : "还没有推荐" }),
+        playBtn,
+        swap
+      ]);
+      var sheet = h("div", { class: "mp-mag__feature" }, [
+        cover,
+        h("div", { class: "mp-mag__overlay" }, [
+          title,
+          h("div", { class: "mp-mag__foryou", text: "For You" })
         ])
       ]);
+      var wrap = h("div", { class: "mp-mag__featurewrap" }, [sheet, foot]);
+      if (rec && rec.reason) wrap.appendChild(h("div", { class: "mp-mag__hint", text: rec.reason }));
+      return wrap;
     }
-    function updateRailFade(rail) {
-      var mid = rail.scrollLeft + rail.clientWidth / 2;
-      var half = rail.clientWidth / 2 || 1;
-      Array.prototype.forEach.call(rail.children, function(card) {
-        var center = card.offsetLeft + card.offsetWidth / 2;
-        var dist = Math.abs(center - mid) / half;
-        var near = Math.max(0, 1 - dist);
-        card.classList.toggle("is-center", dist < 0.36);
-        card.style.opacity = String((0.45 + near * 0.55).toFixed(3));
-        card.style.filter = dist < 0.36 ? "none" : "grayscale(0.6)";
+    function tracklist(tracks) {
+      var list = h("div", { class: "mp-mag__tracks" });
+      tracks.slice(0, 20).forEach(function(track, i) {
+        var no = String(i + 1).padStart(2, "0");
+        var row = h("button", { class: "mp-mag__track", type: "button" }, [
+          h("span", { class: "mp-mag__no", text: no }),
+          h("span", { class: "mp-mag__tname", text: track.name || "未知歌曲" }),
+          h("span", { class: "mp-mag__time", text: track.duration ? fmtTime(track.duration) : "" })
+        ]);
+        row.addEventListener("click", function() {
+          ctx.playRecommend(tracks, i);
+        });
+        list.appendChild(row);
       });
+      return list;
     }
-    function playlistsRail() {
+    function spines() {
       var list = (ctx.state.playlists || []).filter(function(p) {
         return p && p.id;
       });
       if (!list.length) return null;
-      var rail = h("div", { class: "mp-rec-rail" });
+      var rail = h("div", { class: "mp-mag__spines" });
       list.slice(0, 20).forEach(function(p) {
         var first = (p.tracks || [])[0];
-        var cover = h("div", { class: "mp-rec-rail__cover" });
-        fillCover(cover, first ? ctx.coverOf(first) : "");
-        var card = h("button", { class: "mp-rec-rail__card", type: "button" }, [
-          cover,
-          h("div", { class: "mp-rec-rail__name", text: p.name }),
-          h("div", { class: "mp-rec-rail__sub", text: (p.tracks || []).length + " 首" })
+        var spine = h("button", { class: "mp-mag__spine", type: "button" }, [
+          (function() {
+            var cover = h("div", { class: "mp-mag__spinebg" });
+            fillCover(cover, first ? ctx.coverOf(first) : "");
+            return cover;
+          })(),
+          h("span", { class: "mp-mag__spinetext", text: p.name })
         ]);
-        card.addEventListener("click", function() {
+        spine.addEventListener("click", function() {
           ctx.goto("playlist", { playlistId: p.id });
         });
-        rail.appendChild(card);
+        rail.appendChild(spine);
       });
-      rail.addEventListener("scroll", function() {
-        updateRailFade(rail);
-      }, { passive: true });
-      requestAnimationFrame(function() {
-        updateRailFade(rail);
-      });
-      return h("div", { class: "mp-rec-railwrap" }, [
-        h("div", { class: "mp-section", text: "我的歌单" }),
-        rail
-      ]);
+      return h("div", {}, [headRow("我的歌单"), rail]);
     }
-    function trackRow(track, index, tracks) {
-      var cover = coverNode(ctx.coverOf(track), "mp-rec__rowcover");
-      cover.dataset.cover = trackKey(track);
-      var row = h("button", { class: "mp-rec__row", type: "button" }, [
-        cover,
-        h("div", { class: "mp-rec__rowmain" }, [
-          h("div", { class: "mp-rec__rowname", text: track.name || "未知歌曲" }),
-          h("div", { class: "mp-rec__rowsub", text: track.artist || "" })
-        ])
+    function ranks() {
+      if (!ctx.neteaseReady || !ctx.neteaseReady()) return null;
+      var row = h("button", { class: "mp-mag__rankrow", type: "button" }, [
+        h("span", { class: "mp-mag__rankno", text: "①" }),
+        h("span", { class: "mp-mag__rankname", text: "网易云排行榜" }),
+        h("span", { class: "mp-mag__ranksub", text: "热歌 / 新歌 / 飙升" })
       ]);
       row.addEventListener("click", function() {
-        ctx.playRecommend(tracks, index);
+        ctx.goto("search");
       });
-      return row;
+      return h("div", {}, [headRow("榜单"), row]);
     }
     function renderBody() {
       var rec = ctx.recommendCache ? ctx.recommendCache() : null;
       var tracks = rec && rec.tracks || [];
-      body.appendChild(h("div", { class: "mp-rec__hello", text: greeting() }));
-      body.appendChild(aiCard(rec));
-      var rail = playlistsRail();
-      if (rail) body.appendChild(rail);
-      if (rec && rec.reason) {
-        body.appendChild(h("div", { class: "mp-rec__hint", text: rec.reason }));
-      }
+      body.appendChild(feature(rec));
       if (tracks.length) {
-        body.appendChild(h("div", { class: "mp-section", text: "今日推荐" }));
-        var listBox = h("div", { class: "mp-rec__list" });
-        tracks.forEach(function(track, i) {
-          listBox.appendChild(trackRow(track, i, tracks));
-        });
-        body.appendChild(listBox);
+        body.appendChild(h("div", { class: "mp-mag__gap" }));
+        body.appendChild(headRow("每日推荐"));
+        body.appendChild(tracklist(tracks));
       }
-      if (ctx.neteaseReady && ctx.neteaseReady()) {
-        var rank = h("button", { class: "mp-rec__rank", type: "button" }, [
-          h("div", { class: "mp-rec__rankname", text: "排行榜" }),
-          h("div", { class: "mp-rec__ranksub", text: "去搜索页看热歌榜 / 新歌榜" })
-        ]);
-        rank.addEventListener("click", function() {
-          ctx.goto("search");
-        });
-        body.appendChild(rank);
+      var sp = spines();
+      if (sp) {
+        body.appendChild(h("div", { class: "mp-mag__gap" }));
+        body.appendChild(sp);
       }
+      var rk = ranks();
+      if (rk) {
+        body.appendChild(h("div", { class: "mp-mag__gap" }));
+        body.appendChild(rk);
+      }
+      body.appendChild(h("div", { class: "mp-mag__end", text: "· 今日歌单到此 ·" }));
     }
     function render2() {
       clear(body);
@@ -5714,21 +6074,15 @@
         renderBody();
       } catch (err) {
         clear(body);
-        body.appendChild(h("div", { class: "mp-rec__hint", text: "推荐加载失败" }));
-        var retry = h("button", { class: "mp-rec__refresh", type: "button", text: "重试" });
+        body.appendChild(h("div", { class: "mp-mag__hint", text: "推荐加载失败" }));
+        var retry = h("button", { class: "mp-mag__swap", type: "button", text: "重试" });
         retry.addEventListener("click", function() {
           render2();
         });
         body.appendChild(retry);
       }
     }
-    function openPrefs() {
-      if (ctx.openPrefsPanel) {
-        ctx.openPrefsPanel();
-        return;
-      }
-    }
-    var view = h("div", { class: "mp-view" }, [header, body]);
+    var view = h("div", { class: "mp-view mp-recpage" }, [header, body]);
     host.appendChild(view);
     render2();
     var mode = ctx.state.settings && ctx.state.settings.recMode || "manual";
@@ -6084,23 +6438,6 @@
         rankCancelled = true;
       }
     };
-  }
-
-  // src/core/format.js
-  function fmtTime(ms) {
-    var total = Math.max(0, Math.round((Number(ms) || 0) / 1e3));
-    var h2 = Math.floor(total / 3600);
-    var m = Math.floor(total % 3600 / 60);
-    var s = total % 60;
-    var mm = String(m).padStart(2, "0");
-    var ss = String(s).padStart(2, "0");
-    return h2 > 0 ? h2 + ":" + mm + ":" + ss : mm + ":" + ss;
-  }
-  function fmtSummary(count, totalMs) {
-    var songs = Number(count) || 0;
-    if (!songs) return "空歌单";
-    if (!totalMs) return songs + " 首";
-    return songs + " 首 · " + Math.round(totalMs / 6e4) + " 分钟";
   }
 
   // src/ui/views/playlists.js
@@ -6617,9 +6954,10 @@
       openMenu();
     } });
     menuBtn.classList.add("mp-ta-menu");
+    var headline = h("div", { class: "mp-ta-headline", text: "Playlist" });
     var petals = null;
     var body = h("div", { class: "mp-ta-body" });
-    var view = h("div", { class: "mp-view mp-ta" }, [bgLayer, menuBtn, body]);
+    var view = h("div", { class: "mp-view mp-ta" }, [bgLayer, headline, menuBtn, body]);
     host.appendChild(view);
     function applyBg() {
       var id = currentChar;
@@ -6738,20 +7076,15 @@
           });
         }
       });
-      [
-        { id: "snow", name: "动效 · 下雪" },
-        { id: "petal", name: "动效 · 花瓣" },
-        { id: "none", name: "动效 · 关闭" }
-      ].forEach(function(opt) {
-        items.push({
-          label: opt.name,
-          icon: motionType() === opt.id ? "check" : "more",
-          hint: motionType() === opt.id ? "当前" : "",
-          onClick: function() {
-            ctx.updateSettings({ taMotion: opt.id });
-            renderPetals();
-          }
-        });
+      items.push({
+        label: "页面动效",
+        icon: "check",
+        hint: motionType() === "snow" ? "下雪" : motionType() === "petal" ? "花瓣" : "已关闭",
+        onClick: function() {
+          var next = motionType() === "snow" ? "petal" : motionType() === "petal" ? "none" : "snow";
+          ctx.updateSettings({ taMotion: next });
+          renderPetals();
+        }
       });
       if (currentChar && bgs[currentChar]) {
         items.push({
@@ -7461,7 +7794,7 @@
       });
       var netGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "网络" }),
-        // 请求前缀已合并进「API 地址」，不再单独暴露
+        field("代理前缀", prefixInput, ""),
         field("音源自检", (function() {
           var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "运行" });
           btn.addEventListener("click", runSelfTest);
