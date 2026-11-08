@@ -1,4 +1,4 @@
-/* music-player v0.44.0 | built 2026-11-08T12:30:41.174Z */
+/* music-player v0.45.0 | built 2026-11-08T12:34:30.955Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -11506,7 +11506,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.44.0" });
+    app = await createApp({ container, roche, version: "0.45.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11522,7 +11522,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.44.0",
+    version: "0.45.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
