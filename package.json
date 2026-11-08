@@ -1,0 +1,19 @@
+{
+  "name": "music-player",
+  "private": true,
+  "version": "0.48.0",
+  "type": "module",
+  "description": "Roche 音乐播放器插件",
+  "scripts": {
+    "build": "node build.mjs",
+    "deploy": "node deploy.mjs",
+    "ship": "node build.mjs && node --test && node deploy.mjs",
+    "e2e": "node dev/e2e/run.mjs",
+    "releases": "node rollback.mjs --list",
+    "rollback": "node rollback.mjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

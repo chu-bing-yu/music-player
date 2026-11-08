@@ -1,0 +1,10 @@
+node_modules/
+releases/
+dist/
+# 2.8MB 的设计参考稿及其附件，不入库
+调整评论区UI.html
+调整评论区UI_files/
+*.log
+dev/bg.b64.txt
+.DS_Store
+Thumbs.db

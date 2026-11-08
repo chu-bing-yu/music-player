@@ -1,0 +1,2574 @@
+/* 各页面专属样式 */
+
+/* ---------- 搜索 ---------- */
+
+.mp-search {
+  flex: 0 0 auto;
+  padding: 0 16px 8px;
+}
+
+.mp-search__box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--mp-r-full);
+  background: var(--mp-soft);
+  color: var(--mp-muted);
+}
+
+.mp-search__box svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.mp-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--mp-ink);
+  font-size: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* 去掉 WebView 自带的搜索框装饰（那个多余的 × 和小图标） */
+.mp-search__input::-webkit-search-cancel-button,
+.mp-search__input::-webkit-search-decoration,
+.mp-search__input::-webkit-search-results-button {
+  -webkit-appearance: none;
+  display: none;
+}
+
+.mp-search__clear {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mp-soft-2);
+  color: var(--mp-muted);
+  padding: 0;
+}
+
+.mp-search__clear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.mp-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px 16px 2px;
+  scrollbar-width: none;
+}
+
+.mp-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--mp-line-strong);
+  background: transparent;
+  color: var(--mp-ink-2);
+  border-radius: var(--mp-r-full);
+  padding: 4px 12px;
+  font-size: 12.5px;
+}
+
+.mp-chip.is-active {
+  border-color: transparent;
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+/* ---------- 通用段落 ---------- */
+
+.mp-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-muted);
+}
+
+.mp-section__act {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--mp-muted);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 2px 0;
+}
+
+/* ---------- 搜索推荐 ---------- */
+
+.mp-rec {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 16px 10px;
+}
+
+.mp-rec-chip {
+  border: 1px solid var(--mp-line-strong);
+  background: transparent;
+  color: var(--mp-ink-2);
+  border-radius: var(--mp-r-full);
+  padding: 6px 13px;
+  font-size: 13px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec-chip:active {
+  background: var(--mp-soft);
+}
+
+.mp-rec__hint {
+  padding: 0 16px 8px;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+}
+
+.mp-rec__foot {
+  padding-top: 8px;
+  padding-bottom: 4px;
+}
+
+.mp-hint {
+  padding: 22px 24px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+  line-height: 1.7;
+}
+
+.mp-error {
+  margin: 8px 16px;
+  padding: 9px 12px;
+  border-radius: var(--mp-r-md);
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-size: 12px;
+}
+
+/* ---------- 歌单列表 ---------- */
+
+.mp-list {
+  padding: 4px 10px 8px;
+}
+
+.mp-pl {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: var(--mp-r-md);
+}
+
+.mp-pl:active {
+  background: var(--mp-soft);
+}
+
+.mp-pl__cover {
+  flex: 0 0 auto;
+  width: 54px;
+  height: 54px;
+  border-radius: var(--mp-r-md);
+  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
+  overflow: hidden;
+}
+
+.mp-pl__cover svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mp-pl__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-pl__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-pl__name {
+  font-size: 14.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-pl__sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 歌单详情 / 收藏 顶部操作 ---------- */
+
+.mp-actions {
+  display: flex;
+  gap: 10px;
+  padding: 4px 16px 10px;
+}
+
+.mp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--mp-r-full);
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--mp-soft);
+  color: var(--mp-ink);
+  /* 在设置行里被压缩时不要变成竖排文字 */
+  flex: 0 0 auto;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  min-width: 68px;
+}
+
+.mp-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mp-btn--primary {
+  background: var(--mp-accent);
+  color: var(--mp-on-accent);
+}
+
+.mp-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--mp-line-strong);
+  color: var(--mp-ink-2);
+  font-weight: 500;
+}
+
+.mp-actions .mp-btn {
+  flex: 1 1 0;
+}
+
+.mp-field__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* 网易云扫码登录弹层 */
+.mp-qr {
+  padding-bottom: 18px;
+}
+
+.mp-qr__img {
+  display: block;
+  width: 200px;
+  height: 200px;
+  margin: 10px auto 6px;
+  border-radius: 12px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.mp-qr__tip {
+  padding: 4px 20px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: #9299a3;
+  line-height: 1.6;
+}
+
+/* ---------- 正在播放页 ---------- */
+
+.mp-now {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(4px + env(safe-area-inset-top)) 26px calc(18px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.mp-now__head {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 8px;
+}
+
+.mp-now__from {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-now__stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mp-now__cover {
+  flex: 0 0 auto;
+  width: min(76vw, 300px);
+  height: min(76vw, 300px);
+  margin: auto 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mp-soft-2), var(--mp-soft));
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
+  overflow: hidden;
+  box-shadow: var(--mp-shadow);
+}
+
+.mp-now__cover svg {
+  width: 54px;
+  height: 54px;
+}
+
+.mp-now__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-now__meta {
+  flex: 0 0 auto;
+  width: 100%;
+  text-align: center;
+  margin-top: 18px;
+}
+
+.mp-now__name {
+  font-size: 18px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-now__artist {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-now__progress {
+  flex: 0 0 auto;
+  width: 100%;
+  margin-top: 16px;
+}
+
+.mp-now__track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--mp-soft-2);
+  cursor: pointer;
+  position: relative;
+}
+
+.mp-now__track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--mp-accent);
+}
+
+.mp-now__times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--mp-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-now__ctrl {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.mp-now__ctrl .mp-icon-btn {
+  width: 42px;
+  height: 42px;
+}
+
+.mp-now__ctrl .mp-icon-btn svg {
+  width: 23px;
+  height: 23px;
+}
+
+.mp-now__play {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mp-ink);
+  color: var(--mp-bg);
+}
+
+.mp-now__play svg {
+  width: 28px;
+  height: 28px;
+}
+
+.mp-now__extras {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  justify-content: space-around;
+  margin-top: 14px;
+  padding-bottom: 4px;
+}
+
+/* 正在播放：滚动歌词 */
+
+.mp-now__lyric {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  text-align: center;
+  padding: 4px 0 8px;
+  scrollbar-width: none;
+}
+
+.mp-now__lyric::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-lyric__line {
+  padding: 7px 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--mp-muted);
+  transition: color 0.15s, transform 0.15s, opacity 0.15s;
+  opacity: 0.7;
+}
+
+.mp-lyric__line.is-active {
+  color: var(--mp-accent);
+  font-weight: 600;
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.mp-lyric__empty {
+  padding: 46px 24px;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+  line-height: 1.8;
+}
+
+/* ---------- 设置 ---------- */
+
+.mp-group {
+  margin: 6px 16px 14px;
+  border-radius: var(--mp-r-md);
+  background: var(--mp-bg-2);
+  overflow: hidden;
+}
+
+.mp-group__title {
+  padding: 12px 14px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mp-muted);
+}
+
+.mp-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--mp-line);
+}
+
+/* 控件比较宽（比如三个按钮）时用它：标题和说明占一行，控件单独一行 */
+.mp-field--stack {
+  display: block;
+}
+
+.mp-field--stack .mp-field__label {
+  margin-bottom: 9px;
+}
+
+/* 右侧控件永远不被压扁 */
+.mp-field > .mp-btn,
+.mp-field > .mp-switch,
+.mp-field > .mp-field__value,
+.mp-field > .mp-dots,
+.mp-field > .mp-theme-row {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* 开关行：标题+说明占左侧，开关垂直居中靠右（原生设置页的常规布局） */
+.mp-field > .mp-switch {
+  align-self: center;
+}
+
+.mp-group__title + .mp-field {
+  border-top: 0;
+}
+
+.mp-field__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.mp-field__desc {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-muted);
+  line-height: 1.5;
+}
+
+.mp-field__value {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--mp-muted);
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-input {
+  flex: 0 0 auto;
+  width: 55%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--mp-ink);
+  font-size: 13px;
+  text-align: right;
+}
+
+.mp-switch {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 27px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--mp-soft-2);
+  position: relative;
+  transition: background 0.15s;
+  padding: 0;
+}
+
+.mp-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+
+.mp-switch.is-on {
+  background: var(--mp-accent);
+}
+
+.mp-switch.is-on::after {
+  transform: translateX(19px);
+}
+
+.mp-select {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--mp-muted);
+  font-size: 13px;
+  text-align: right;
+  outline: none;
+}
+
+.mp-slider {
+  flex: 0 0 auto;
+  width: 55%;
+  accent-color: var(--mp-accent);
+}
+
+/* ---------- TA 页：按角色的动态流 ---------- */
+
+.mp-ta-block {
+  padding: 16px 16px 6px;
+}
+
+.mp-ta-block + .mp-ta-block {
+  padding-top: 6px;
+}
+
+.mp-ta-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.mp-ta-head__avatar {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--mp-accent-soft, rgba(225, 75, 75, 0.14));
+  color: var(--mp-accent);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mp-ta-head__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-ta-head__name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  line-height: 1.3;
+}
+
+.mp-ta-head__stat {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 歌单横滑条 */
+.mp-ta-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 10px;
+  scrollbar-width: none;
+}
+
+.mp-ta-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-ta-pl {
+  flex: 0 0 auto;
+  width: 104px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-ta-pl__cover {
+  width: 104px;
+  height: 104px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-ta-pl__name {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta-pl__sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 评价气泡：左侧主题色竖线做引用标识 */
+.mp-ta-quote {
+  position: relative;
+  margin: 0 0 10px;
+  padding: 10px 12px 10px 14px;
+  border-radius: 12px;
+  background: var(--mp-bg-2);
+  border: 1px solid var(--mp-line);
+}
+
+.mp-ta-quote::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--mp-accent);
+}
+
+.mp-ta-quote__song {
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta-quote__artist {
+  opacity: 0.85;
+}
+
+.mp-ta-quote__text {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--mp-ink);
+  word-break: break-word;
+}
+
+.mp-ta-quote__text b {
+  color: var(--mp-accent);
+  font-weight: 700;
+}
+
+/* ---------- 推荐页 ---------- */
+
+.mp-rec__hello {
+  padding: 2px 16px 12px;
+  font-size: 12.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rec__card {
+  display: flex;
+  gap: 14px;
+  margin: 0 16px 14px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--mp-bg-2);
+  border: 1px solid var(--mp-line);
+}
+
+.mp-rec__mosaic {
+  flex: 0 0 auto;
+  width: 92px;
+  height: 92px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-line);
+}
+
+.mp-rec__tile {
+  overflow: hidden;
+  background: var(--mp-bg);
+}
+
+.mp-rec__tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-rec__info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.mp-rec__label {
+  font-size: 11px;
+  color: var(--mp-accent);
+  letter-spacing: 0.4px;
+}
+
+.mp-rec__name {
+  margin-top: 3px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec__meta {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rec__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.mp-rec__play {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mp-accent);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mp-rec__refresh {
+  padding: 6px 12px;
+  border: 1px solid var(--mp-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+}
+
+.mp-rec__hint {
+  margin: -4px 16px 12px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 推荐页：我的歌单横滑条（中间亮、两侧灰） */
+.mp-rec-railwrap {
+  margin-bottom: 6px;
+}
+
+.mp-rec-rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 8px 16px 10px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+
+.mp-rec-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-rec-rail__card {
+  flex: 0 0 auto;
+  width: 132px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  transition: opacity 0.18s ease, filter 0.18s ease, transform 0.18s ease;
+  scroll-snap-align: center;
+}
+
+.mp-rec-rail__card.is-center {
+  transform: scale(1.02);
+}
+
+.mp-rec-rail__cover {
+  width: 132px;
+  height: 132px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.mp-rec-rail__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-rec-rail__name {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec-rail__sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rec__list {
+  padding-bottom: 6px;
+}
+
+.mp-rec__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-rec__row:active {
+  background: var(--mp-bg-2);
+}
+
+.mp-rec__rowcover {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-rec__rowcover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-rec__rowmain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-rec__rowname {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec__rowsub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rec__rank,
+.mp-rank-entry {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 10px 16px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--mp-line);
+  border-radius: 14px;
+  background: var(--mp-bg-2);
+  text-align: left;
+}
+
+.mp-rec__rankname,
+.mp-rank-entry__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-rec__ranksub,
+.mp-rank-entry__sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rank-entry-wrap {
+  padding-bottom: 12px;
+}
+
+/* 搜索页：网易云式榜单横滑卡（卡内直接列前 8 首） */
+.mp-rank {
+  padding-bottom: 16px;
+}
+
+.mp-rank-rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 8px 16px 4px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.mp-rank-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-rank-card {
+  flex: 0 0 auto;
+  width: 76vw;
+  max-width: 320px;
+  padding: 12px 12px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--mp-line);
+  background: var(--mp-bg-2);
+  scroll-snap-align: start;
+}
+
+.mp-rank-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mp-rank-card__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rank-card__play {
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  border: 1px solid var(--mp-line-strong, var(--mp-line));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 11.5px;
+  line-height: 18px;
+}
+
+.mp-rank-card__rows {
+  display: block;
+}
+
+.mp-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-rank-row:active {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mp-rank-row__no {
+  flex: 0 0 20px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--mp-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-rank-row__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-rank-row.is-top .mp-rank-row__no {
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+.mp-rank-row.is-top:nth-child(2) .mp-rank-row__no {
+  color: #ff9f0a;
+}
+
+.mp-rank-card__empty {
+  padding: 10px 0;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-rank-card.is-skeleton {
+  min-height: 280px;
+  background: linear-gradient(90deg, var(--mp-bg-2) 25%, var(--mp-line) 37%, var(--mp-bg-2) 63%);
+  background-size: 400% 100%;
+  animation: mp-skeleton 1.2s ease infinite;
+}
+
+/* 设置页：推荐数量滑杆 */
+.mp-count {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 150px;
+}
+
+.mp-count .mp-prefs__slider {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.mp-count__value {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-accent);
+}
+
+@keyframes mp-skeleton {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.mp-rank__retry {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 8px 16px 0;
+  padding: 12px;
+  border: 1px dashed var(--mp-line-strong, var(--mp-line));
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+}
+
+/* ---------- 推荐偏好面板 ---------- */
+
+.mp-prefs__sheet {
+  max-height: 82vh;
+}
+
+.mp-prefs {
+  overflow-y: auto;
+}
+
+.mp-prefs__head {
+  padding: 4px 16px 12px;
+}
+
+.mp-prefs__title {
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-prefs__modes {
+  width: 100%;
+}
+
+.mp-prefs__hint {
+  padding: 0 16px 10px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  line-height: 1.5;
+}
+
+.mp-prefs__item {
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--mp-line);
+}
+
+.mp-prefs__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-prefs__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-prefs__weight {
+  font-size: 11.5px;
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+.mp-prefs__tag {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--mp-bg);
+  color: var(--mp-ink-2);
+  font-size: 10.5px;
+}
+
+.mp-prefs__slider {
+  width: 100%;
+  margin: 8px 0 6px;
+  appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--mp-line);
+  outline: none;
+}
+
+.mp-prefs__slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--mp-accent);
+  border: 2px solid var(--mp-bg-2);
+}
+
+.mp-prefs__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-prefs__prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-prefs__edit,
+.mp-prefs__del {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid var(--mp-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 11.5px;
+}
+
+.mp-prefs__del {
+  color: #d5544e;
+  border-color: rgba(213, 84, 78, 0.4);
+}
+
+.mp-prefs__add {
+  width: calc(100% - 32px);
+  margin: 12px 16px 18px;
+  padding: 10px;
+  border: 1px dashed var(--mp-line-strong, var(--mp-line));
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+}
+
+/* ========== TA 页（0.40 主题化版）：背景 + 手写体 + 乐评卡 ========== */
+
+/* 英文装饰花体：CDN 拉不到就回退 cursive，不影响正文 */
+@font-face {
+  font-family: 'MPItalianno';
+  src: url('https://cdn.jsdelivr.net/npm/@fontsource/italianno@5.0.8/files/italianno-latin-400-normal.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* 中文：思源宋体 → 系统宋体；不内嵌（整包几 MB），加载不到就用系统字体 */
+  --mp-serif: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  /* 辅助信息：MiSans → HarmonyOS Sans → 系统无衬线 */
+  --mp-sans-cn: "MiSans", "HarmonyOS Sans", "PingFang SC", system-ui, sans-serif;
+  /* 英文花体 */
+  --mp-hand-font: "MPItalianno", "STKaiti", cursive;
+  --mp-silver: #A8B4B8;
+}
+
+/* TA 页：宋体正文 + 花体装饰 */
+.mp-ta .mp-ta-hero__title,
+.mp-ta .mp-ta-head__name,
+.mp-ta .mp-ta-review__title,
+.mp-ta .mp-ta-review__name,
+.mp-ta .mp-ta-review__text,
+.mp-ta .mp-ta-pl__name {
+  font-family: var(--mp-serif);
+}
+
+.mp-ta .mp-ta-hero__title {
+  font-size: clamp(26px, 8.2vw, 34px);
+  font-weight: 500;
+  letter-spacing: 1px;
+  line-height: 1.2;
+}
+
+.mp-ta .mp-ta-hero__sub {
+  font-family: var(--mp-hand-font);
+  font-size: clamp(32px, 11vw, 42px);
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 1px;
+  line-height: 1.25;
+  color: var(--mp-silver);
+  opacity: 0.75;
+  margin-top: -6px;
+  overflow: visible;
+  padding: 2px 0 6px;
+}
+
+.mp-ta .mp-ta-head__name {
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.mp-ta .mp-ta-head__stat,
+.mp-ta .mp-ta-pl__sub,
+.mp-ta .mp-ta-review__count,
+.mp-ta .mp-ta-review__meta {
+  font-family: var(--mp-sans-cn);
+  font-size: 15px;
+}
+
+.mp-ta .mp-ta-review__title {
+  font-size: clamp(22px, 7vw, 28px);
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+
+.mp-ta .mp-ta-review__notes {
+  font-family: var(--mp-hand-font);
+  font-size: clamp(30px, 10vw, 42px);
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.25;
+  letter-spacing: 1px;
+  color: var(--mp-silver);
+  opacity: 0.7;
+  margin-left: 8px;
+  overflow: visible;
+  padding: 0 2px;
+  transform: translateY(2px);
+}
+
+.mp-ta .mp-ta-review__name {
+  font-size: clamp(18px, 5.6vw, 23px);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.mp-ta .mp-ta-review__text {
+  /* 只有评论正文受「自定义手写字体」影响，其余文字保持宋体 */
+  font-family: var(--mp-hand-custom, var(--mp-serif));
+  font-size: clamp(15px, 4.6vw, 18px);
+  font-weight: 400;
+  line-height: 1.75;
+  letter-spacing: 0.3px;
+}
+
+.mp-ta .mp-ta-review__sign {
+  font-family: var(--mp-hand-font);
+  font-size: clamp(22px, 6.4vw, 26px);
+  font-weight: 400;
+  color: var(--mp-silver);
+  opacity: 0.5;
+}
+
+.mp-ta {
+  position: relative;
+  overflow: hidden;
+}
+
+.mp-ta-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* 没有自定义背景时的默认氛围 */
+  background-image:
+    radial-gradient(120% 80% at 80% 0%, rgba(225, 75, 75, 0.10), transparent 60%),
+    radial-gradient(90% 70% at 10% 100%, rgba(120, 140, 180, 0.10), transparent 65%);
+}
+
+.mp-ta-bg.has-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 10, 14, 0.42) 0%, rgba(8, 10, 14, 0.78) 100%);
+}
+
+.mp-root[data-theme="light"] .mp-ta-bg {
+  background-image:
+    radial-gradient(120% 80% at 80% 0%, rgba(225, 75, 75, 0.08), transparent 60%),
+    radial-gradient(90% 70% at 10% 100%, rgba(120, 140, 180, 0.10), transparent 65%);
+}
+
+.mp-root[data-theme="light"] .mp-ta-bg.has-bg::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.9) 100%);
+}
+
+.mp-ta-hero,
+.mp-ta-body,
+.mp-ta-petals {
+  position: relative;
+  z-index: 1;
+}
+
+.mp-ta-hero {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  /* 与其它页（设置/歌单）的 .mp-header 完全一致，标题左上角齐平 */
+  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+}
+
+.mp-ta-hero__title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--mp-ink);
+}
+
+.mp-ta-hero__sub {
+  margin-top: 1px;
+  font-family: var(--mp-hand-font);
+  font-size: 16px;
+  font-style: italic;
+  letter-spacing: 1px;
+  opacity: 0.5;
+  color: var(--mp-ink);
+}
+
+.mp-ta-hero__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+
+.mp-ta-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+/* 花瓣 */
+.mp-ta-petals {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 340px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mp-ta-petal {
+  position: absolute;
+  top: -14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 60% 0 60% 60%;
+  background: rgba(255, 255, 255, 0.72);
+  opacity: 0.8;
+  animation-name: mp-petal-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.mp-root[data-theme="light"] .mp-ta-petal {
+  background: rgba(225, 75, 75, 0.35);
+}
+
+.mp-ta-petal:nth-child(1) { left: 6%; animation-duration: 11s; animation-delay: 0s; }
+.mp-ta-petal:nth-child(2) { left: 15%; animation-duration: 14s; animation-delay: 1.4s; width: 6px; height: 6px; }
+.mp-ta-petal:nth-child(3) { left: 24%; animation-duration: 12s; animation-delay: 3s; }
+.mp-ta-petal:nth-child(4) { left: 33%; animation-duration: 16s; animation-delay: 0.8s; width: 9px; height: 9px; }
+.mp-ta-petal:nth-child(5) { left: 42%; animation-duration: 13s; animation-delay: 2.2s; }
+.mp-ta-petal:nth-child(6) { left: 51%; animation-duration: 15s; animation-delay: 4s; width: 6px; height: 6px; }
+.mp-ta-petal:nth-child(7) { left: 60%; animation-duration: 12s; animation-delay: 1.1s; }
+.mp-ta-petal:nth-child(8) { left: 69%; animation-duration: 17s; animation-delay: 2.8s; width: 9px; height: 9px; }
+.mp-ta-petal:nth-child(9) { left: 77%; animation-duration: 13s; animation-delay: 0.5s; }
+.mp-ta-petal:nth-child(10) { left: 84%; animation-duration: 15s; animation-delay: 3.6s; width: 6px; height: 6px; }
+.mp-ta-petal:nth-child(11) { left: 90%; animation-duration: 12s; animation-delay: 1.8s; }
+.mp-ta-petal:nth-child(12) { left: 96%; animation-duration: 14s; animation-delay: 2.5s; width: 7px; height: 7px; }
+
+@keyframes mp-petal-fall {
+  0% { transform: translate3d(0, -20px, 0) rotate(0deg); opacity: 0; }
+  12% { opacity: 0.85; }
+  50% { transform: translate3d(14px, 160px, 0) rotate(180deg); }
+  100% { transform: translate3d(-10px, 340px, 0) rotate(360deg); opacity: 0; }
+}
+
+/* 雪：28 片，大小交错 + 轻微模糊，远看像真的在飘 */
+.mp-ta-petals.is-snow .mp-ta-petal {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  filter: blur(0.3px);
+  animation-name: mp-snow-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.mp-ta-petals.is-snow .mp-ta-petal:nth-child(3n) {
+  width: 6px;
+  height: 6px;
+  opacity: 0.55;
+  filter: blur(0.8px);
+}
+
+.mp-ta-petals.is-snow .mp-ta-petal:nth-child(3n + 1) {
+  width: 5px;
+  height: 5px;
+  opacity: 0.75;
+}
+
+/* 花瓣：两档颜色（白 / 淡粉） */
+.mp-ta-petals:not(.is-snow) .mp-ta-petal:nth-child(3n) {
+  background: rgba(240, 190, 200, 0.65);
+}
+
+@keyframes mp-snow-fall {
+  0% { transform: translate3d(0, -20px, 0); opacity: 0; }
+  10% { opacity: 0.9; }
+  50% { transform: translate3d(18px, 170px, 0); }
+  100% { transform: translate3d(-12px, 360px, 0); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-ta-petal { animation: none; display: none; }
+}
+
+/* 角色块 */
+.mp-ta .mp-ta-block {
+  padding: 6px 18px 4px;
+}
+
+.mp-ta .mp-ta-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 14px;
+}
+
+.mp-ta .mp-ta-head__avatar {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mp-ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.mp-ta .mp-ta-head__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-ta .mp-ta-head__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+
+.mp-ta .mp-ta-head__stat {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--mp-ink-2);
+}
+
+/* 歌单横滑 */
+.mp-ta .mp-ta-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.mp-ta .mp-ta-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-ta .mp-ta-pl {
+  flex: 0 0 auto;
+  width: 104px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-ta .mp-ta-pl__cover {
+  width: 104px;
+  height: 104px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mp-ta .mp-ta-pl__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-ta .mp-ta-pl__name {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta .mp-ta-pl__sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 乐评标题 */
+.mp-ta .mp-ta-review__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 4px;
+}
+
+.mp-ta .mp-ta-review__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mp-accent);
+}
+
+.mp-ta .mp-ta-review__dot--lead {
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 10px var(--mp-accent);
+}
+
+.mp-ta .mp-ta-review__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  letter-spacing: 0.3px;
+}
+
+.mp-ta .mp-ta-review__rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.22), transparent);
+}
+
+.mp-root[data-theme="light"] .mp-ta .mp-ta-review__rule {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.16), transparent);
+}
+
+.mp-ta .mp-ta-review__count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-ta .mp-ta-review__empty {
+  padding: 16px 0 8px;
+  font-family: var(--mp-hand-font);
+  font-size: 14px;
+  font-style: italic;
+  opacity: 0.55;
+  color: var(--mp-ink-2);
+}
+
+/* 乐评卡 */
+.mp-ta .mp-ta-review {
+  position: relative;
+  overflow: hidden;
+  padding: 16px 0 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* 左滑露出的删除按钮 */
+.mp-ta .mp-ta-review__inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  transition: transform 0.18s ease;
+  will-change: transform;
+}
+
+.mp-ta .mp-ta-review__del {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 72px;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: #d5544e;
+  color: #fff;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.mp-ta .mp-ta-review.is-open .mp-ta-review__del {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mp-root[data-theme="light"] .mp-ta .mp-ta-review {
+  border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
+.mp-ta .mp-ta-review:last-child {
+  border-bottom: 0;
+}
+
+.mp-ta .mp-ta-review__art {
+  position: relative;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mp-ta .mp-ta-review__cover {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mp-ta .mp-ta-review__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 左上角只留英文 Playlist，中文标题已去掉 */
+.mp-ta-headline {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  left: max(16px, env(safe-area-inset-left));
+  z-index: 3;
+  font-family: var(--mp-hand-font);
+  font-size: clamp(30px, 9.5vw, 40px);
+  font-style: normal;
+  letter-spacing: 1px;
+  line-height: 1.2;
+  color: var(--mp-silver);
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+/* 右上角只留一个浮动的 ⋯ */
+.mp-ta-menu {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 3;
+}
+
+.mp-ta .mp-ta-body {
+  padding-top: calc(50px + env(safe-area-inset-top));
+}
+
+.mp-ta .mp-ta-review__cover.is-loading {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.06) 25%, rgba(255, 255, 255, 0.14) 37%, rgba(255, 255, 255, 0.06) 63%);
+  background-size: 400% 100%;
+  animation: mp-skeleton 1.2s ease infinite;
+}
+
+/* 封面右侧露出的黑胶唱片 */
+.mp-ta .mp-ta-review__disc {
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  margin-top: -17px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, #2b2b31 0 18%, #16161b 19% 42%, #232329 43% 60%, #101014 61% 100%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.mp-ta .mp-ta-review__disc {
+  /* 精绘黑胶：多层沟槽 + 斜向高光 */
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0) 38%),
+    repeating-radial-gradient(circle at 50% 50%, #17171c 0 1.5px, #232329 1.5px 3px),
+    radial-gradient(circle at 50% 50%, #2b2b31 0 18%, #16161b 19% 42%, #232329 43% 60%, #101014 61% 100%);
+}
+
+.mp-ta .mp-ta-review__disc.is-spinning {
+  animation: mp-disc-spin 6s linear infinite;
+}
+
+@keyframes mp-disc-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-ta .mp-ta-review__disc.is-spinning { animation: none; }
+}
+
+.mp-ta .mp-ta-review__disc::after {
+  content: '';
+  position: absolute;
+  inset: 40%;
+  border-radius: 50%;
+  background: var(--mp-accent);
+  opacity: 0.85;
+}
+
+.mp-ta .mp-ta-review__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 6px;
+}
+
+.mp-ta .mp-ta-review__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta .mp-ta-review__name {
+  margin: 4px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-ta .mp-ta-review__text {
+  font-family: var(--mp-hand-font);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--mp-ink);
+  opacity: 0.92;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mp-ta .mp-ta-review__text b {
+  color: var(--mp-accent);
+  font-weight: 700;
+}
+
+.mp-ta .mp-ta-review__sign {
+  position: absolute;
+  right: 0;
+  bottom: 14px;
+  font-family: var(--mp-hand-font);
+  font-size: 20px;
+  color: var(--mp-ink);
+  opacity: 0.22;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ========== 推荐页：东方杂志 / 册页 ========== */
+
+.mp-recpage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+}
+
+.mp-mag {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 24px 40px;
+}
+
+/* 报头：居中日期行 + 居中大标题 + 双线收边 */
+.mp-mag__top {
+  position: relative;
+  padding: calc(20px + env(safe-area-inset-top)) 0 14px;
+}
+
+.mp-mag__mast {
+  text-align: center;
+  padding: 0 56px;
+}
+
+.mp-mag__date {
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  letter-spacing: 3px;
+  color: var(--mp-ink-2);
+  text-transform: uppercase;
+}
+
+.mp-mag__greet {
+  margin-top: 5px;
+  font-family: var(--mp-serif);
+  font-size: 23px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  letter-spacing: 4px;
+  line-height: 1.25;
+}
+
+.mp-mag__doublerule {
+  margin: 13px 0 0;
+  height: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.mp-root[data-theme="light"] .mp-mag__doublerule {
+  border-top-color: rgba(0, 0, 0, 0.24);
+  border-bottom-color: rgba(0, 0, 0, 0.12);
+}
+
+.mp-mag__acts {
+  position: absolute;
+  right: 0;
+  top: calc(14px + env(safe-area-inset-top));
+  display: flex;
+  gap: 6px;
+}
+
+.mp-mag__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.mp-mag__headtext {
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--mp-ink);
+}
+
+.mp-mag__rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.22), transparent);
+}
+
+.mp-root[data-theme="light"] .mp-mag__rule {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.16), transparent);
+}
+
+/* 首篇 */
+.mp-mag__feature {
+  position: relative;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-mag__cover {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  background: var(--mp-bg-2);
+}
+
+.mp-mag__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-mag__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 16px 18px 18px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.55) 100%);
+  pointer-events: none;
+}
+
+.mp-mag__vtitle {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  max-height: 60%;
+  font-family: var(--mp-serif);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 5px;
+  line-height: 1.1;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  border-right: 2px solid var(--mp-accent);
+  padding-right: 8px;
+}
+
+.mp-mag__foryou {
+  font-family: var(--mp-hand-font);
+  font-size: 26px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.86);
+  transform: translateY(-2px);
+}
+
+.mp-mag__featurefoot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 2px 0;
+}
+
+.mp-mag__count {
+  flex: 1 1 auto;
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-mag__play {
+  padding: 5px 14px;
+  border: 1px solid var(--mp-accent);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--mp-accent);
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.mp-mag__swap {
+  padding: 5px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mp-mag__hint {
+  padding: 8px 2px 0;
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 曲目单 */
+.mp-mag__tracks {
+  display: block;
+}
+
+.mp-mag__track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  text-align: left;
+}
+
+.mp-root[data-theme="light"] .mp-mag__track {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.mp-mag__track:active {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mp-mag__no {
+  flex: 0 0 24px;
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  color: var(--mp-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-mag__tname {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-mag__time {
+  flex: 0 0 auto;
+  font-family: var(--mp-sans-cn);
+  font-size: 11px;
+  color: var(--mp-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 我的歌单：小封面横滑卡 */
+.mp-mag__shelf {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 2px 0 8px;
+  scrollbar-width: none;
+}
+
+.mp-mag__shelf::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-mag__shelfcard {
+  flex: 0 0 auto;
+  width: 96px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-mag__shelfcover {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-mag__shelfcover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-mag__shelfname {
+  margin-top: 7px;
+  font-family: var(--mp-serif);
+  font-size: 12.5px;
+  color: var(--mp-ink);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mp-mag__shelfsub {
+  margin-top: 3px;
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 榜单目录 */
+.mp-mag__rankrow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  text-align: left;
+}
+
+.mp-mag__rankno {
+  font-family: var(--mp-sans-cn);
+  font-size: 13px;
+  color: var(--mp-accent);
+}
+
+.mp-mag__rankname {
+  flex: 1 1 auto;
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  color: var(--mp-ink);
+}
+
+.mp-mag__ranksub {
+  font-size: 11px;
+  color: var(--mp-ink-2);
+}
+
+.mp-mag__gap {
+  height: 28px;
+}
+
+.mp-mag__end {
+  margin-top: 26px;
+  text-align: center;
+  font-family: var(--mp-hand-font);
+  font-size: 18px;
+  color: var(--mp-ink-2);
+  opacity: 0.5;
+}
+
+/* ========== 歌单页：与推荐页同一套杂志语言 ========== */
+
+.mp-plpage__top {
+  position: relative;
+  flex: 0 0 auto;
+  padding: calc(20px + env(safe-area-inset-top)) 24px 12px;
+}
+
+.mp-plpage__mast {
+  text-align: center;
+  padding: 0 44px;
+}
+
+.mp-plpage__date {
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  letter-spacing: 3px;
+  color: var(--mp-ink-2);
+}
+
+.mp-plpage__title {
+  margin-top: 2px;
+  font-family: var(--mp-hand-font);
+  font-size: clamp(34px, 10vw, 42px);
+  line-height: 1.15;
+  letter-spacing: 1px;
+  color: var(--mp-ink);
+}
+
+.mp-plpage__rule {
+  margin-top: 8px;
+  height: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.mp-root[data-theme="light"] .mp-plpage__rule {
+  border-top-color: rgba(0, 0, 0, 0.24);
+  border-bottom-color: rgba(0, 0, 0, 0.12);
+}
+
+.mp-plpage__add {
+  position: absolute;
+  right: 18px;
+  top: calc(16px + env(safe-area-inset-top));
+}
+
+.mp-plpage__body {
+  padding: 0 24px 28px;
+}
+
+/* 收藏：单独一行 */
+.mp-plfeat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  text-align: left;
+}
+
+.mp-root[data-theme="light"] .mp-plfeat {
+  border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
+.mp-plfeat__cover {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-plfeat__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-plfeat__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-plfeat__name {
+  font-family: var(--mp-serif);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--mp-ink);
+}
+
+.mp-plfeat__sub {
+  margin-top: 3px;
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
+/* 分组小标题 */
+.mp-plpage__head {
+  margin: 22px 0 10px;
+  font-family: var(--mp-serif);
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--mp-ink-2);
+}
+
+/* 两列网格 */
+.mp-plgrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 14px;
+}
+
+.mp-plcard {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mp-plcard__cover {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mp-bg-2);
+}
+
+.mp-plcard__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-plcard__name {
+  margin-top: 8px;
+  font-family: var(--mp-serif);
+  font-size: 13.5px;
+  color: var(--mp-ink);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mp-plcard__sub {
+  margin-top: 3px;
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  color: var(--mp-ink-2);
+}
+
+.mp-theme-row {
+  display: flex;
+  gap: 8px;
+  padding: 11px 14px;
+}
+
+.mp-theme-btn {
+  flex: 1 1 0;
+  padding: 8px 2px;
+  border-radius: var(--mp-r-sm);
+  border: 1px solid var(--mp-line-strong);
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.mp-theme-btn.is-active {
+  border-color: transparent;
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-weight: 600;
+}
+
+.mp-dots {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mp-dot--custom {
+  position: relative;
+  overflow: hidden;
+}
+
+.mp-dot--custom .mp-color {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+
+.mp-color {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
+}
+
+.mp-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.mp-color::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+
+.mp-dot {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.mp-dot.is-active {
+  border-color: var(--mp-ink);
+}
+
+.mp-about {
+  padding: 6px 24px 28px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+  line-height: 1.8;
+}

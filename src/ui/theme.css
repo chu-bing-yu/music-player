@@ -1,0 +1,67 @@
+/* 主题变量：只在插件根容器内生效 */
+.mp-root {
+  --mp-bg: #ffffff;
+  --mp-bg-2: #f7f7f9;
+  --mp-soft: #f2f3f5;
+  --mp-soft-2: #e9eaee;
+  --mp-line: #ededf0;
+  --mp-line-strong: #dfe0e4;
+  --mp-ink: #1b1c1f;
+  --mp-ink-2: #4f5259;
+  --mp-muted: #9299a3;
+  --mp-accent: #e14b4b;
+  --mp-accent-soft: rgba(225, 75, 75, 0.1);
+  --mp-on-accent: #ffffff;
+
+  --mp-r-lg: 16px;
+  --mp-r-md: 10px;
+  --mp-r-sm: 8px;
+  --mp-r-full: 999px;
+
+  --mp-shadow: 0 10px 30px rgba(17, 18, 20, 0.08);
+  --mp-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+
+/* 主色调：与日夜模式正交，放在 dark 之后保证优先级 */
+.mp-root[data-accent="blue"] {
+  --mp-accent: #3b82f6;
+  --mp-accent-soft: rgba(59, 130, 246, 0.14);
+}
+
+.mp-root[data-accent="green"] {
+  --mp-accent: #2f9e44;
+  --mp-accent-soft: rgba(47, 158, 68, 0.14);
+}
+
+.mp-root[data-accent="purple"] {
+  --mp-accent: #8b5cf6;
+  --mp-accent-soft: rgba(139, 92, 246, 0.14);
+}
+
+.mp-root[data-accent="amber"] {
+  --mp-accent: #e8850c;
+  --mp-accent-soft: rgba(232, 133, 12, 0.16);
+}
+
+.mp-root[data-theme="dark"] {
+  --mp-bg: #141518;
+  --mp-bg-2: #1a1c20;
+  --mp-soft: #22242a;
+  --mp-soft-2: #2b2e35;
+  --mp-line: #262930;
+  --mp-line-strong: #34383f;
+  --mp-ink: #f1f2f4;
+  --mp-ink-2: #c3c7cd;
+  --mp-muted: #868c96;
+  --mp-accent: #f0645f;
+  --mp-accent-soft: rgba(240, 100, 95, 0.16);
+  --mp-on-accent: #ffffff;
+  --mp-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* 深色下的主色调：提亮一点，避免压得太沉 */
+.mp-root[data-theme="dark"][data-accent="blue"] { --mp-accent: #6ba4ff; }
+.mp-root[data-theme="dark"][data-accent="green"] { --mp-accent: #4ec46a; }
+.mp-root[data-theme="dark"][data-accent="purple"] { --mp-accent: #a78bfa; }
+.mp-root[data-theme="dark"][data-accent="amber"] { --mp-accent: #ffb347; }
+.mp-root[data-theme="dark"][data-accent="red"] { --mp-accent: #f0645f; }

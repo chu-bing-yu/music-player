@@ -1,0 +1,895 @@
+/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */
+
+.mp-root,
+.mp-root * {
+  box-sizing: border-box;
+}
+
+/* 全屏：背景铺到屏幕边缘，再把安全区内边距加回自己的 header / 底栏 */
+.mp-root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: calc(100% + env(safe-area-inset-left) + env(safe-area-inset-right));
+  height: calc(100% + env(safe-area-inset-top) + env(safe-area-inset-bottom));
+  margin: calc(0px - env(safe-area-inset-top)) calc(0px - env(safe-area-inset-right)) calc(0px - env(safe-area-inset-bottom)) calc(0px - env(safe-area-inset-left));
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mp-bg);
+  color: var(--mp-ink);
+  font-family: var(--mp-font);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mp-root button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mp-root button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---------- 页面骨架 ---------- */
+
+.mp-view-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mp-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mp-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+}
+
+.mp-header__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-header__sub {
+  font-size: 12px;
+  color: var(--mp-muted);
+  font-weight: 400;
+}
+
+.mp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 12px;
+}
+
+.mp-icon-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--mp-r-full);
+  background: transparent;
+  color: var(--mp-ink-2);
+  padding: 0;
+}
+
+.mp-icon-btn:active {
+  background: var(--mp-soft);
+}
+
+.mp-icon-btn svg {
+  width: 21px;
+  height: 21px;
+}
+
+.mp-icon-btn.is-active {
+  color: var(--mp-accent);
+}
+
+/* ---------- 歌曲行 ---------- */
+
+.mp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+}
+
+.mp-row:active {
+  background: var(--mp-soft);
+}
+
+.mp-row__cover {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--mp-r-sm);
+  object-fit: cover;
+  background: var(--mp-soft-2);
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
+  overflow: hidden;
+}
+
+.mp-row__cover svg {
+  width: 20px;
+  height: 20px;
+}
+
+.mp-row__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-row__name {
+  font-size: 14.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-row.is-current .mp-row__name {
+  color: var(--mp-accent);
+}
+
+.mp-row.is-selected {
+  background: var(--mp-accent-soft);
+}
+
+.mp-row__check {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--mp-line-strong);
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+
+.mp-row__check.is-on {
+  border-color: var(--mp-accent);
+  background: var(--mp-accent);
+}
+
+.mp-row__check svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mp-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 8px;
+}
+
+.mp-select-bar__count {
+  flex: 1 1 auto;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+}
+
+.mp-row__sub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-row__tag {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--mp-soft);
+  color: var(--mp-muted);
+  font-size: 10px;
+  line-height: 15px;
+  vertical-align: 1px;
+}
+
+.mp-row__btn {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--mp-r-full);
+  background: transparent;
+  color: var(--mp-muted);
+}
+
+.mp-row__btn:active {
+  background: var(--mp-soft-2);
+}
+
+.mp-row__btn svg {
+  width: 19px;
+  height: 19px;
+}
+
+.mp-row__btn.is-active {
+  color: var(--mp-accent);
+}
+
+/* ---------- 迷你播放条 ---------- */
+
+.mp-player {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px 10px;
+  border-top: 1px solid var(--mp-line);
+  background: var(--mp-bg);
+}
+
+.mp-player__bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--mp-line);
+  cursor: pointer;
+}
+
+.mp-player__bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--mp-accent);
+}
+
+.mp-player__cover {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--mp-r-sm);
+  background: var(--mp-soft-2);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--mp-muted);
+}
+
+.mp-player__cover svg {
+  width: 19px;
+  height: 19px;
+}
+
+.mp-player__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-player__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-player__hit {
+  display: block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.mp-player__name {
+  font-size: 13.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-player__sub {
+  font-size: 11px;
+  color: var(--mp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-player__play {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--mp-r-full);
+  background: transparent;
+  color: var(--mp-ink);
+}
+
+.mp-player__play svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* ---------- 悬浮歌词 ---------- */
+
+.mp-float-lyric {
+  flex: 0 0 auto;
+  display: none;
+  margin: 0 10px 6px;
+  padding: 5px 12px;
+  border-radius: var(--mp-r-sm);
+  background: var(--mp-bg-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--mp-ink-2);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-float-lyric.is-fresh {
+  animation: mp-lyric-in 0.28s ease-out;
+}
+
+@keyframes mp-lyric-in {
+  from { opacity: 0.25; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 键盘弹出时把播放条、悬浮歌词、底栏全部让出去，屏幕留给搜索结果 */
+.mp-root.is-keyboard .mp-player,
+.mp-root.is-keyboard .mp-float-lyric,
+.mp-root.is-keyboard .mp-dock {
+  display: none !important;
+}
+
+/* ---------- 四按钮底栏 ---------- */
+
+.mp-dock {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--mp-line);
+  background: var(--mp-bg);
+  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));
+}
+
+.mp-dock__btn {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 0 3px;
+  border: 0;
+  background: transparent;
+  color: var(--mp-muted);
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+.mp-dock__btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mp-dock__btn.is-active {
+  color: var(--mp-accent);
+}
+
+/* ---------- 底部弹层（挂在插件根内） ---------- */
+
+.mp-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.mp-sheet {
+  width: 100%;
+  max-height: 74%;
+  display: flex;
+  flex-direction: column;
+  background: var(--mp-bg);
+  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  animation: mp-rise 0.18s ease-out;
+}
+
+@keyframes mp-rise {
+  from { transform: translateY(12px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.mp-sheet__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 8px;
+}
+
+.mp-sheet__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-sheet__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+.mp-sheet__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--mp-ink);
+  font-size: 14.5px;
+  text-align: left;
+}
+
+.mp-sheet__item:active {
+  background: var(--mp-soft);
+}
+
+.mp-sheet__item svg {
+  width: 19px;
+  height: 19px;
+  color: var(--mp-muted);
+}
+
+.mp-editor {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 4px 16px 10px;
+  min-height: 150px;
+  padding: 12px;
+  border: 1px solid var(--mp-line-strong);
+  border-radius: var(--mp-r-md);
+  background: var(--mp-bg-2);
+  color: var(--mp-ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  resize: vertical;
+  outline: none;
+}
+
+.mp-editor:focus {
+  border-color: var(--mp-accent);
+}
+
+.mp-sheet__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-sheet__x {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--mp-muted);
+  padding: 0;
+}
+
+.mp-sheet__x:active {
+  background: var(--mp-soft-2);
+}
+
+.mp-sheet__x svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mp-sheet__item.is-danger {
+  color: var(--mp-accent);
+}
+
+/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */
+
+.mp-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: var(--mp-bg, #fff);
+  color: var(--mp-ink, #1b1c1f);
+  border: 1px solid var(--mp-line, #ededf0);
+  /* 固定宽度：不随歌名 / 歌手长短变化 */
+  width: 252px;
+  min-width: 0;
+  box-sizing: border-box;
+  max-width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.mp-card__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-card__act {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.mp-card__cover {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--mp-soft-2, #e9eaee);
+  display: grid;
+  place-items: center;
+  color: #9299a3;
+  overflow: hidden;
+}
+
+.mp-card__cover svg {
+  width: 20px;
+  height: 20px;
+}
+
+.mp-card__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-card__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-card__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-card__sub {
+  margin-top: 1px;
+  font-size: 11px;
+  color: #9299a3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-card__act {
+  flex: 0 0 auto;
+  border: 0;
+  background: rgba(225, 75, 75, 0.1);
+  color: #e14b4b;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 11px;
+  border-radius: 999px;
+}
+
+/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */
+
+.mp-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.mp-modal__panel {
+  width: 100%;
+  max-width: 480px;
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  color: #1b1c1f;
+  border-radius: 18px 18px 0 0;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.mp-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #ededf0;
+}
+
+.mp-modal__title {
+  flex: 1 1 auto;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.mp-modal__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  font-size: 14.5px;
+  background: transparent;
+  color: inherit;
+}
+
+.mp-modal__body {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+
+.mp-modal__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 14px;
+}
+
+.mp-modal__row:active {
+  background: #f2f3f5;
+}
+
+.mp-modal__row span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-modal__hint {
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: #9299a3;
+  text-align: center;
+}
+
+/* ---------- 聊天里的「一起听」面板 ---------- */
+
+.mp-listen {
+  max-height: 68vh;
+}
+
+.mp-listen__now {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 14px;
+}
+
+.mp-listen__cover {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: #eef0f3;
+  display: grid;
+  place-items: center;
+  color: #9299a3;
+  overflow: hidden;
+}
+
+.mp-listen__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-listen__cover svg {
+  width: 20px;
+  height: 20px;
+}
+
+.mp-listen__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-listen__name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-listen__artist {
+  font-size: 11.5px;
+  color: #9299a3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-listen__ctrl {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mp-listen__btn {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #1b1c1f;
+  padding: 0;
+}
+
+.mp-listen__btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mp-listen__list {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: 32vh;
+  overflow-y: auto;
+  border-top: 1px solid #ededf0;
+}
+
+.mp-listen__sub {
+  /* 固定宽度 + 右对齐，多行列表里歌手名才能对齐成一条线 */
+  flex: 0 0 auto;
+  width: 42%;
+  text-align: right;
+  font-size: 11.5px;
+  color: #9299a3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-modal__row.is-active span:first-child {
+  color: #e14b4b;
+  font-weight: 600;
+}
+
+.mp-listen__searchicon {
+  display: grid;
+  place-items: center;
+  color: #9299a3;
+}
+
+.mp-listen__searchicon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mp-listen__foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  border-top: 1px solid #ededf0;
+}
+
+.mp-listen__open {
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12.5px;
+  padding: 8px 0;
+}
+
+.mp-listen__stop {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: #d5544e;
+  font-size: 12.5px;
+  padding: 8px 0 8px 14px;
+}
+
+.mp-listen__tabs {
+  display: flex;
+  gap: 10px;
+  padding: 2px 16px 10px;
+}
+
+.mp-listen__tab {
+  flex: 1 1 0;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 999px;
+  background: #f2f3f5;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.mp-listen__tab.is-active {
+  background: #ffeceb;
+  color: #e14b4b;
+  font-weight: 600;
+}
