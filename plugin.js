@@ -1,4 +1,4 @@
-/* music-player v0.43.0 | built 2026-11-08T11:27:40.837Z */
+/* music-player v0.44.0 | built 2026-11-08T12:15:11.248Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -401,7 +401,8 @@
     "暂停：<!-- mp:pause -->　继续：<!-- mp:resume -->",
     "把当前这首收进你的歌单：<!-- mp:add -->",
     "给当前这首写一句评价：<!-- mp:comment:一句话评价 -->",
-    "新建歌单：<!-- mp:new:歌单名 -->　给我挑几首：<!-- mp:recommend:关键词 -->",
+    "新建歌单：<!-- mp:new:歌单名 -->　给我挑几首：<!-- mp:recommend:歌单名|搜索关键词 -->",
+    "注意：挑歌必须在竖线后面写 1~3 个搜索关键词（不要只写歌名），歌单名也由你取，例如 <!-- mp:recommend:雨夜书单|城市雨天 华语慢歌 -->",
     "",
     "规则：",
     "1. 【重要】不要调用任何工具（music_play / music_next 等），只写上面这种注释指令；",
@@ -420,7 +421,7 @@
     "   暂停 <!-- mp:pause -->　继续 <!-- mp:resume -->",
     "   把当前这首收进你的歌单 <!-- mp:add -->",
     "   给当前这首写评价 <!-- mp:comment:一句话评价 -->",
-    "   新建歌单 <!-- mp:new:歌单名 -->　给用户挑几首 <!-- mp:recommend:关键词 -->",
+    "   新建歌单 <!-- mp:new:歌单名 -->　给用户挑几首 <!-- mp:recommend:歌单名|搜索关键词 -->（竖线后必须写 1~3 个真实搜索关键词，歌单名自己取）",
     "3. 指令必须单独占一行，且必须是 <!-- ... --> 形式；",
     "4. 没有写指令就等于没有操作，不要只说「已经加好了」；",
     "5. 切歌时顺带自然地说一句你对这首歌的感受。"
@@ -2502,6 +2503,30 @@
     } catch (err) {
     }
   }
+  function hasData(value) {
+    if (!value || typeof value !== "object") return false;
+    return Object.keys(value).length > 0;
+  }
+  function mergeDeep(a, b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    if (typeof a !== "object" || typeof b !== "object" || Array.isArray(a) || Array.isArray(b)) return b;
+    var out = {};
+    Object.keys(a).forEach(function(k) {
+      out[k] = a[k];
+    });
+    Object.keys(b).forEach(function(k) {
+      var av = out[k];
+      var bv = b[k];
+      if (av && bv && typeof av === "object" && typeof bv === "object" && !Array.isArray(av) && !Array.isArray(bv)) {
+        if (av.at && bv.at) out[k] = Number(av.at) >= Number(bv.at) ? av : bv;
+        else out[k] = mergeDeep(av, bv);
+      } else {
+        out[k] = bv;
+      }
+    });
+    return out;
+  }
   async function readJson(roche, key, fallback) {
     var fromHost = null;
     try {
@@ -2511,12 +2536,11 @@
     } catch (err) {
       fromHost = null;
     }
-    if (fromHost !== void 0 && fromHost !== null) {
-      mirrorWrite(key, fromHost);
-      return fromHost;
-    }
-    var mirrored = mirrorRead(key);
-    return mirrored === null ? fallback : mirrored;
+    var fromMirror = mirrorRead(key);
+    if (!hasData(fromHost) && !hasData(fromMirror)) return fallback;
+    var merged = mergeDeep(hasData(fromHost) ? fromHost : {}, hasData(fromMirror) ? fromMirror : {});
+    mirrorWrite(key, merged);
+    return merged;
   }
   async function writeJson(roche, key, value) {
     mirrorWrite(key, value);
@@ -4608,7 +4632,8 @@
 }
 
 .mp-ta .mp-ta-review__text {
-  font-family: var(--mp-serif);
+  /* 只有评论正文受「自定义手写字体」影响，其余文字保持宋体 */
+  font-family: var(--mp-hand-custom, var(--mp-serif));
   font-size: clamp(15px, 4.6vw, 18px);
   font-weight: 400;
   line-height: 1.75;
@@ -4753,6 +4778,30 @@
   12% { opacity: 0.85; }
   50% { transform: translate3d(14px, 160px, 0) rotate(180deg); }
   100% { transform: translate3d(-10px, 340px, 0) rotate(360deg); opacity: 0; }
+}
+
+/* 雪：24 片小圆点，慢速下落 + 轻微漂移 */
+.mp-ta-petals.is-snow .mp-ta-petal {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  animation-name: mp-snow-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.mp-ta-petals.is-snow .mp-ta-petal:nth-child(odd) {
+  width: 4px;
+  height: 4px;
+  opacity: 0.6;
+}
+
+@keyframes mp-snow-fall {
+  0% { transform: translate3d(0, -20px, 0); opacity: 0; }
+  10% { opacity: 0.9; }
+  50% { transform: translate3d(18px, 170px, 0); }
+  100% { transform: translate3d(-12px, 360px, 0); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4989,6 +5038,18 @@
   display: block;
 }
 
+/* 顶部标题去掉后，右上角只留一个浮动的 ⋯ */
+.mp-ta-menu {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 3;
+}
+
+.mp-ta .mp-ta-body {
+  padding-top: calc(50px + env(safe-area-inset-top));
+}
+
 .mp-ta .mp-ta-review__cover.is-loading {
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.06) 25%, rgba(255, 255, 255, 0.14) 37%, rgba(255, 255, 255, 0.06) 63%);
   background-size: 400% 100%;
@@ -5090,7 +5151,6 @@
   font-size: 20px;
   color: var(--mp-ink);
   opacity: 0.22;
-  transform: rotate(-8deg);
   pointer-events: none;
   user-select: none;
 }
@@ -6479,12 +6539,21 @@
       var p = profileOf(id);
       return p && p.name || "角色";
     }
+    var signMap = /* @__PURE__ */ Object.create(null);
+    async function loadSigns() {
+      try {
+        var api2 = typeof window !== "undefined" ? window.Roche : null;
+        var raw = api2 && api2.storage ? await api2.storage.get("mp:taSign") : null;
+        signMap = raw && typeof raw === "object" ? raw : /* @__PURE__ */ Object.create(null);
+      } catch (err) {
+        signMap = /* @__PURE__ */ Object.create(null);
+      }
+    }
     function signOf(id) {
       var p = profileOf(id);
       var handle = p && p.handle ? String(p.handle).trim() : "";
       if (handle && /^[A-Za-z0-9 ._\-]+$/.test(handle)) return handle;
-      var manual = String(state.settings && state.settings.taSign || "").trim();
-      return manual;
+      return String(signMap[String(id)] || "").trim();
     }
     function avatarOf(id) {
       var p = profileOf(id);
@@ -6547,16 +6616,10 @@
     var menuBtn = iconBtn("more", { label: "更多", onClick: function() {
       openMenu();
     } });
-    var hero = h("div", { class: "mp-ta-hero" }, [
-      h("div", { class: "mp-ta-hero__main" }, [
-        heroTitle,
-        h("div", { class: "mp-ta-hero__sub", text: "Playlist" })
-      ]),
-      h("div", { class: "mp-ta-hero__actions" }, [menuBtn])
-    ]);
+    menuBtn.classList.add("mp-ta-menu");
     var petals = null;
     var body = h("div", { class: "mp-ta-body" });
-    var view = h("div", { class: "mp-view mp-ta" }, [bgLayer, hero, body]);
+    var view = h("div", { class: "mp-view mp-ta" }, [bgLayer, menuBtn, body]);
     host.appendChild(view);
     function applyBg() {
       var id = currentChar;
@@ -6617,16 +6680,26 @@
         }
       });
       items.push({
-        label: "签名文字",
+        label: "本角色签名",
         icon: "more",
         hint: signOf(currentChar) || "未设置",
         onClick: function() {
+          var target = currentChar || charIds()[0] || "";
+          if (!target) {
+            if (ctx.toast) ctx.toast("先让 TA 有一个歌单或评论");
+            return;
+          }
           ctx.openPrompt({
-            title: "角色签名（英文）",
-            value: String(state.settings && state.settings.taSign || ""),
+            title: "本角色签名（英文）",
+            value: String(signMap[target] || ""),
             placeholder: "例如 nori / arthur",
-            onSubmit: function(text) {
-              ctx.updateSettings({ taSign: String(text || "").trim().slice(0, 16) });
+            onSubmit: async function(text) {
+              signMap[target] = String(text || "").trim().slice(0, 16);
+              try {
+                var api2 = typeof window !== "undefined" ? window.Roche : null;
+                if (api2 && api2.storage) await api2.storage.set("mp:taSign", signMap);
+              } catch (err) {
+              }
               renderAll();
             }
           });
@@ -6665,13 +6738,20 @@
           });
         }
       });
-      items.push({
-        label: state.settings.taMotion !== false ? "关掉花瓣动效" : "打开花瓣动效",
-        icon: "check",
-        onClick: function() {
-          ctx.updateSettings({ taMotion: !(state.settings.taMotion !== false) });
-          renderPetals();
-        }
+      [
+        { id: "snow", name: "动效 · 下雪" },
+        { id: "petal", name: "动效 · 花瓣" },
+        { id: "none", name: "动效 · 关闭" }
+      ].forEach(function(opt) {
+        items.push({
+          label: opt.name,
+          icon: motionType() === opt.id ? "check" : "more",
+          hint: motionType() === opt.id ? "当前" : "",
+          onClick: function() {
+            ctx.updateSettings({ taMotion: opt.id });
+            renderPetals();
+          }
+        });
       });
       if (currentChar && bgs[currentChar]) {
         items.push({
@@ -6724,13 +6804,19 @@
       });
       input.click();
     }
+    function motionType() {
+      var v = state.settings.taMotion;
+      if (v === "none" || v === "petal" || v === "snow") return v;
+      return v === false ? "none" : "snow";
+    }
     function renderPetals() {
       if (petals && petals.parentNode) petals.parentNode.removeChild(petals);
       petals = null;
-      var on = state.settings.taMotion !== false;
-      if (!on) return;
-      petals = h("div", { class: "mp-ta-petals" });
-      for (var i = 0; i < PETAL_COUNT; i++) {
+      var type = motionType();
+      if (type === "none") return;
+      petals = h("div", { class: "mp-ta-petals" + (type === "snow" ? " is-snow" : "") });
+      var count = type === "snow" ? 24 : PETAL_COUNT;
+      for (var i = 0; i < count; i++) {
         petals.appendChild(h("span", { class: "mp-ta-petal" }));
       }
       view.insertBefore(petals, body);
@@ -6821,12 +6907,7 @@
           cover.classList.remove("is-loading");
         });
       }
-      var curKey = state.player && state.player.track ? trackKey(state.player.track) : "";
-      var spinning = !!(curKey && item.key && curKey === item.key);
-      var art = h("button", { class: "mp-ta-review__art", type: "button", "aria-label": "播放这首" }, [
-        cover,
-        h("div", { class: "mp-ta-review__disc" + (spinning ? " is-spinning" : "") })
-      ]);
+      var art = h("button", { class: "mp-ta-review__art", type: "button", "aria-label": "播放这首" }, [cover]);
       art.addEventListener("click", function(e) {
         e.stopPropagation();
         if (ctx.playComment) ctx.playComment(item);
@@ -6989,7 +7070,8 @@
       ctx.reloadPlaylists ? ctx.reloadPlaylists() : Promise.resolve(),
       ctx.reloadComments ? ctx.reloadComments() : Promise.resolve(),
       loadCharacters(),
-      reloadBgs()
+      reloadBgs(),
+      loadSigns()
     ]).then(function() {
       renderAll();
     }).catch(function() {
@@ -7756,7 +7838,7 @@
     function applyHandFont(url) {
       if (!url) {
         if (loadedFontUrl) {
-          root.style.removeProperty("--mp-hand-font");
+          root.style.removeProperty("--mp-hand-custom");
           loadedFontUrl = "";
         }
         return;
@@ -7771,7 +7853,7 @@
             document.fonts.add(f);
           } catch (err) {
           }
-          root.style.setProperty("--mp-hand-font", '"mpHandCustom", ' + HAND_FALLBACK);
+          root.style.setProperty("--mp-hand-custom", '"mpHandCustom", ' + HAND_FALLBACK);
         }).catch(function() {
           loadedFontUrl = "";
         });
@@ -9144,14 +9226,49 @@
     var saved = await saveComment(roche, runtime.characterId, track, text);
     return saved.ok ? { ok: true, text: saved.text } : { ok: false, reason: saved.reason };
   }
-  async function doRecommend(roche, settings, keyword) {
+  async function doRecommend(roche, settings, arg) {
     var sources = createSources();
-    var seed = String(keyword || "").trim();
-    if (!seed) seed = "华语流行";
+    var raw = String(arg || "").trim();
+    var name = "";
+    var keyword = raw;
+    if (raw.indexOf("|") !== -1) {
+      var parts = raw.split("|");
+      name = parts[0].trim();
+      keyword = parts.slice(1).join("|").trim();
+    }
+    var seeds = [];
+    if (keyword) {
+      seeds = [keyword];
+    } else {
+      var pool = ["夜晚", "通勤", "雨天", "独处", "周末", "睡前", "城市", "旧时光"];
+      var a = pool[Math.floor(Math.random() * pool.length)];
+      var b = pool[Math.floor(Math.random() * pool.length)];
+      seeds = a === b ? [a] : [a, b];
+    }
+    var want = Math.max(6, Math.min(50, Number(settings && settings.recCount) || 20));
+    var seen = /* @__PURE__ */ Object.create(null);
+    var artistCount = /* @__PURE__ */ Object.create(null);
+    var picked = [];
     try {
-      var found = await sources.search(seed, settings, { limit: 8 });
-      if (!found.tracks.length) return { ok: false, reason: "没找到可推荐的歌" };
-      var made = await createCharPlaylist(roche, runtime.characterId, RECOMMEND_PLAYLIST_NAME, found.tracks.slice(0, 6));
+      for (var i = 0; i < seeds.length && picked.length < want; i++) {
+        var found = await sources.search(seeds[i], settings, { limit: want });
+        (found.tracks || []).forEach(function(t) {
+          if (picked.length >= want || !t) return;
+          var key = trackKey(t);
+          if (!key || seen[key]) return;
+          if (Number(t.payplay) > 0) return;
+          var artist = String(t.artist || "").split("/")[0].trim() || "未知";
+          if ((artistCount[artist] || 0) >= 2) return;
+          seen[key] = true;
+          artistCount[artist] = (artistCount[artist] || 0) + 1;
+          picked.push(t);
+        });
+      }
+      if (!picked.length) return { ok: false, reason: "没找到可推荐的歌" };
+      var date = /* @__PURE__ */ new Date();
+      var suffix = date.getMonth() + 1 + "/" + date.getDate();
+      var title = name || RECOMMEND_PLAYLIST_NAME + " · " + suffix;
+      var made = await createCharPlaylist(roche, runtime.characterId, title, picked);
       return made.ok ? { ok: true, playlist: made.playlist, added: made.added } : { ok: false, reason: made.reason };
     } catch (err) {
       return { ok: false, reason: String(err && err.message || err) };
@@ -11056,7 +11173,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.43.0" });
+    app = await createApp({ container, roche, version: "0.44.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11072,7 +11189,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.43.0",
+    version: "0.44.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
