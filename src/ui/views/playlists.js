@@ -1,9 +1,9 @@
-/** 歌单列表 */
+/** 歌单列表：与推荐页同一套杂志语言（栏目头 + 竖幅封面书架） */
 
 import { h, clear } from '../dom.js';
 import { icon } from '../icons.js';
-import { iconBtn, pageTitle, coverNode, emptyHint } from '../components.js';
-import { masthead, todayText } from '../masthead.js';
+import { iconBtn, coverNode, emptyHint, shelfRail } from '../components.js';
+import { masthead, todayText, sectionHead } from '../masthead.js';
 import { fmtSummary } from '../../core/format.js';
 import { playlistDuration } from '../../core/playlist.js';
 import { trackKey } from '../../core/track.js';
@@ -49,32 +49,26 @@ export function mount(host, ctx) {
       h('div', { class: 'mp-plfeat__main' }, [
         h('div', { class: 'mp-plfeat__name', text: p.name }),
         h('div', { class: 'mp-plfeat__sub', text: fmtSummary(p.tracks.length, playlistDuration(p)) })
-      ])
+      ]),
+      h('span', { class: 'mp-plfeat__arrow', html: icon('play') })
     ]);
     row.addEventListener('click', function () { openPlaylist(p); });
     return row;
   }
 
-  /** 歌单卡：两列网格，封面 1:1 */
-  function plCard(p) {
-    var first = p.tracks[0];
-    var cover = coverNode(first ? ctx.coverOf(first) : '', 'mp-plcard__cover');
-    if (first) cover.dataset.cover = trackKey(first);
-
-    var card = h('button', { class: 'mp-plcard', type: 'button' }, [
-      cover,
-      h('div', { class: 'mp-plcard__name', text: p.name }),
-      h('div', { class: 'mp-plcard__sub', text: fmtSummary(p.tracks.length, playlistDuration(p)) })
-    ]);
-    card.addEventListener('click', function () { openPlaylist(p); });
-    return card;
-  }
-
-  /** 横滑竖条：卡片同尺寸，靠 margin-top 交替形成错落 */
-  function rail(list) {
-    var box = h('div', { class: 'mp-plrail' });
-    list.forEach(function (p) { box.appendChild(plCard(p)); });
-    return box;
+  /** 一组歌单：栏目头 + 书架 */
+  function group(title, list) {
+    var items = list.map(function (p) {
+      var first = p.tracks[0];
+      return {
+        name: p.name,
+        sub: p.tracks.length + ' 首',
+        coverUrl: first ? ctx.coverOf(first) : '',
+        coverKey: first ? trackKey(first) : '',
+        onClick: function () { openPlaylist(p); }
+      };
+    });
+    return h('div', { class: 'mp-plgroup' }, [sectionHead(title), shelfRail(items)]);
   }
 
   function renderList() {
@@ -92,15 +86,8 @@ export function mount(host, ctx) {
     var mine = state.playlists.filter(function (p) { return p.owner !== 'char'; });
     var theirs = state.playlists.filter(function (p) { return p.owner === 'char'; });
 
-    if (mine.length) {
-      listBox.appendChild(h('div', { class: 'mp-plpage__head', text: '我的歌单' }));
-      listBox.appendChild(rail(mine));
-    }
-
-    if (theirs.length) {
-      listBox.appendChild(h('div', { class: 'mp-plpage__head', text: 'TA 的歌单' }));
-      listBox.appendChild(rail(theirs));
-    }
+    if (mine.length) listBox.appendChild(group('我的歌单', mine));
+    if (theirs.length) listBox.appendChild(group('TA 的歌单', theirs));
 
     if (!mine.length && !theirs.length) {
       listBox.appendChild(emptyHint(

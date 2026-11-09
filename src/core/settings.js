@@ -86,6 +86,16 @@ export function modeToQueueFlags(mode) {
   return { repeat: REPEAT.OFF, shuffle: false };
 }
 
+/**
+ * 界面风格：与日夜模式正交。
+ * mag = 杂志风（宋体标题、直角封面、细分隔线、竖幅封面错落）
+ * classic = 经典（无衬线、圆角卡片、方形封面、胶囊按钮）
+ */
+export var UI_SKINS = [
+  { id: 'mag', name: '杂志风' },
+  { id: 'classic', name: '经典' }
+];
+
 export var ACCENTS = [
   { id: 'red', name: '赤红', color: '#e14b4b' },
   { id: 'blue', name: '雾蓝', color: '#3b82f6' },
@@ -105,6 +115,8 @@ export function defaultSettings() {
     repeat: REPEAT.OFF,
     shuffle: false,
     theme: 'auto',
+    /** 界面风格：mag = 杂志风；classic = 经典 */
+    uiTheme: 'mag',
     accent: 'red',
     // 空 = 用预设色块；有值 = 用户自选色（优先级更高）
     accentColor: '',
@@ -197,6 +209,7 @@ export function normalizeSettings(raw) {
     repeat: modeToQueueFlags(resolvePlayMode(s)).repeat,
     shuffle: modeToQueueFlags(resolvePlayMode(s)).shuffle,
     theme: pickId(THEMES, s.theme, def.theme),
+    uiTheme: pickId(UI_SKINS, s.uiTheme, def.uiTheme),
     // custom = 用户自选颜色
     accent: s.accent === 'custom' ? 'custom' : pickId(ACCENTS, s.accent, def.accent),
     accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || '')) ? String(s.accentColor) : '',

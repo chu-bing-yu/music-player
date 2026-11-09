@@ -3,7 +3,7 @@
 import { h, clear } from '../dom.js';
 import { pageTitle } from '../components.js';
 import { masthead, todayText } from '../masthead.js';
-import { THEMES, ACCENTS, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
+import { THEMES, ACCENTS, UI_SKINS, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
 import { qrKey, qrCreate, qrCheck, account as neteaseAccount, isReady as neteaseReady } from '../../services/netease.js';
 
 function field(label, node, desc) {
@@ -171,6 +171,20 @@ export function mount(host, ctx) {
       themeRow.appendChild(btn);
     });
 
+    var skinRow = h('div', { class: 'mp-theme-row' });
+    UI_SKINS.forEach(function (s2) {
+      var btn = h('button', {
+        class: 'mp-theme-btn' + (s.uiTheme === s2.id ? ' is-active' : ''),
+        type: 'button',
+        text: s2.name
+      });
+      btn.addEventListener('click', function () {
+        ctx.updateSettings({ uiTheme: s2.id });
+        render();
+      });
+      skinRow.appendChild(btn);
+    });
+
     var dotRow = h('div', { class: 'mp-dots' });
     ACCENTS.forEach(function (a) {
       var dot = h('button', {
@@ -206,6 +220,7 @@ export function mount(host, ctx) {
 
     var appearanceGroup = h('div', { class: 'mp-group' }, [
       h('div', { class: 'mp-group__title', text: '外观' }),
+      field('界面风格', skinRow, '杂志风：宋体标题 + 直角封面 + 细线；经典：圆角卡片 + 方形封面'),
       field('主题', themeRow, '跟随系统 / 白天白色 / 夜间深色'),
       // TA 页花瓣开关在 TA 页右上角 ⋯ 里，设置页不重复
       field('手写字体', (function () {

@@ -106,6 +106,35 @@ export function songRow(opts) {
   return row;
 }
 
+/**
+ * 杂志书架：竖幅封面横滑条。
+ * 封面高度按 3 步循环（高 / 矮 / 最高），底边对齐，看起来像书架上高低不一的书脊。
+ * 名字压在封面底部的渐变压字上，这样整条的底边是齐的，错落感只出现在上沿。
+ *
+ * @param {{name:string, sub?:string, coverUrl?:string, coverKey?:string, onClick:Function}[]} items
+ */
+export function shelfRail(items) {
+  var rail = h('div', { class: 'mp-shelf' });
+
+  items.forEach(function (item) {
+    var art = h('div', { class: 'mp-shelf__art' });
+    fillCover(art, item.coverUrl || '');
+    if (item.coverKey) art.dataset.cover = item.coverKey;
+
+    var card = h('button', { class: 'mp-shelf__card', type: 'button' }, [
+      art,
+      h('div', { class: 'mp-shelf__label' }, [
+        h('div', { class: 'mp-shelf__name', text: item.name || '' }),
+        item.sub ? h('div', { class: 'mp-shelf__sub', text: item.sub }) : null
+      ].filter(Boolean))
+    ]);
+    card.addEventListener('click', function () { item.onClick(); });
+    rail.appendChild(card);
+  });
+
+  return rail;
+}
+
 export function emptyHint(title, sub) {
   return h('div', { class: 'mp-hint' }, [
     h('div', { text: title }),

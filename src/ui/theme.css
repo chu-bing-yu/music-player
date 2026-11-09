@@ -6,6 +6,8 @@
   --mp-soft-2: #e9eaee;
   --mp-line: #ededf0;
   --mp-line-strong: #dfe0e4;
+  /* 杂志风的栏线：比 --mp-line 更淡，只用来分栏，不做卡片边框 */
+  --mp-hair: rgba(0, 0, 0, 0.09);
   --mp-ink: #1b1c1f;
   --mp-ink-2: #4f5259;
   --mp-muted: #9299a3;
@@ -50,6 +52,7 @@
   --mp-soft-2: #2b2e35;
   --mp-line: #262930;
   --mp-line-strong: #34383f;
+  --mp-hair: rgba(255, 255, 255, 0.1);
   --mp-ink: #f1f2f4;
   --mp-ink-2: #c3c7cd;
   --mp-muted: #868c96;

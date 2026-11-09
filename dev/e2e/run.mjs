@@ -182,25 +182,25 @@ try {
   check('底栏是四个按钮', await evaluate('document.querySelectorAll(".mp-dock__btn").length') === 4);
   check('默认停在推荐页', await evaluate('!!document.querySelector(".mp-mag__feature")'));
   check('底栏首项是推荐', await evaluate('(document.querySelectorAll(".mp-dock__btn")[0] || {}).textContent.indexOf("推荐") !== -1'));
-  check('headers 里不再有 × 按钮', await evaluate('!document.querySelector(".mp-header .mp-icon-btn[aria-label=\\"退出 App\\"]")'));
-  await evaluate('window.__t.q(".mp-mag__greet").click()');
+  check('headers 里不再有 × 按钮', await evaluate('!document.querySelector(".mp-mast .mp-icon-btn[aria-label=\\"退出 App\\"]")'));
+  await evaluate('window.__t.q(".mp-mast__text").click()');
   await sleep(200);
   // 一级页左上角：悬浮窗开 → 最小化；关 → 退出。两种都算通过
   check('点击标题会退出或最小化', await evaluate('/closeApp|minimizeApp/.test(String((document.getElementById("toast")||{}).textContent||""))'));
 
   // 从推荐页进搜索页
-  await evaluate('window.__t.q(".mp-mag__acts .mp-icon-btn[aria-label=\\"搜索\\"]").click()');
+  await evaluate('window.__t.q(".mp-mast__acts .mp-icon-btn[aria-label=\\"搜索\\"]").click()');
   await waitFor('!!document.querySelector(".mp-search__input")');
   check('推荐页能进搜索页', await evaluate('!!document.querySelector(".mp-search__input")'));
-  check('搜索页有返回推荐', await evaluate('!!document.querySelector(".mp-header .mp-icon-btn[aria-label=\\"返回推荐\\"]")'));
+  check('搜索页有返回推荐', await evaluate('!!document.querySelector(".mp-mast .mp-icon-btn[aria-label=\\"返回推荐\\"]")'));
   check('搜索页有推荐词', await evaluate('document.querySelectorAll(".mp-rec-chip").length >= 6'));
   check('搜索页不再有平台按钮', await evaluate('document.querySelectorAll(".mp-chip").length === 0'));
-  check('搜索页没有最小化按钮', await evaluate('!document.querySelector(".mp-header .mp-icon-btn[aria-label=\\"最小化\\"]")'));
+  check('搜索页没有最小化按钮', await evaluate('!document.querySelector(".mp-mast .mp-icon-btn[aria-label=\\"最小化\\"]")'));
   check('未配置网易云时不显示榜单块', await evaluate('!document.querySelector(".mp-rank")'));
 
   // 二级页返回：搜索 → 推荐（上一版这里因为路由白名单失效）
   await evaluate(`(() => {
-    const btn = Array.from(document.querySelectorAll('.mp-header .mp-icon-btn'))
+    const btn = Array.from(document.querySelectorAll('.mp-mast .mp-icon-btn'))
       .find((b) => (b.getAttribute('aria-label') || '').indexOf('返回推荐') !== -1);
     if (btn) btn.click();
     return !!btn;
@@ -216,7 +216,7 @@ try {
   // TA 页：左上角不再有返回
   await evaluate('window.__t.clickByText(".mp-dock__btn", "TA")');
   await sleep(300);
-  check('TA 页没有返回按钮', await evaluate('!document.querySelector(".mp-header .mp-icon-btn[aria-label=\\"返回\\"]")'));
+  check('TA 页没有返回按钮', await evaluate('!document.querySelector(".mp-mast .mp-icon-btn[aria-label=\\"返回\\"]")'));
   check('TA 页能渲染', await evaluate('!!document.querySelector(".mp-ta-body")'));
   check('TA 页有背景层', await evaluate('!!document.querySelector(".mp-ta-bg")'));
   check('TA 页默认有花瓣', await evaluate('document.querySelectorAll(".mp-ta-petal").length > 0'));
@@ -245,7 +245,7 @@ try {
 
   // 回到搜索页继续后面的用例
   await evaluate(`(() => {
-    const btn = Array.from(document.querySelectorAll('.mp-header .mp-icon-btn'))
+    const btn = Array.from(document.querySelectorAll('.mp-mast .mp-icon-btn'))
       .find((b) => (b.getAttribute('aria-label') || '').indexOf('搜索') !== -1);
     if (btn) btn.click();
     return !!btn;
@@ -258,7 +258,7 @@ try {
   check('搜索返回结果', gotResults);
 
   // 多选加入播放列表
-  await evaluate('document.querySelector(".mp-header .mp-icon-btn[aria-label=\\"多选\\"]").click()');
+  await evaluate('document.querySelector(".mp-mast .mp-icon-btn[aria-label=\\"多选\\"]").click()');
   await sleep(250);
   check('多选模式出现勾选框', await evaluate('document.querySelectorAll(".mp-row__check").length > 0'));
   await evaluate('document.querySelectorAll(".mp-row")[0].click()');
@@ -291,14 +291,14 @@ try {
   // 收藏后到「歌单 → 我的收藏」里看
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
   await sleep(200);
-  await evaluate('Array.from(document.querySelectorAll(".mp-pl")).find(function (r) { return r.textContent.indexOf("我的收藏") !== -1; }).click()');
+  await evaluate('document.querySelector(".mp-plfeat").click()');
   const favCount = await waitFor('document.querySelectorAll(".mp-row").length === 1');
   check('收藏后我的收藏有 1 首', favCount);
 
   // 新建歌单
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
   await sleep(150);
-  await evaluate('window.__t.click(".mp-header .mp-icon-btn[aria-label=\\"新建歌单\\"]")');
+  await evaluate('window.__t.click(".mp-mast .mp-icon-btn[aria-label=\\"新建歌单\\"]")');
   await waitFor('!!document.querySelector(".mp-sheet .mp-modal__input")');
   await evaluate(`(() => {
     const input = document.querySelector('.mp-sheet .mp-modal__input');
@@ -306,12 +306,12 @@ try {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     return true;
   })()`);
-  const playlistCreated = await waitFor('Array.from(document.querySelectorAll(".mp-pl__name")).some(function (n) { return n.textContent === "夜跑"; })');
+  const playlistCreated = await waitFor('Array.from(document.querySelectorAll(".mp-shelf__name")).some(function (n) { return n.textContent === "夜跑"; })');
   check('新建歌单出现在列表里', playlistCreated);
-  check('收藏固定在最上面', await evaluate('document.querySelector(".mp-pl__name").textContent === "我的收藏"'));
+  check('收藏固定在最上面', await evaluate('document.querySelector(".mp-plfeat__name").textContent === "我的收藏"'));
 
   // 歌单详情（第一项是「我的收藏」，所以点新建的那个）
-  await evaluate('Array.from(document.querySelectorAll(".mp-pl")).find(function (r) { return r.textContent.indexOf("夜跑") !== -1; }).click()');
+  await evaluate('Array.from(document.querySelectorAll(".mp-shelf__card")).find(function (r) { return r.textContent.indexOf("夜跑") !== -1; }).click()');
   const detail = await waitFor('!!document.querySelector(".mp-actions .mp-btn")');
   check('进入歌单详情', detail);
 
@@ -319,7 +319,7 @@ try {
   await evaluate('window.__t.clickByText(".mp-dock__btn", "推荐")');
   await waitFor('!!document.querySelector(".mp-mag__feature")', 5000);
   await evaluate(`(() => {
-    const btn = Array.from(document.querySelectorAll('.mp-header .mp-icon-btn'))
+    const btn = Array.from(document.querySelectorAll('.mp-mast .mp-icon-btn'))
       .find((b) => (b.getAttribute('aria-label') || '').indexOf('搜索') !== -1);
     if (btn) btn.click();
     return !!btn;
@@ -395,6 +395,46 @@ try {
   await evaluate('document.querySelectorAll(".mp-dot")[1].click()');
   await sleep(200);
   check('换主色调', await evaluate('document.querySelector(".mp-root").dataset.accent === "blue"'));
+
+  // 界面风格：杂志风 / 经典（v0.51.0 双主题）
+  check('刊头没有竖线', await evaluate('!document.querySelector(".mp-mast__mark")'));
+  check('默认是杂志风', await evaluate('document.querySelector(".mp-root").dataset.ui === "mag"'));
+  await evaluate('window.__t.clickByText(".mp-theme-btn", "经典")');
+  await sleep(250);
+  check('切到经典风格', await evaluate('document.querySelector(".mp-root").dataset.ui === "classic"'));
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
+  await sleep(300);
+  check('经典模式封面是等大方形', await evaluate(`(function () {
+    const rects = Array.from(document.querySelectorAll('.mp-shelf__art')).map((n) => n.getBoundingClientRect());
+    if (!rects.length) return false;
+    return rects.every((r) => Math.abs(r.width - r.height) < 2);
+  })()`));
+
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "设置")');
+  await sleep(250);
+  await evaluate('window.__t.clickByText(".mp-theme-btn", "杂志风")');
+  await sleep(250);
+  check('切回杂志风', await evaluate('document.querySelector(".mp-root").dataset.ui === "mag"'));
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
+  await sleep(300);
+  check('杂志风封面是竖幅且高度错落', await evaluate(`(function () {
+    const rail = document.querySelector('.mp-shelf');
+    const first = rail && rail.querySelector('.mp-shelf__card');
+    if (!first) return false;
+    // 只有一张歌单时补两张同结构卡片来量 nth-child 的高度节奏，量完移除
+    const probe = [first.cloneNode(true), first.cloneNode(true)];
+    probe.forEach((n) => rail.appendChild(n));
+    const rects = probe.map((n) => n.querySelector('.mp-shelf__art').getBoundingClientRect())
+      .concat([first.querySelector('.mp-shelf__art').getBoundingClientRect()]);
+    probe.forEach((n) => n.remove());
+    const portrait = rects.every((r) => r.height > r.width * 1.1);
+    const heights = rects.map((r) => Math.round(r.height));
+    return portrait && Math.max.apply(null, heights) !== Math.min.apply(null, heights);
+  })()`));
+  // 后面的用例都在设置页里读文案，回到设置页
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "设置")');
+  await sleep(300);
+  check('回到设置页', await evaluate('!!document.querySelector(".mp-group")'));
 
   // 一起听开关
   check('主聊天默认注入音乐上下文', await evaluate('(function () { var p = window.__registeredPlugin; var s = p.chat.contextProvider({ conversationId: "c1" }); return typeof s === "string" && s.indexOf("音乐插件") !== -1; })()'));

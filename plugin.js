@@ -1,4 +1,4 @@
-/* music-player v0.50.0 | built 2026-11-09T09:13:38.679Z */
+/* music-player v0.51.0 | built 2026-11-09T09:40:36.715Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -449,6 +449,10 @@
     if (mode === "loop") return { repeat: REPEAT.ALL, shuffle: false };
     return { repeat: REPEAT.OFF, shuffle: false };
   }
+  var UI_SKINS = [
+    { id: "mag", name: "杂志风" },
+    { id: "classic", name: "经典" }
+  ];
   var ACCENTS = [
     { id: "red", name: "赤红", color: "#e14b4b" },
     { id: "blue", name: "雾蓝", color: "#3b82f6" },
@@ -467,6 +471,8 @@
       repeat: REPEAT.OFF,
       shuffle: false,
       theme: "auto",
+      /** 界面风格：mag = 杂志风；classic = 经典 */
+      uiTheme: "mag",
       accent: "red",
       // 空 = 用预设色块；有值 = 用户自选色（优先级更高）
       accentColor: "",
@@ -552,6 +558,7 @@
       repeat: modeToQueueFlags(resolvePlayMode(s)).repeat,
       shuffle: modeToQueueFlags(resolvePlayMode(s)).shuffle,
       theme: pickId(THEMES, s.theme, def.theme),
+      uiTheme: pickId(UI_SKINS, s.uiTheme, def.uiTheme),
       // custom = 用户自选颜色
       accent: s.accent === "custom" ? "custom" : pickId(ACCENTS, s.accent, def.accent),
       accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || "")) ? String(s.accentColor) : "",
@@ -3185,7 +3192,7 @@
   }
 
   // src/ui/theme.css
-  var theme_default = '/* 主题变量：只在插件根容器内生效 */\n.mp-root {\n  --mp-bg: #ffffff;\n  --mp-bg-2: #f7f7f9;\n  --mp-soft: #f2f3f5;\n  --mp-soft-2: #e9eaee;\n  --mp-line: #ededf0;\n  --mp-line-strong: #dfe0e4;\n  --mp-ink: #1b1c1f;\n  --mp-ink-2: #4f5259;\n  --mp-muted: #9299a3;\n  --mp-accent: #e14b4b;\n  --mp-accent-soft: rgba(225, 75, 75, 0.1);\n  --mp-on-accent: #ffffff;\n\n  --mp-r-lg: 16px;\n  --mp-r-md: 10px;\n  --mp-r-sm: 8px;\n  --mp-r-full: 999px;\n\n  --mp-shadow: 0 10px 30px rgba(17, 18, 20, 0.08);\n  --mp-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;\n}\n\n/* 主色调：与日夜模式正交，放在 dark 之后保证优先级 */\n.mp-root[data-accent="blue"] {\n  --mp-accent: #3b82f6;\n  --mp-accent-soft: rgba(59, 130, 246, 0.14);\n}\n\n.mp-root[data-accent="green"] {\n  --mp-accent: #2f9e44;\n  --mp-accent-soft: rgba(47, 158, 68, 0.14);\n}\n\n.mp-root[data-accent="purple"] {\n  --mp-accent: #8b5cf6;\n  --mp-accent-soft: rgba(139, 92, 246, 0.14);\n}\n\n.mp-root[data-accent="amber"] {\n  --mp-accent: #e8850c;\n  --mp-accent-soft: rgba(232, 133, 12, 0.16);\n}\n\n.mp-root[data-theme="dark"] {\n  --mp-bg: #141518;\n  --mp-bg-2: #1a1c20;\n  --mp-soft: #22242a;\n  --mp-soft-2: #2b2e35;\n  --mp-line: #262930;\n  --mp-line-strong: #34383f;\n  --mp-ink: #f1f2f4;\n  --mp-ink-2: #c3c7cd;\n  --mp-muted: #868c96;\n  --mp-accent: #f0645f;\n  --mp-accent-soft: rgba(240, 100, 95, 0.16);\n  --mp-on-accent: #ffffff;\n  --mp-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);\n}\n\n/* 深色下的主色调：提亮一点，避免压得太沉 */\n.mp-root[data-theme="dark"][data-accent="blue"] { --mp-accent: #6ba4ff; }\n.mp-root[data-theme="dark"][data-accent="green"] { --mp-accent: #4ec46a; }\n.mp-root[data-theme="dark"][data-accent="purple"] { --mp-accent: #a78bfa; }\n.mp-root[data-theme="dark"][data-accent="amber"] { --mp-accent: #ffb347; }\n.mp-root[data-theme="dark"][data-accent="red"] { --mp-accent: #f0645f; }\n';
+  var theme_default = '/* 主题变量：只在插件根容器内生效 */\n.mp-root {\n  --mp-bg: #ffffff;\n  --mp-bg-2: #f7f7f9;\n  --mp-soft: #f2f3f5;\n  --mp-soft-2: #e9eaee;\n  --mp-line: #ededf0;\n  --mp-line-strong: #dfe0e4;\n  /* 杂志风的栏线：比 --mp-line 更淡，只用来分栏，不做卡片边框 */\n  --mp-hair: rgba(0, 0, 0, 0.09);\n  --mp-ink: #1b1c1f;\n  --mp-ink-2: #4f5259;\n  --mp-muted: #9299a3;\n  --mp-accent: #e14b4b;\n  --mp-accent-soft: rgba(225, 75, 75, 0.1);\n  --mp-on-accent: #ffffff;\n\n  --mp-r-lg: 16px;\n  --mp-r-md: 10px;\n  --mp-r-sm: 8px;\n  --mp-r-full: 999px;\n\n  --mp-shadow: 0 10px 30px rgba(17, 18, 20, 0.08);\n  --mp-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;\n}\n\n/* 主色调：与日夜模式正交，放在 dark 之后保证优先级 */\n.mp-root[data-accent="blue"] {\n  --mp-accent: #3b82f6;\n  --mp-accent-soft: rgba(59, 130, 246, 0.14);\n}\n\n.mp-root[data-accent="green"] {\n  --mp-accent: #2f9e44;\n  --mp-accent-soft: rgba(47, 158, 68, 0.14);\n}\n\n.mp-root[data-accent="purple"] {\n  --mp-accent: #8b5cf6;\n  --mp-accent-soft: rgba(139, 92, 246, 0.14);\n}\n\n.mp-root[data-accent="amber"] {\n  --mp-accent: #e8850c;\n  --mp-accent-soft: rgba(232, 133, 12, 0.16);\n}\n\n.mp-root[data-theme="dark"] {\n  --mp-bg: #141518;\n  --mp-bg-2: #1a1c20;\n  --mp-soft: #22242a;\n  --mp-soft-2: #2b2e35;\n  --mp-line: #262930;\n  --mp-line-strong: #34383f;\n  --mp-hair: rgba(255, 255, 255, 0.1);\n  --mp-ink: #f1f2f4;\n  --mp-ink-2: #c3c7cd;\n  --mp-muted: #868c96;\n  --mp-accent: #f0645f;\n  --mp-accent-soft: rgba(240, 100, 95, 0.16);\n  --mp-on-accent: #ffffff;\n  --mp-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);\n}\n\n/* 深色下的主色调：提亮一点，避免压得太沉 */\n.mp-root[data-theme="dark"][data-accent="blue"] { --mp-accent: #6ba4ff; }\n.mp-root[data-theme="dark"][data-accent="green"] { --mp-accent: #4ec46a; }\n.mp-root[data-theme="dark"][data-accent="purple"] { --mp-accent: #a78bfa; }\n.mp-root[data-theme="dark"][data-accent="amber"] { --mp-accent: #ffb347; }\n.mp-root[data-theme="dark"][data-accent="red"] { --mp-accent: #f0645f; }\n';
 
   // src/ui/base.css
   var base_default = '/* 基础布局：全页无外壳，播放条与底栏固定在页面底部 */\n\n.mp-root,\n.mp-root * {\n  box-sizing: border-box;\n}\n\n/* 全屏：背景铺到屏幕边缘，再把安全区内边距加回自己的 header / 底栏 */\n.mp-root {\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  width: calc(100% + env(safe-area-inset-left) + env(safe-area-inset-right));\n  height: calc(100% + env(safe-area-inset-top) + env(safe-area-inset-bottom));\n  margin: calc(0px - env(safe-area-inset-top)) calc(0px - env(safe-area-inset-right)) calc(0px - env(safe-area-inset-bottom)) calc(0px - env(safe-area-inset-left));\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--mp-bg);\n  color: var(--mp-ink);\n  font-family: var(--mp-font);\n  font-size: 14px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\n.mp-root button {\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.mp-root button:disabled {\n  opacity: 0.45;\n  cursor: default;\n}\n\n/* ---------- 页面骨架 ---------- */\n\n.mp-view-host {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-view {\n  flex: 1 1 auto;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.mp-header {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));\n}\n\n.mp-header__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 21px;\n  font-weight: 700;\n  letter-spacing: -0.2px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-header__sub {\n  font-size: 12px;\n  color: var(--mp-muted);\n  font-weight: 400;\n}\n\n.mp-body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  -webkit-overflow-scrolling: touch;\n  padding-bottom: 12px;\n}\n\n.mp-icon-btn {\n  flex: 0 0 auto;\n  width: 34px;\n  height: 34px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink-2);\n  padding: 0;\n}\n\n.mp-icon-btn:active {\n  background: var(--mp-soft);\n}\n\n.mp-icon-btn svg {\n  width: 21px;\n  height: 21px;\n}\n\n.mp-icon-btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 歌曲行 ---------- */\n\n.mp-row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  border: 0;\n  background: transparent;\n  width: 100%;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-row:active {\n  background: var(--mp-soft);\n}\n\n.mp-row__cover {\n  flex: 0 0 auto;\n  width: 44px;\n  height: 44px;\n  border-radius: var(--mp-r-sm);\n  object-fit: cover;\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  color: var(--mp-muted);\n  overflow: hidden;\n}\n\n.mp-row__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-row__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-row__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-row__name {\n  font-size: 14.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row.is-current .mp-row__name {\n  color: var(--mp-accent);\n}\n\n.mp-row.is-selected {\n  background: var(--mp-accent-soft);\n}\n\n.mp-row__check {\n  flex: 0 0 auto;\n  width: 20px;\n  height: 20px;\n  border-radius: 50%;\n  border: 1.5px solid var(--mp-line-strong);\n  display: grid;\n  place-items: center;\n  color: #fff;\n}\n\n.mp-row__check.is-on {\n  border-color: var(--mp-accent);\n  background: var(--mp-accent);\n}\n\n.mp-row__check svg {\n  width: 13px;\n  height: 13px;\n}\n\n.mp-select-bar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 6px 16px 8px;\n}\n\n.mp-select-bar__count {\n  flex: 1 1 auto;\n  font-size: 12.5px;\n  color: var(--mp-muted);\n}\n\n.mp-row__sub {\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-row__tag {\n  display: inline-block;\n  margin-right: 5px;\n  padding: 0 5px;\n  border-radius: 4px;\n  background: var(--mp-soft);\n  color: var(--mp-muted);\n  font-size: 10px;\n  line-height: 15px;\n  vertical-align: 1px;\n}\n\n.mp-row__btn {\n  flex: 0 0 auto;\n  width: 32px;\n  height: 32px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-muted);\n}\n\n.mp-row__btn:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-row__btn svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-row__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 迷你播放条 ---------- */\n\n.mp-player {\n  position: relative;\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 14px 10px;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n}\n\n.mp-player__bar {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  background: var(--mp-line);\n  cursor: pointer;\n}\n\n.mp-player__bar i {\n  display: block;\n  height: 100%;\n  width: 0;\n  background: var(--mp-accent);\n}\n\n.mp-player__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-soft-2);\n  display: grid;\n  place-items: center;\n  overflow: hidden;\n  color: var(--mp-muted);\n}\n\n.mp-player__cover svg {\n  width: 19px;\n  height: 19px;\n}\n\n.mp-player__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-player__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-player__hit {\n  display: block;\n  border: 0;\n  background: transparent;\n  padding: 0;\n  text-align: left;\n  color: inherit;\n}\n\n.mp-player__name {\n  font-size: 13.5px;\n  font-weight: 500;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__sub {\n  font-size: 11px;\n  color: var(--mp-muted);\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-player__play {\n  flex: 0 0 auto;\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: var(--mp-r-full);\n  background: transparent;\n  color: var(--mp-ink);\n}\n\n.mp-player__play svg {\n  width: 26px;\n  height: 26px;\n}\n\n/* ---------- 悬浮歌词 ---------- */\n\n.mp-float-lyric {\n  flex: 0 0 auto;\n  display: none;\n  margin: 0 10px 6px;\n  padding: 5px 12px;\n  border-radius: var(--mp-r-sm);\n  background: var(--mp-bg-2);\n  font-size: 11.5px;\n  line-height: 1.5;\n  color: var(--mp-ink-2);\n  text-align: center;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.mp-float-lyric.is-fresh {\n  animation: mp-lyric-in 0.28s ease-out;\n}\n\n@keyframes mp-lyric-in {\n  from { opacity: 0.25; transform: translateY(3px); }\n  to { opacity: 1; transform: none; }\n}\n\n/* 键盘弹出时把播放条、悬浮歌词、底栏全部让出去，屏幕留给搜索结果 */\n.mp-root.is-keyboard .mp-player,\n.mp-root.is-keyboard .mp-float-lyric,\n.mp-root.is-keyboard .mp-dock {\n  display: none !important;\n}\n\n/* ---------- 四按钮底栏 ---------- */\n\n.mp-dock {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: stretch;\n  border-top: 1px solid var(--mp-line);\n  background: var(--mp-bg);\n  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));\n}\n\n.mp-dock__btn {\n  flex: 1 1 0;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 2px;\n  padding: 5px 0 3px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-muted);\n  font-size: 10.5px;\n  line-height: 1.2;\n}\n\n.mp-dock__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-dock__btn.is-active {\n  color: var(--mp-accent);\n}\n\n/* ---------- 底部弹层（挂在插件根内） ---------- */\n\n.mp-mask {\n  position: absolute;\n  inset: 0;\n  z-index: 40;\n  display: flex;\n  align-items: flex-end;\n  background: rgba(0, 0, 0, 0.35);\n}\n\n.mp-sheet {\n  width: 100%;\n  max-height: 74%;\n  display: flex;\n  flex-direction: column;\n  background: var(--mp-bg);\n  border-radius: var(--mp-r-lg) var(--mp-r-lg) 0 0;\n  padding-bottom: calc(6px + env(safe-area-inset-bottom));\n  animation: mp-rise 0.18s ease-out;\n}\n\n@keyframes mp-rise {\n  from { transform: translateY(12px); opacity: 0.6; }\n  to { transform: translateY(0); opacity: 1; }\n}\n\n.mp-sheet__head {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 8px;\n}\n\n.mp-sheet__title {\n  flex: 1 1 auto;\n  min-width: 0;\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__body {\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n  padding-bottom: 6px;\n}\n\n.mp-sheet__item {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 12px 16px;\n  border: 0;\n  background: transparent;\n  color: var(--mp-ink);\n  font-size: 14.5px;\n  text-align: left;\n}\n\n.mp-sheet__item:active {\n  background: var(--mp-soft);\n}\n\n.mp-sheet__item svg {\n  width: 19px;\n  height: 19px;\n  color: var(--mp-muted);\n}\n\n.mp-editor {\n  display: block;\n  width: calc(100% - 32px);\n  margin: 4px 16px 10px;\n  min-height: 150px;\n  padding: 12px;\n  border: 1px solid var(--mp-line-strong);\n  border-radius: var(--mp-r-md);\n  background: var(--mp-bg-2);\n  color: var(--mp-ink);\n  font-family: inherit;\n  font-size: 13px;\n  line-height: 1.65;\n  resize: vertical;\n  outline: none;\n}\n\n.mp-editor:focus {\n  border-color: var(--mp-accent);\n}\n\n.mp-sheet__label {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-sheet__x {\n  flex: 0 0 auto;\n  width: 28px;\n  height: 28px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  color: var(--mp-muted);\n  padding: 0;\n}\n\n.mp-sheet__x:active {\n  background: var(--mp-soft-2);\n}\n\n.mp-sheet__x svg {\n  width: 15px;\n  height: 15px;\n}\n\n.mp-sheet__item.is-danger {\n  color: var(--mp-accent);\n}\n\n/* ---------- 聊天卡片（宿主只给内容区，这里不造气泡） ---------- */\n\n.mp-card {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 9px 11px;\n  border-radius: 12px;\n  background: var(--mp-bg, #fff);\n  color: var(--mp-ink, #1b1c1f);\n  border: 1px solid var(--mp-line, #ededf0);\n  /* 固定宽度：不随歌名 / 歌手长短变化 */\n  width: 252px;\n  min-width: 0;\n  box-sizing: border-box;\n  max-width: 100%;\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  white-space: nowrap;\n}\n\n.mp-card__cover {\n  flex: 0 0 auto;\n  width: 40px;\n  height: 40px;\n  border-radius: 8px;\n  background: var(--mp-soft-2, #e9eaee);\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-card__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-card__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-card__main {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-card__name {\n  font-size: 13.5px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__sub {\n  margin-top: 1px;\n  font-size: 11px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-card__act {\n  flex: 0 0 auto;\n  border: 0;\n  background: rgba(225, 75, 75, 0.1);\n  color: #e14b4b;\n  font-size: 12px;\n  font-weight: 600;\n  padding: 6px 11px;\n  border-radius: 999px;\n}\n\n/* ---------- 独立弹层（聊天 + 面板里用，只能挂 body） ---------- */\n\n.mp-modal {\n  position: fixed;\n  inset: 0;\n  z-index: 9999;\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  background: rgba(0, 0, 0, 0.4);\n  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;\n}\n\n.mp-modal__panel {\n  width: 100%;\n  max-width: 480px;\n  max-height: 76vh;\n  display: flex;\n  flex-direction: column;\n  background: #fff;\n  color: #1b1c1f;\n  border-radius: 18px 18px 0 0;\n  padding-bottom: calc(8px + env(safe-area-inset-bottom));\n  overflow: hidden;\n}\n\n.mp-modal__head {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 14px 16px 10px;\n  border-bottom: 1px solid #ededf0;\n}\n\n.mp-modal__title {\n  flex: 1 1 auto;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.mp-modal__input {\n  flex: 1 1 auto;\n  min-width: 0;\n  border: 0;\n  outline: none;\n  font-size: 14.5px;\n  background: transparent;\n  color: inherit;\n}\n\n.mp-modal__body {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 56vh;\n  overflow-y: auto;\n}\n\n.mp-modal__row {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  width: 100%;\n  padding: 10px 16px;\n  border: 0;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-size: 14px;\n}\n\n.mp-modal__row:active {\n  background: #f2f3f5;\n}\n\n.mp-modal__row span {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__hint {\n  padding: 14px 16px;\n  font-size: 12.5px;\n  color: #9299a3;\n  text-align: center;\n}\n\n/* ---------- 聊天里的「一起听」面板 ---------- */\n\n.mp-listen {\n  max-height: 68vh;\n}\n\n.mp-listen__now {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 10px 16px 14px;\n}\n\n.mp-listen__cover {\n  flex: 0 0 auto;\n  width: 52px;\n  height: 52px;\n  border-radius: 12px;\n  background: #eef0f3;\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n  overflow: hidden;\n}\n\n.mp-listen__cover img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  display: block;\n}\n\n.mp-listen__cover svg {\n  width: 20px;\n  height: 20px;\n}\n\n.mp-listen__meta {\n  flex: 1 1 auto;\n  min-width: 0;\n}\n\n.mp-listen__name {\n  font-size: 14px;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__artist {\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-listen__ctrl {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n}\n\n.mp-listen__btn {\n  width: 36px;\n  height: 36px;\n  display: grid;\n  place-items: center;\n  border: 0;\n  background: transparent;\n  color: #1b1c1f;\n  padding: 0;\n}\n\n.mp-listen__btn svg {\n  width: 22px;\n  height: 22px;\n}\n\n.mp-listen__list {\n  flex: 1 1 auto;\n  min-height: 120px;\n  max-height: 32vh;\n  overflow-y: auto;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__sub {\n  /* 固定宽度 + 右对齐，多行列表里歌手名才能对齐成一条线 */\n  flex: 0 0 auto;\n  width: 42%;\n  text-align: right;\n  font-size: 11.5px;\n  color: #9299a3;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.mp-modal__row.is-active span:first-child {\n  color: #e14b4b;\n  font-weight: 600;\n}\n\n.mp-listen__searchicon {\n  display: grid;\n  place-items: center;\n  color: #9299a3;\n}\n\n.mp-listen__searchicon svg {\n  width: 16px;\n  height: 16px;\n}\n\n.mp-listen__foot {\n  flex: 0 0 auto;\n  display: flex;\n  align-items: center;\n  padding: 6px 16px;\n  border-top: 1px solid #ededf0;\n}\n\n.mp-listen__open {\n  flex: 1 1 auto;\n  border: 0;\n  background: transparent;\n  color: #6b7280;\n  font-size: 12.5px;\n  padding: 8px 0;\n}\n\n.mp-listen__stop {\n  flex: 0 0 auto;\n  border: 0;\n  background: transparent;\n  color: #d5544e;\n  font-size: 12.5px;\n  padding: 8px 0 8px 14px;\n}\n\n.mp-listen__tabs {\n  display: flex;\n  gap: 10px;\n  padding: 2px 16px 10px;\n}\n\n.mp-listen__tab {\n  flex: 1 1 0;\n  padding: 8px 0;\n  border: 0;\n  border-radius: 999px;\n  background: #f2f3f5;\n  color: #6b7280;\n  font-size: 13px;\n}\n\n.mp-listen__tab.is-active {\n  background: #ffeceb;\n  color: #e14b4b;\n  font-weight: 600;\n}\n';
@@ -5198,10 +5205,10 @@
   padding: 0 24px 40px;
 }
 
-/* ========== 统一刊头：左对齐 + 竖线锚点 ========== */
+/* ========== 统一刊头：日期 + 标题同一基线 + 通栏细线（不用竖线） ========== */
 .mp-mast {
   flex: 0 0 auto;
-  padding: calc(16px + env(safe-area-inset-top)) 28px 0;
+  padding: calc(16px + env(safe-area-inset-top)) 24px 0;
 }
 
 .mp-mast__bar {
@@ -5210,35 +5217,32 @@
   gap: 10px;
 }
 
-.mp-mast__mark {
-  flex: 0 0 auto;
-  width: 2px;
-  height: 26px;
-  border-radius: 1px;
-  background: var(--mp-accent);
-}
-
 .mp-mast__text {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
 }
 
 .mp-mast__date {
+  flex: 0 0 auto;
   font-family: var(--mp-sans-cn);
   font-size: 10.5px;
-  letter-spacing: 3px;
+  letter-spacing: 2px;
   color: var(--mp-ink-2);
   line-height: 1.2;
 }
 
 .mp-mast__title {
-  margin-top: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--mp-serif);
   font-size: 26px;
   font-weight: 500;
   letter-spacing: 3px;
   color: var(--mp-ink);
-  line-height: 1.2;
+  line-height: 1.15;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5388,8 +5392,6 @@
   line-height: 1.1;
   color: #fff;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
-  border-right: 2px solid var(--mp-accent);
-  padding-right: 8px;
 }
 
 .mp-mag__foryou {
@@ -5493,69 +5495,93 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 我的歌单：小封面横滑卡 */
-.mp-mag__shelf {
+/* 书架：竖幅封面，底边对齐，封面高度按 3 步循环形成错落（推荐页 / 歌单页共用） */
+.mp-shelf {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: flex-end;
+  gap: 10px;
   overflow-x: auto;
-  padding: 2px 0 34px;
+  overflow-y: hidden;
+  padding: 6px 0 24px;
   scrollbar-width: none;
 }
 
-.mp-mag__shelf::-webkit-scrollbar {
+.mp-shelf::-webkit-scrollbar {
   display: none;
 }
 
-.mp-mag__shelfcard {
+.mp-shelf__card {
+  position: relative;
   flex: 0 0 auto;
-  width: 88px;
+  width: 96px;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: left;
+  color: #fff;
 }
 
-.mp-mag__shelfcard:nth-child(3n + 2) {
-  margin-top: 16px;
-}
-
-.mp-mag__shelfcard:nth-child(3n + 3) {
-  margin-top: 8px;
-}
-
-.mp-mag__shelfcover {
-  width: 88px;
-  height: 88px;
-  border-radius: 12px;
+.mp-shelf__art {
+  position: relative;
+  width: 100%;
+  height: 132px;
   overflow: hidden;
+  border-radius: 2px;
   background: var(--mp-bg-2);
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
 }
 
-.mp-mag__shelfcover img {
+.mp-shelf__card:nth-child(3n + 2) .mp-shelf__art {
+  height: 108px;
+}
+
+.mp-shelf__card:nth-child(3n + 3) .mp-shelf__art {
+  height: 150px;
+}
+
+.mp-shelf__art img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
 
-.mp-mag__shelfname {
-  margin-top: 7px;
+.mp-shelf__art svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* 名字压在封面底部：整条底边齐平，错落只出现在上沿 */
+.mp-shelf__label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 26px 8px 8px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.62) 78%);
+  pointer-events: none;
+}
+
+.mp-shelf__name {
   font-family: var(--mp-serif);
-  font-size: 12.5px;
-  color: var(--mp-ink);
-  line-height: 1.3;
+  font-size: 12px;
+  line-height: 1.35;
+  letter-spacing: 0.5px;
+  color: #fff;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.mp-mag__shelfsub {
-  margin-top: 3px;
+.mp-shelf__sub {
+  margin-top: 2px;
   font-family: var(--mp-sans-cn);
-  font-size: 10.5px;
-  color: var(--mp-ink-2);
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.72);
 }
 
 /* 榜单目录 */
@@ -5604,53 +5630,16 @@
 
 /* ========== 歌单页：与推荐页同一套杂志语言 ========== */
 
-.mp-plpage__top {
-  position: relative;
-  flex: 0 0 auto;
-  padding: calc(20px + env(safe-area-inset-top)) 24px 12px;
-}
-
-.mp-plpage__mast {
-  text-align: center;
-  padding: 0 44px;
-}
-
-.mp-plpage__date {
-  font-family: var(--mp-sans-cn);
-  font-size: 10.5px;
-  letter-spacing: 3px;
-  color: var(--mp-ink-2);
-}
-
-.mp-plpage__title {
-  margin-top: 2px;
-  font-family: var(--mp-hand-font);
-  font-size: clamp(34px, 10vw, 42px);
-  line-height: 1.15;
-  letter-spacing: 1px;
-  color: var(--mp-ink);
-}
-
-.mp-plpage__rule {
-  margin-top: 8px;
-  height: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.28);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-.mp-root[data-theme="light"] .mp-plpage__rule {
-  border-top-color: rgba(0, 0, 0, 0.24);
-  border-bottom-color: rgba(0, 0, 0, 0.12);
-}
-
-.mp-plpage__add {
-  position: absolute;
-  right: 18px;
-  top: calc(16px + env(safe-area-inset-top));
-}
-
 .mp-plpage__body {
   padding: 0 24px 28px;
+}
+
+.mp-plgroup {
+  margin-top: 10px;
+}
+
+.mp-plgroup + .mp-plgroup {
+  margin-top: 16px;
 }
 
 /* 收藏：单独一行 */
@@ -5706,22 +5695,15 @@
   color: var(--mp-ink-2);
 }
 
-/* 分组小标题 */
-.mp-plpage__head {
-  margin: 22px 0 10px;
-  font-family: var(--mp-serif);
-  font-size: 13px;
-  letter-spacing: 2px;
-  color: var(--mp-ink-2);
-}
-
 /* 歌单详情：操作改成文字按钮（下划线），不用大红胶囊 */
 .mp-actions--text {
-  padding: 12px 28px 4px;
+  padding: 14px 24px 2px;
   gap: 20px;
 }
 
 .mp-actions--text .mp-btn {
+  flex: 0 0 auto;
+  justify-content: flex-start;
   height: auto;
   padding: 2px 0;
   border: 0;
@@ -5741,69 +5723,402 @@
   background: transparent;
 }
 
-/* 横滑竖条：卡片同尺寸，margin-top 交替做出错落 */
-.mp-plrail {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  overflow-x: auto;
-  padding: 2px 0 34px;
-  scrollbar-width: none;
+/* ==========================================================
+   双主题：杂志风 mag（默认） / 经典 classic
+   两套只差材质与几何：字体、圆角、分隔线、封面比例。
+   信息结构、交互完全一致，切主题不需要重建页面。
+   ========================================================== */
+
+/* ---------- 杂志风：直角 + 通栏细线 + 宋体 ---------- */
+
+.mp-root[data-ui="mag"] {
+  --mp-r-lg: 3px;
+  --mp-r-md: 2px;
+  --mp-r-sm: 2px;
 }
 
-.mp-plrail::-webkit-scrollbar {
-  display: none;
-}
-
-.mp-plcard {
-  flex: 0 0 auto;
-  width: 88px;
-  padding: 0;
-  border: 0;
+.mp-root[data-ui="mag"] .mp-icon-btn:active {
   background: transparent;
-  text-align: left;
+  opacity: 0.55;
 }
 
-.mp-plcard:nth-child(3n + 2) {
-  margin-top: 16px;
+/* 歌曲行：细线分栏，曲名用宋体 */
+.mp-root[data-ui="mag"] .mp-row {
+  gap: 12px;
+  padding: 11px 24px;
+  border-bottom: 1px solid var(--mp-hair);
 }
 
-.mp-plcard:nth-child(3n + 3) {
-  margin-top: 8px;
+.mp-root[data-ui="mag"] .mp-row:active {
+  background: transparent;
+  opacity: 0.7;
 }
 
-.mp-plcard__cover {
-  width: 88px;
-  height: 88px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--mp-bg-2);
+.mp-root[data-ui="mag"] .mp-row__cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 2px;
 }
 
-.mp-plcard__cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.mp-root[data-ui="mag"] .mp-row__name {
+  font-family: var(--mp-serif);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-row__sub,
+.mp-root[data-ui="mag"] .mp-row__tag {
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 0.3px;
+}
+
+.mp-root[data-ui="mag"] .mp-row__tag {
+  border-radius: 2px;
+  background: transparent;
+  border: 1px solid var(--mp-hair);
+}
+
+/* 栏目头 */
+.mp-root[data-ui="mag"] .mp-section {
+  padding: 22px 24px 8px;
+  font-family: var(--mp-serif);
+  font-size: 13.5px;
+  font-weight: 400;
+  letter-spacing: 2px;
+  color: var(--mp-ink-2);
+}
+
+.mp-root[data-ui="mag"] .mp-section__act {
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  letter-spacing: 1px;
+}
+
+/* 搜索框：一条下划线，不要圆胶囊 */
+.mp-root[data-ui="mag"] .mp-search {
+  padding: 0 24px 10px;
+}
+
+.mp-root[data-ui="mag"] .mp-search__box {
+  height: 40px;
+  padding: 0 2px;
+  border-radius: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--mp-line-strong);
+}
+
+.mp-root[data-ui="mag"] .mp-search__input {
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 0.5px;
+}
+
+/* 榜单卡：直角 + 细边，不用灰底圆卡片 */
+.mp-root[data-ui="mag"] .mp-rank-rail {
+  gap: 10px;
+  padding: 8px 24px 4px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-card {
+  padding: 14px 14px 10px;
+  border-radius: 2px;
+  border-color: var(--mp-hair);
+  background: transparent;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-card__name {
+  font-family: var(--mp-serif);
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-card__play {
+  border-radius: 2px;
+  letter-spacing: 1px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-row__no {
+  font-family: var(--mp-sans-cn);
+}
+
+.mp-root[data-ui="mag"] .mp-rank-row__name {
+  font-family: var(--mp-serif);
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-row:active {
+  background: transparent;
+  opacity: 0.6;
+}
+
+/* 推荐词：方角细边 */
+.mp-root[data-ui="mag"] .mp-rec {
+  padding: 2px 24px 10px;
+  gap: 8px;
+}
+
+.mp-root[data-ui="mag"] .mp-rec-chip {
+  border-radius: 2px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-rec__hint,
+.mp-root[data-ui="mag"] .mp-hint {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+.mp-root[data-ui="mag"] .mp-hint {
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 0.5px;
+}
+
+/* 收藏入口：细线行 */
+.mp-root[data-ui="mag"] .mp-plfeat__cover {
+  width: 52px;
+  height: 52px;
+  border-radius: 2px;
+}
+
+.mp-root[data-ui="mag"] .mp-plfeat__name {
+  font-size: 15.5px;
+  letter-spacing: 1px;
+}
+
+.mp-plfeat__arrow {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
+}
+
+.mp-plfeat__arrow svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 设置：不要灰色大圆角块，改成通栏细线分区 */
+.mp-root[data-ui="mag"] .mp-group {
+  margin: 10px 24px 20px;
+  border-radius: 0;
+  background: transparent;
+  border-top: 1px solid var(--mp-hair);
+}
+
+.mp-root[data-ui="mag"] .mp-group__title {
+  padding: 14px 0 4px;
+  font-family: var(--mp-serif);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 3px;
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="mag"] .mp-field {
+  padding: 12px 0;
+  border-top-color: var(--mp-hair);
+}
+
+.mp-root[data-ui="mag"] .mp-field__label {
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-field__desc {
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+
+.mp-root[data-ui="mag"] .mp-theme-row {
+  padding: 0;
+  gap: 6px;
+}
+
+.mp-root[data-ui="mag"] .mp-theme-btn {
+  border-radius: 2px;
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 1px;
+}
+
+.mp-root[data-ui="mag"] .mp-theme-btn.is-active {
+  background: transparent;
+  border-color: var(--mp-accent);
+  color: var(--mp-accent);
+  font-weight: 400;
+}
+
+/* 播放条 / 底栏：细线 + 宋体歌名 */
+.mp-root[data-ui="mag"] .mp-player,
+.mp-root[data-ui="mag"] .mp-dock {
+  border-top-color: var(--mp-hair);
+}
+
+.mp-root[data-ui="mag"] .mp-player__cover {
+  border-radius: 2px;
+}
+
+.mp-root[data-ui="mag"] .mp-player__name {
+  font-family: var(--mp-serif);
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-dock__btn {
+  letter-spacing: 1px;
+}
+
+/* ---------- 经典：圆角卡片 + 方形封面 + 无衬线 ---------- */
+
+.mp-root[data-ui="classic"] .mp-mast {
+  padding: calc(14px + env(safe-area-inset-top)) 16px 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mast__text {
   display: block;
 }
 
-.mp-plcard__name {
-  margin-top: 8px;
-  font-family: var(--mp-serif);
-  font-size: 13.5px;
-  color: var(--mp-ink);
-  line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.mp-root[data-ui="classic"] .mp-mast__date {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--mp-muted);
 }
 
-.mp-plcard__sub {
-  margin-top: 3px;
-  font-family: var(--mp-sans-cn);
+.mp-root[data-ui="classic"] .mp-mast__title {
+  margin-top: 2px;
+  font-family: var(--mp-font);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mast__rule {
+  display: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag {
+  padding: 0 16px 28px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__head {
+  margin: 18px 0 10px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__headtext {
+  font-family: var(--mp-font);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__rule {
+  display: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__feature {
+  border-radius: 16px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__cover {
+  aspect-ratio: 1 / 1;
+  border-radius: 16px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__vtitle {
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  max-height: none;
+  font-family: var(--mp-font);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__foryou {
+  display: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__play {
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mp-accent);
+  color: var(--mp-on-accent);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__swap {
+  color: var(--mp-muted);
+  text-decoration: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__track {
+  padding: 9px 0;
+  border-bottom: 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__no {
+  flex: 0 0 20px;
+  font-family: var(--mp-font);
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__tname {
+  font-family: var(--mp-font);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__end {
+  font-family: var(--mp-font);
+  font-style: normal;
+}
+
+.mp-root[data-ui="classic"] .mp-plpage__body {
+  padding: 0 16px 24px;
+}
+
+/* 经典：方形封面 + 名字在封面下方，不做错落 */
+.mp-root[data-ui="classic"] .mp-shelf {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 2px 0 28px;
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__card {
+  width: 88px;
+  color: var(--mp-ink);
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__art {
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__label {
+  position: static;
+  padding: 8px 0 0;
+  background: none;
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__name {
+  font-family: var(--mp-font);
+  font-size: 13px;
+  letter-spacing: 0;
+  color: var(--mp-ink);
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__sub {
   font-size: 10.5px;
-  color: var(--mp-ink-2);
+  letter-spacing: 0;
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="classic"] .mp-plfeat__name {
+  font-family: var(--mp-font);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .mp-theme-row {
@@ -6008,6 +6323,26 @@
     });
     return row;
   }
+  function shelfRail(items) {
+    var rail = h("div", { class: "mp-shelf" });
+    items.forEach(function(item) {
+      var art = h("div", { class: "mp-shelf__art" });
+      fillCover(art, item.coverUrl || "");
+      if (item.coverKey) art.dataset.cover = item.coverKey;
+      var card = h("button", { class: "mp-shelf__card", type: "button" }, [
+        art,
+        h("div", { class: "mp-shelf__label" }, [
+          h("div", { class: "mp-shelf__name", text: item.name || "" }),
+          item.sub ? h("div", { class: "mp-shelf__sub", text: item.sub }) : null
+        ].filter(Boolean))
+      ]);
+      card.addEventListener("click", function() {
+        item.onClick();
+      });
+      rail.appendChild(card);
+    });
+    return rail;
+  }
   function emptyHint(title, sub) {
     return h("div", { class: "mp-hint" }, [
       h("div", { text: title }),
@@ -6204,7 +6539,6 @@
     ].filter(Boolean));
     var bar = h("div", { class: "mp-mast__bar" }, [
       o.leading || null,
-      h("span", { class: "mp-mast__mark" }),
       text,
       o.actions ? h("div", { class: "mp-mast__acts" }, o.actions) : null
     ].filter(Boolean));
@@ -6219,6 +6553,14 @@
   function todayText() {
     var d = /* @__PURE__ */ new Date();
     return String(d.getMonth() + 1).padStart(2, "0") + " / " + String(d.getDate()).padStart(2, "0");
+  }
+  function sectionHead(text, action) {
+    var row = h("div", { class: "mp-mag__head" }, [
+      h("span", { class: "mp-mag__headtext", text }),
+      h("span", { class: "mp-mag__rule" })
+    ]);
+    if (action) row.appendChild(action);
+    return row;
   }
 
   // src/core/format.js
@@ -6273,14 +6615,6 @@
         } })
       ]
     });
-    function headRow(text, action) {
-      var row = h("div", { class: "mp-mag__head" }, [
-        h("span", { class: "mp-mag__headtext", text }),
-        h("span", { class: "mp-mag__rule" })
-      ]);
-      if (action) row.appendChild(action);
-      return row;
-    }
     function feature(rec) {
       var tracks = rec && rec.tracks || [];
       var first = tracks[0];
@@ -6346,22 +6680,19 @@
         return p && p.id;
       });
       if (!list.length) return null;
-      var rail = h("div", { class: "mp-mag__shelf" });
-      list.slice(0, 20).forEach(function(p) {
+      var items = list.slice(0, 20).map(function(p) {
         var first = (p.tracks || [])[0];
-        var cover = h("div", { class: "mp-mag__shelfcover" });
-        fillCover(cover, first ? ctx.coverOf(first) : "");
-        var card = h("button", { class: "mp-mag__shelfcard", type: "button" }, [
-          cover,
-          h("div", { class: "mp-mag__shelfname", text: p.name }),
-          h("div", { class: "mp-mag__shelfsub", text: (p.tracks || []).length + " 首" })
-        ]);
-        card.addEventListener("click", function() {
-          ctx.goto("playlist", { playlistId: p.id });
-        });
-        rail.appendChild(card);
+        return {
+          name: p.name,
+          sub: (p.tracks || []).length + " 首",
+          coverUrl: first ? ctx.coverOf(first) : "",
+          coverKey: first ? trackKey(first) : "",
+          onClick: function() {
+            ctx.goto("playlist", { playlistId: p.id });
+          }
+        };
       });
-      return h("div", {}, [headRow("我的歌单"), rail]);
+      return h("div", {}, [sectionHead("我的歌单"), shelfRail(items)]);
     }
     function ranks() {
       if (!ctx.neteaseReady || !ctx.neteaseReady()) return null;
@@ -6373,7 +6704,7 @@
       row.addEventListener("click", function() {
         ctx.goto("search");
       });
-      return h("div", {}, [headRow("榜单"), row]);
+      return h("div", {}, [sectionHead("榜单"), row]);
     }
     function renderBody() {
       var rec = ctx.recommendCache ? ctx.recommendCache() : null;
@@ -6381,7 +6712,7 @@
       body.appendChild(feature(rec));
       if (tracks.length) {
         body.appendChild(h("div", { class: "mp-mag__gap" }));
-        body.appendChild(headRow("每日推荐"));
+        body.appendChild(sectionHead("每日推荐"));
         body.appendChild(tracklist(tracks));
       }
       var sp = shelf();
@@ -6810,33 +7141,28 @@
         h("div", { class: "mp-plfeat__main" }, [
           h("div", { class: "mp-plfeat__name", text: p.name }),
           h("div", { class: "mp-plfeat__sub", text: fmtSummary(p.tracks.length, playlistDuration(p)) })
-        ])
+        ]),
+        h("span", { class: "mp-plfeat__arrow", html: icon("play") })
       ]);
       row.addEventListener("click", function() {
         openPlaylist(p);
       });
       return row;
     }
-    function plCard(p) {
-      var first = p.tracks[0];
-      var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-plcard__cover");
-      if (first) cover.dataset.cover = trackKey(first);
-      var card = h("button", { class: "mp-plcard", type: "button" }, [
-        cover,
-        h("div", { class: "mp-plcard__name", text: p.name }),
-        h("div", { class: "mp-plcard__sub", text: fmtSummary(p.tracks.length, playlistDuration(p)) })
-      ]);
-      card.addEventListener("click", function() {
-        openPlaylist(p);
+    function group(title, list) {
+      var items = list.map(function(p) {
+        var first = p.tracks[0];
+        return {
+          name: p.name,
+          sub: p.tracks.length + " 首",
+          coverUrl: first ? ctx.coverOf(first) : "",
+          coverKey: first ? trackKey(first) : "",
+          onClick: function() {
+            openPlaylist(p);
+          }
+        };
       });
-      return card;
-    }
-    function rail(list) {
-      var box = h("div", { class: "mp-plrail" });
-      list.forEach(function(p) {
-        box.appendChild(plCard(p));
-      });
-      return box;
+      return h("div", { class: "mp-plgroup" }, [sectionHead(title), shelfRail(items)]);
     }
     function renderList() {
       clear(listBox);
@@ -6853,14 +7179,8 @@
       var theirs = state.playlists.filter(function(p) {
         return p.owner === "char";
       });
-      if (mine.length) {
-        listBox.appendChild(h("div", { class: "mp-plpage__head", text: "我的歌单" }));
-        listBox.appendChild(rail(mine));
-      }
-      if (theirs.length) {
-        listBox.appendChild(h("div", { class: "mp-plpage__head", text: "TA 的歌单" }));
-        listBox.appendChild(rail(theirs));
-      }
+      if (mine.length) listBox.appendChild(group("我的歌单", mine));
+      if (theirs.length) listBox.appendChild(group("TA 的歌单", theirs));
       if (!mine.length && !theirs.length) {
         listBox.appendChild(emptyHint(
           "还没有歌单",
@@ -7943,6 +8263,19 @@
         });
         themeRow.appendChild(btn);
       });
+      var skinRow = h("div", { class: "mp-theme-row" });
+      UI_SKINS.forEach(function(s2) {
+        var btn = h("button", {
+          class: "mp-theme-btn" + (s.uiTheme === s2.id ? " is-active" : ""),
+          type: "button",
+          text: s2.name
+        });
+        btn.addEventListener("click", function() {
+          ctx.updateSettings({ uiTheme: s2.id });
+          render2();
+        });
+        skinRow.appendChild(btn);
+      });
       var dotRow = h("div", { class: "mp-dots" });
       ACCENTS.forEach(function(a) {
         var dot = h("button", {
@@ -7974,6 +8307,7 @@
       });
       var appearanceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "外观" }),
+        field("界面风格", skinRow, "杂志风：宋体标题 + 直角封面 + 细线；经典：圆角卡片 + 方形封面"),
         field("主题", themeRow, "跟随系统 / 白天白色 / 夜间深色"),
         // TA 页花瓣开关在 TA 页右上角 ⋯ 里，设置页不重复
         field("手写字体", (function() {
@@ -8563,6 +8897,7 @@
     function applyAppearance() {
       var s = ctx.state.settings;
       root.dataset.accent = s.accent || "red";
+      root.dataset.ui = s.uiTheme === "classic" ? "classic" : "mag";
       applyHandFont(s.taFontUrl || "");
       if (s.accentColor) {
         root.style.setProperty("--mp-accent", s.accentColor);
@@ -11872,7 +12207,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.50.0" });
+    app = await createApp({ container, roche, version: "0.51.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11888,7 +12223,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.50.0",
+    version: "0.51.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

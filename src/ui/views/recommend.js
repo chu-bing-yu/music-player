@@ -4,8 +4,8 @@
  */
 
 import { h, clear } from '../dom.js';
-import { masthead } from '../masthead.js';
-import { iconBtn, coverNode, fillCover } from '../components.js';
+import { masthead, sectionHead } from '../masthead.js';
+import { iconBtn, coverNode, fillCover, shelfRail } from '../components.js';
 import { trackKey } from '../../core/track.js';
 import { fmtTime } from '../../core/format.js';
 
@@ -40,17 +40,6 @@ export function mount(host, ctx) {
       iconBtn('gear', { label: '推荐偏好', onClick: function () { if (ctx.openPrefsPanel) ctx.openPrefsPanel(); } })
     ]
   });
-
-  /* ---------------- 刊头 ---------------- */
-
-  function headRow(text, action) {
-    var row = h('div', { class: 'mp-mag__head' }, [
-      h('span', { class: 'mp-mag__headtext', text: text }),
-      h('span', { class: 'mp-mag__rule' })
-    ]);
-    if (action) row.appendChild(action);
-    return row;
-  }
 
   /* ---------------- 首篇：大图 + 竖排标题 ---------------- */
 
@@ -128,31 +117,24 @@ export function mount(host, ctx) {
     return list;
   }
 
-  /* ---------------- 我的歌单：小封面横滑卡 ---------------- */
+  /* ---------------- 我的歌单：竖幅封面书架 ---------------- */
 
   function shelf() {
     var list = (ctx.state.playlists || []).filter(function (p) { return p && p.id; });
     if (!list.length) return null;
 
-    var rail = h('div', { class: 'mp-mag__shelf' });
-
-    list.slice(0, 20).forEach(function (p) {
+    var items = list.slice(0, 20).map(function (p) {
       var first = (p.tracks || [])[0];
-      var cover = h('div', { class: 'mp-mag__shelfcover' });
-      fillCover(cover, first ? ctx.coverOf(first) : '');
-
-      var card = h('button', { class: 'mp-mag__shelfcard', type: 'button' }, [
-        cover,
-        h('div', { class: 'mp-mag__shelfname', text: p.name }),
-        h('div', { class: 'mp-mag__shelfsub', text: (p.tracks || []).length + ' 首' })
-      ]);
-      card.addEventListener('click', function () {
-        ctx.goto('playlist', { playlistId: p.id });
-      });
-      rail.appendChild(card);
+      return {
+        name: p.name,
+        sub: (p.tracks || []).length + ' 首',
+        coverUrl: first ? ctx.coverOf(first) : '',
+        coverKey: first ? trackKey(first) : '',
+        onClick: function () { ctx.goto('playlist', { playlistId: p.id }); }
+      };
     });
 
-    return h('div', {}, [headRow('我的歌单'), rail]);
+    return h('div', {}, [sectionHead('我的歌单'), shelfRail(items)]);
   }
 
   /* ---------------- 排行榜：目录 ---------------- */
@@ -167,7 +149,7 @@ export function mount(host, ctx) {
     ]);
     row.addEventListener('click', function () { ctx.goto('search'); });
 
-    return h('div', {}, [headRow('榜单'), row]);
+    return h('div', {}, [sectionHead('榜单'), row]);
   }
 
   /* ---------------- 渲染 ---------------- */
@@ -180,7 +162,7 @@ export function mount(host, ctx) {
 
     if (tracks.length) {
       body.appendChild(h('div', { class: 'mp-mag__gap' }));
-      body.appendChild(headRow('每日推荐'));
+      body.appendChild(sectionHead('每日推荐'));
       body.appendChild(tracklist(tracks));
     }
 

@@ -2005,10 +2005,10 @@
   padding: 0 24px 40px;
 }
 
-/* ========== 统一刊头：左对齐 + 竖线锚点 ========== */
+/* ========== 统一刊头：日期 + 标题同一基线 + 通栏细线（不用竖线） ========== */
 .mp-mast {
   flex: 0 0 auto;
-  padding: calc(16px + env(safe-area-inset-top)) 28px 0;
+  padding: calc(16px + env(safe-area-inset-top)) 24px 0;
 }
 
 .mp-mast__bar {
@@ -2017,35 +2017,32 @@
   gap: 10px;
 }
 
-.mp-mast__mark {
-  flex: 0 0 auto;
-  width: 2px;
-  height: 26px;
-  border-radius: 1px;
-  background: var(--mp-accent);
-}
-
 .mp-mast__text {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
 }
 
 .mp-mast__date {
+  flex: 0 0 auto;
   font-family: var(--mp-sans-cn);
   font-size: 10.5px;
-  letter-spacing: 3px;
+  letter-spacing: 2px;
   color: var(--mp-ink-2);
   line-height: 1.2;
 }
 
 .mp-mast__title {
-  margin-top: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--mp-serif);
   font-size: 26px;
   font-weight: 500;
   letter-spacing: 3px;
   color: var(--mp-ink);
-  line-height: 1.2;
+  line-height: 1.15;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2195,8 +2192,6 @@
   line-height: 1.1;
   color: #fff;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
-  border-right: 2px solid var(--mp-accent);
-  padding-right: 8px;
 }
 
 .mp-mag__foryou {
@@ -2300,69 +2295,93 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 我的歌单：小封面横滑卡 */
-.mp-mag__shelf {
+/* 书架：竖幅封面，底边对齐，封面高度按 3 步循环形成错落（推荐页 / 歌单页共用） */
+.mp-shelf {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: flex-end;
+  gap: 10px;
   overflow-x: auto;
-  padding: 2px 0 34px;
+  overflow-y: hidden;
+  padding: 6px 0 24px;
   scrollbar-width: none;
 }
 
-.mp-mag__shelf::-webkit-scrollbar {
+.mp-shelf::-webkit-scrollbar {
   display: none;
 }
 
-.mp-mag__shelfcard {
+.mp-shelf__card {
+  position: relative;
   flex: 0 0 auto;
-  width: 88px;
+  width: 96px;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: left;
+  color: #fff;
 }
 
-.mp-mag__shelfcard:nth-child(3n + 2) {
-  margin-top: 16px;
-}
-
-.mp-mag__shelfcard:nth-child(3n + 3) {
-  margin-top: 8px;
-}
-
-.mp-mag__shelfcover {
-  width: 88px;
-  height: 88px;
-  border-radius: 12px;
+.mp-shelf__art {
+  position: relative;
+  width: 100%;
+  height: 132px;
   overflow: hidden;
+  border-radius: 2px;
   background: var(--mp-bg-2);
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
 }
 
-.mp-mag__shelfcover img {
+.mp-shelf__card:nth-child(3n + 2) .mp-shelf__art {
+  height: 108px;
+}
+
+.mp-shelf__card:nth-child(3n + 3) .mp-shelf__art {
+  height: 150px;
+}
+
+.mp-shelf__art img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
 
-.mp-mag__shelfname {
-  margin-top: 7px;
+.mp-shelf__art svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* 名字压在封面底部：整条底边齐平，错落只出现在上沿 */
+.mp-shelf__label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 26px 8px 8px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.62) 78%);
+  pointer-events: none;
+}
+
+.mp-shelf__name {
   font-family: var(--mp-serif);
-  font-size: 12.5px;
-  color: var(--mp-ink);
-  line-height: 1.3;
+  font-size: 12px;
+  line-height: 1.35;
+  letter-spacing: 0.5px;
+  color: #fff;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.mp-mag__shelfsub {
-  margin-top: 3px;
+.mp-shelf__sub {
+  margin-top: 2px;
   font-family: var(--mp-sans-cn);
-  font-size: 10.5px;
-  color: var(--mp-ink-2);
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.72);
 }
 
 /* 榜单目录 */
@@ -2411,53 +2430,16 @@
 
 /* ========== 歌单页：与推荐页同一套杂志语言 ========== */
 
-.mp-plpage__top {
-  position: relative;
-  flex: 0 0 auto;
-  padding: calc(20px + env(safe-area-inset-top)) 24px 12px;
-}
-
-.mp-plpage__mast {
-  text-align: center;
-  padding: 0 44px;
-}
-
-.mp-plpage__date {
-  font-family: var(--mp-sans-cn);
-  font-size: 10.5px;
-  letter-spacing: 3px;
-  color: var(--mp-ink-2);
-}
-
-.mp-plpage__title {
-  margin-top: 2px;
-  font-family: var(--mp-hand-font);
-  font-size: clamp(34px, 10vw, 42px);
-  line-height: 1.15;
-  letter-spacing: 1px;
-  color: var(--mp-ink);
-}
-
-.mp-plpage__rule {
-  margin-top: 8px;
-  height: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.28);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-.mp-root[data-theme="light"] .mp-plpage__rule {
-  border-top-color: rgba(0, 0, 0, 0.24);
-  border-bottom-color: rgba(0, 0, 0, 0.12);
-}
-
-.mp-plpage__add {
-  position: absolute;
-  right: 18px;
-  top: calc(16px + env(safe-area-inset-top));
-}
-
 .mp-plpage__body {
   padding: 0 24px 28px;
+}
+
+.mp-plgroup {
+  margin-top: 10px;
+}
+
+.mp-plgroup + .mp-plgroup {
+  margin-top: 16px;
 }
 
 /* 收藏：单独一行 */
@@ -2513,22 +2495,15 @@
   color: var(--mp-ink-2);
 }
 
-/* 分组小标题 */
-.mp-plpage__head {
-  margin: 22px 0 10px;
-  font-family: var(--mp-serif);
-  font-size: 13px;
-  letter-spacing: 2px;
-  color: var(--mp-ink-2);
-}
-
 /* 歌单详情：操作改成文字按钮（下划线），不用大红胶囊 */
 .mp-actions--text {
-  padding: 12px 28px 4px;
+  padding: 14px 24px 2px;
   gap: 20px;
 }
 
 .mp-actions--text .mp-btn {
+  flex: 0 0 auto;
+  justify-content: flex-start;
   height: auto;
   padding: 2px 0;
   border: 0;
@@ -2548,69 +2523,402 @@
   background: transparent;
 }
 
-/* 横滑竖条：卡片同尺寸，margin-top 交替做出错落 */
-.mp-plrail {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  overflow-x: auto;
-  padding: 2px 0 34px;
-  scrollbar-width: none;
+/* ==========================================================
+   双主题：杂志风 mag（默认） / 经典 classic
+   两套只差材质与几何：字体、圆角、分隔线、封面比例。
+   信息结构、交互完全一致，切主题不需要重建页面。
+   ========================================================== */
+
+/* ---------- 杂志风：直角 + 通栏细线 + 宋体 ---------- */
+
+.mp-root[data-ui="mag"] {
+  --mp-r-lg: 3px;
+  --mp-r-md: 2px;
+  --mp-r-sm: 2px;
 }
 
-.mp-plrail::-webkit-scrollbar {
-  display: none;
-}
-
-.mp-plcard {
-  flex: 0 0 auto;
-  width: 88px;
-  padding: 0;
-  border: 0;
+.mp-root[data-ui="mag"] .mp-icon-btn:active {
   background: transparent;
-  text-align: left;
+  opacity: 0.55;
 }
 
-.mp-plcard:nth-child(3n + 2) {
-  margin-top: 16px;
+/* 歌曲行：细线分栏，曲名用宋体 */
+.mp-root[data-ui="mag"] .mp-row {
+  gap: 12px;
+  padding: 11px 24px;
+  border-bottom: 1px solid var(--mp-hair);
 }
 
-.mp-plcard:nth-child(3n + 3) {
-  margin-top: 8px;
+.mp-root[data-ui="mag"] .mp-row:active {
+  background: transparent;
+  opacity: 0.7;
 }
 
-.mp-plcard__cover {
-  width: 88px;
-  height: 88px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--mp-bg-2);
+.mp-root[data-ui="mag"] .mp-row__cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 2px;
 }
 
-.mp-plcard__cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.mp-root[data-ui="mag"] .mp-row__name {
+  font-family: var(--mp-serif);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-row__sub,
+.mp-root[data-ui="mag"] .mp-row__tag {
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 0.3px;
+}
+
+.mp-root[data-ui="mag"] .mp-row__tag {
+  border-radius: 2px;
+  background: transparent;
+  border: 1px solid var(--mp-hair);
+}
+
+/* 栏目头 */
+.mp-root[data-ui="mag"] .mp-section {
+  padding: 22px 24px 8px;
+  font-family: var(--mp-serif);
+  font-size: 13.5px;
+  font-weight: 400;
+  letter-spacing: 2px;
+  color: var(--mp-ink-2);
+}
+
+.mp-root[data-ui="mag"] .mp-section__act {
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  letter-spacing: 1px;
+}
+
+/* 搜索框：一条下划线，不要圆胶囊 */
+.mp-root[data-ui="mag"] .mp-search {
+  padding: 0 24px 10px;
+}
+
+.mp-root[data-ui="mag"] .mp-search__box {
+  height: 40px;
+  padding: 0 2px;
+  border-radius: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--mp-line-strong);
+}
+
+.mp-root[data-ui="mag"] .mp-search__input {
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 0.5px;
+}
+
+/* 榜单卡：直角 + 细边，不用灰底圆卡片 */
+.mp-root[data-ui="mag"] .mp-rank-rail {
+  gap: 10px;
+  padding: 8px 24px 4px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-card {
+  padding: 14px 14px 10px;
+  border-radius: 2px;
+  border-color: var(--mp-hair);
+  background: transparent;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-card__name {
+  font-family: var(--mp-serif);
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-card__play {
+  border-radius: 2px;
+  letter-spacing: 1px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-row__no {
+  font-family: var(--mp-sans-cn);
+}
+
+.mp-root[data-ui="mag"] .mp-rank-row__name {
+  font-family: var(--mp-serif);
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-rank-row:active {
+  background: transparent;
+  opacity: 0.6;
+}
+
+/* 推荐词：方角细边 */
+.mp-root[data-ui="mag"] .mp-rec {
+  padding: 2px 24px 10px;
+  gap: 8px;
+}
+
+.mp-root[data-ui="mag"] .mp-rec-chip {
+  border-radius: 2px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-rec__hint,
+.mp-root[data-ui="mag"] .mp-hint {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+.mp-root[data-ui="mag"] .mp-hint {
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 0.5px;
+}
+
+/* 收藏入口：细线行 */
+.mp-root[data-ui="mag"] .mp-plfeat__cover {
+  width: 52px;
+  height: 52px;
+  border-radius: 2px;
+}
+
+.mp-root[data-ui="mag"] .mp-plfeat__name {
+  font-size: 15.5px;
+  letter-spacing: 1px;
+}
+
+.mp-plfeat__arrow {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--mp-muted);
+}
+
+.mp-plfeat__arrow svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 设置：不要灰色大圆角块，改成通栏细线分区 */
+.mp-root[data-ui="mag"] .mp-group {
+  margin: 10px 24px 20px;
+  border-radius: 0;
+  background: transparent;
+  border-top: 1px solid var(--mp-hair);
+}
+
+.mp-root[data-ui="mag"] .mp-group__title {
+  padding: 14px 0 4px;
+  font-family: var(--mp-serif);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 3px;
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="mag"] .mp-field {
+  padding: 12px 0;
+  border-top-color: var(--mp-hair);
+}
+
+.mp-root[data-ui="mag"] .mp-field__label {
+  font-family: var(--mp-serif);
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-field__desc {
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+
+.mp-root[data-ui="mag"] .mp-theme-row {
+  padding: 0;
+  gap: 6px;
+}
+
+.mp-root[data-ui="mag"] .mp-theme-btn {
+  border-radius: 2px;
+  font-family: var(--mp-sans-cn);
+  letter-spacing: 1px;
+}
+
+.mp-root[data-ui="mag"] .mp-theme-btn.is-active {
+  background: transparent;
+  border-color: var(--mp-accent);
+  color: var(--mp-accent);
+  font-weight: 400;
+}
+
+/* 播放条 / 底栏：细线 + 宋体歌名 */
+.mp-root[data-ui="mag"] .mp-player,
+.mp-root[data-ui="mag"] .mp-dock {
+  border-top-color: var(--mp-hair);
+}
+
+.mp-root[data-ui="mag"] .mp-player__cover {
+  border-radius: 2px;
+}
+
+.mp-root[data-ui="mag"] .mp-player__name {
+  font-family: var(--mp-serif);
+  letter-spacing: 0.5px;
+}
+
+.mp-root[data-ui="mag"] .mp-dock__btn {
+  letter-spacing: 1px;
+}
+
+/* ---------- 经典：圆角卡片 + 方形封面 + 无衬线 ---------- */
+
+.mp-root[data-ui="classic"] .mp-mast {
+  padding: calc(14px + env(safe-area-inset-top)) 16px 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mast__text {
   display: block;
 }
 
-.mp-plcard__name {
-  margin-top: 8px;
-  font-family: var(--mp-serif);
-  font-size: 13.5px;
-  color: var(--mp-ink);
-  line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.mp-root[data-ui="classic"] .mp-mast__date {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--mp-muted);
 }
 
-.mp-plcard__sub {
-  margin-top: 3px;
-  font-family: var(--mp-sans-cn);
+.mp-root[data-ui="classic"] .mp-mast__title {
+  margin-top: 2px;
+  font-family: var(--mp-font);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mast__rule {
+  display: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag {
+  padding: 0 16px 28px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__head {
+  margin: 18px 0 10px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__headtext {
+  font-family: var(--mp-font);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__rule {
+  display: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__feature {
+  border-radius: 16px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__cover {
+  aspect-ratio: 1 / 1;
+  border-radius: 16px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__vtitle {
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  max-height: none;
+  font-family: var(--mp-font);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__foryou {
+  display: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__play {
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mp-accent);
+  color: var(--mp-on-accent);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__swap {
+  color: var(--mp-muted);
+  text-decoration: none;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__track {
+  padding: 9px 0;
+  border-bottom: 0;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__no {
+  flex: 0 0 20px;
+  font-family: var(--mp-font);
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__tname {
+  font-family: var(--mp-font);
+}
+
+.mp-root[data-ui="classic"] .mp-mag__end {
+  font-family: var(--mp-font);
+  font-style: normal;
+}
+
+.mp-root[data-ui="classic"] .mp-plpage__body {
+  padding: 0 16px 24px;
+}
+
+/* 经典：方形封面 + 名字在封面下方，不做错落 */
+.mp-root[data-ui="classic"] .mp-shelf {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 2px 0 28px;
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__card {
+  width: 88px;
+  color: var(--mp-ink);
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__art {
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__label {
+  position: static;
+  padding: 8px 0 0;
+  background: none;
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__name {
+  font-family: var(--mp-font);
+  font-size: 13px;
+  letter-spacing: 0;
+  color: var(--mp-ink);
+}
+
+.mp-root[data-ui="classic"] .mp-shelf__sub {
   font-size: 10.5px;
-  color: var(--mp-ink-2);
+  letter-spacing: 0;
+  color: var(--mp-muted);
+}
+
+.mp-root[data-ui="classic"] .mp-plfeat__name {
+  font-family: var(--mp-font);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .mp-theme-row {

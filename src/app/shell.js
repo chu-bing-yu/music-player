@@ -101,6 +101,8 @@ export function createShell(container, ctx) {
   function applyAppearance() {
     var s = ctx.state.settings;
     root.dataset.accent = s.accent || 'red';
+    // 界面风格：mag / classic，样式全部挂在 data-ui 上，切主题不用重建页面
+    root.dataset.ui = s.uiTheme === 'classic' ? 'classic' : 'mag';
     applyHandFont(s.taFontUrl || '');
     // 自定义主色调：只要选了颜色就覆盖 CSS 变量（优先级高于预设色板）
     if (s.accentColor) {
