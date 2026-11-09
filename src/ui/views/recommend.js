@@ -4,6 +4,7 @@
  */
 
 import { h, clear } from '../dom.js';
+import { masthead } from '../masthead.js';
 import { iconBtn, coverNode, fillCover } from '../components.js';
 import { trackKey } from '../../core/track.js';
 import { fmtTime } from '../../core/format.js';
@@ -30,21 +31,15 @@ export function mount(host, ctx) {
   var refreshing = false;
   var autoFetched = false;
 
-  // 报头式刊头：居中日期行 + 居中大标题 + 双线收边，按钮浮在右上角
-  var greet = h('div', { class: 'mp-mag__greet', text: greeting() });
-  greet.addEventListener('click', function () { ctx.exitOrMinimize(); });
-
-  var header = h('div', { class: 'mp-mag__top' }, [
-    h('div', { class: 'mp-mag__mast' }, [
-      h('div', { class: 'mp-mag__date', text: today() + '  星期' + '日一二三四五六'[new Date().getDay()] }),
-      greet,
-      h('div', { class: 'mp-mag__doublerule' })
-    ]),
-    h('div', { class: 'mp-mag__acts' }, [
+  var header = masthead({
+    date: today(),
+    title: greeting(),
+    onTitle: function () { ctx.exitOrMinimize(); },
+    actions: [
       iconBtn('search', { label: '搜索', onClick: function () { ctx.goto('search'); } }),
       iconBtn('gear', { label: '推荐偏好', onClick: function () { if (ctx.openPrefsPanel) ctx.openPrefsPanel(); } })
-    ])
-  ]);
+    ]
+  });
 
   /* ---------------- 刊头 ---------------- */
 

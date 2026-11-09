@@ -3,6 +3,7 @@
 import { h, clear } from '../dom.js';
 import { icon } from '../icons.js';
 import { iconBtn, songRow, emptyHint } from '../components.js';
+import { masthead } from '../masthead.js';
 import { trackKey } from '../../core/track.js';
 import { fmtSummary } from '../../core/format.js';
 import { playlistDuration } from '../../core/playlist.js';
@@ -36,7 +37,7 @@ export function mount(host, ctx) {
   }
 
   var titleEl = h('div', { class: 'mp-header__title', text: '歌单' });
-  var subEl = h('div', { class: 'mp-header__sub', text: '' });
+  var subEl = h('div', { class: 'mp-mast__hint', text: '' });
 
   var moreBtn = iconBtn('more', {
     label: '更多',
@@ -68,14 +69,16 @@ export function mount(host, ctx) {
     }
   });
 
-  var header = h('div', { class: 'mp-header' }, [
-    iconBtn('back', { label: '返回', onClick: back }),
-    titleEl,
-    subEl,
-    moreBtn
-  ]);
+  var header = masthead({
+    leading: iconBtn('back', { label: '返回', onClick: back }),
+    titleNode: h('div', { class: 'mp-mast__title', text: '歌单' }),
+    subNode: subEl,
+    actions: [moreBtn]
+  });
+  // 标题交给 masthead 渲染，后续更新沿用 titleEl 引用
+  titleEl = header.querySelector('.mp-mast__title');
 
-  var actions = h('div', { class: 'mp-actions' });
+  var actions = h('div', { class: 'mp-actions mp-actions--text' });
 
   function renderActions(p) {
     clear(actions);

@@ -2,6 +2,7 @@
 
 import { h, clear } from '../dom.js';
 import { pageTitle } from '../components.js';
+import { masthead, todayText } from '../masthead.js';
 import { THEMES, ACCENTS, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
 import { qrKey, qrCreate, qrCheck, account as neteaseAccount, isReady as neteaseReady } from '../../services/netease.js';
 
@@ -37,9 +38,11 @@ export function mount(host, ctx) {
   var body = h('div', { class: 'mp-body' });
   var statsTimer = null;
 
-  var header = h('div', { class: 'mp-header' }, [
-    pageTitle('设置', function () { ctx.exitOrMinimize(); })
-  ]);
+  var header = masthead({
+    date: todayText(),
+    title: '设置',
+    onTitle: function () { ctx.exitOrMinimize(); }
+  });
 
   function setSource(key, value) {
     var sources = Object.assign({}, state.settings.sources);

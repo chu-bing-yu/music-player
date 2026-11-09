@@ -1,7 +1,7 @@
 {
   "name": "music-player",
   "private": true,
-  "version": "0.48.0",
+  "version": "0.50.0",
   "type": "module",
   "description": "Roche 音乐播放器插件",
   "scripts": {

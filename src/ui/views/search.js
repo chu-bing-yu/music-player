@@ -3,6 +3,7 @@
 import { h, clear } from '../dom.js';
 import { icon } from '../icons.js';
 import { iconBtn, pageTitle, songRow, emptyHint } from '../components.js';
+import { masthead } from '../masthead.js';
 import { trackKey } from '../../core/track.js';
 import { sourceLabel } from '../../core/sourceLabel.js';
 
@@ -76,11 +77,13 @@ export function mount(host, ctx) {
 
   // 右上角不再放最小化：一级页左上角已经按「悬浮窗」开关统一处理
 
-  var header = h('div', { class: 'mp-header' }, [
-    // 搜索是推荐页的二级页面，左上角回推荐
-    iconBtn('back', { label: '返回推荐', onClick: function () { ctx.goto('recommend'); } }),
-    pageTitle('搜索', function () { ctx.exitApp(); })
-  ].concat(headerRight));
+  var header = masthead({
+    // 搜索是推荐页的二级页面，返回放在刊头左侧
+    leading: iconBtn('back', { label: '返回推荐', onClick: function () { ctx.goto('recommend'); } }),
+    title: '搜索',
+    onTitle: function () { ctx.exitApp(); },
+    actions: headerRight
+  });
 
   /* ---------- 推荐区 ---------- */
 

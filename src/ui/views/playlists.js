@@ -3,6 +3,7 @@
 import { h, clear } from '../dom.js';
 import { icon } from '../icons.js';
 import { iconBtn, pageTitle, coverNode, emptyHint } from '../components.js';
+import { masthead, todayText } from '../masthead.js';
 import { fmtSummary } from '../../core/format.js';
 import { playlistDuration } from '../../core/playlist.js';
 import { trackKey } from '../../core/track.js';
@@ -19,10 +20,6 @@ export function mount(host, ctx) {
     ctx.goto('playlist', { playlistId: p.id });
   }
 
-  // 报头：居中日期 + 手写体刊名 + 双线
-  var titleEl = h('div', { class: 'mp-plpage__title', text: 'Playlists' });
-  titleEl.addEventListener('click', function () { ctx.exitOrMinimize(); });
-
   var addBtn = iconBtn('plus', {
     label: '新建歌单',
     onClick: function () {
@@ -33,20 +30,13 @@ export function mount(host, ctx) {
       });
     }
   });
-  addBtn.classList.add('mp-plpage__add');
 
-  var d = new Date();
-  var dateText = String(d.getMonth() + 1).padStart(2, '0') + ' / ' + String(d.getDate()).padStart(2, '0') +
-    '  星期' + '日一二三四五六'[d.getDay()];
-
-  var header = h('div', { class: 'mp-plpage__top' }, [
-    h('div', { class: 'mp-plpage__mast' }, [
-      h('div', { class: 'mp-plpage__date', text: dateText }),
-      titleEl,
-      h('div', { class: 'mp-plpage__rule' })
-    ]),
-    addBtn
-  ]);
+  var header = masthead({
+    date: todayText(),
+    title: '歌单',
+    onTitle: function () { ctx.exitOrMinimize(); },
+    actions: [addBtn]
+  });
 
   /** 收藏：单独一行，作为入口 */
   function featureRow(p) {
@@ -80,8 +70,9 @@ export function mount(host, ctx) {
     return card;
   }
 
-  function grid(list) {
-    var box = h('div', { class: 'mp-plgrid' });
+  /** 横滑竖条：卡片同尺寸，靠 margin-top 交替形成错落 */
+  function rail(list) {
+    var box = h('div', { class: 'mp-plrail' });
     list.forEach(function (p) { box.appendChild(plCard(p)); });
     return box;
   }
@@ -103,12 +94,12 @@ export function mount(host, ctx) {
 
     if (mine.length) {
       listBox.appendChild(h('div', { class: 'mp-plpage__head', text: '我的歌单' }));
-      listBox.appendChild(grid(mine));
+      listBox.appendChild(rail(mine));
     }
 
     if (theirs.length) {
       listBox.appendChild(h('div', { class: 'mp-plpage__head', text: 'TA 的歌单' }));
-      listBox.appendChild(grid(theirs));
+      listBox.appendChild(rail(theirs));
     }
 
     if (!mine.length && !theirs.length) {
