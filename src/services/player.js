@@ -88,12 +88,18 @@ export function createRetryGate(intervalMs, maxTimes) {
  * 它们没有挂进 DOM，插件拿不到引用；但在手机上它们会占住音频会话，
  * 我们一播就被打断（表现就是点了停住 / 刚出声又没了）。
  *
- * 办法：给 HTMLMediaElement.play 打补丁 —— 插件正在放歌时，
+ * 办法：给 HTMLMediaElement.play 打补丁 —— 插件「正在放歌/想放歌」时，
  * 页面里其它 **loop=true** 的音频一律不让播（语音消息之类 loop 是 false，不受影响）。
  * 插件停了就放行，Roche 的保活可以在下一次用户操作时自己恢复。
+ *
+ * 注意 claimAudio 用的是「我们想放」而不是「我们此刻在放」：
+ * 以前判断 !activeAudio.paused，对方正好趁我们被暂停的那一瞬间挤进来，
+ * 于是就出现 pause/playing 每 0.1 秒来回抢一次的抖动。
  */
 var activeAudio = null;
 var guardInstalled = false;
+// 插件持有音频会话：从 load/resume 开始，到用户暂停/停止为止
+export var pluginClaimsAudio = { value: false };
 
 export function installPageAudioGuard() {
   if (guardInstalled) return;
@@ -105,7 +111,7 @@ export function installPageAudioGuard() {
 
   HTMLMediaElement.prototype.play = function () {
     try {
-      if (this !== activeAudio && this.loop && activeAudio && !activeAudio.paused) {
+      if (this !== activeAudio && this.loop && pluginClaimsAudio.value) {
         try { this.pause(); } catch (err) { /* 忽略 */ }
         // 假装播过了，免得宿主反复重试
         return Promise.resolve();
@@ -223,7 +229,9 @@ export function createPlayer(options) {
     state.status = 'playing';
     state.error = '';
     userPaused = false;
-    retryGate.reset();
+    // 注意：**不要**在这里 reset 重试闸门 —— 每次抢回来都会 reset，就变成无限抖动。
+    // 闸门只在 load()/resume()（用户主动）时清零。
+    pluginClaimsAudio.value = true;
     note('playing');
     emit();
   }
@@ -239,6 +247,7 @@ export function createPlayer(options) {
       if (retryGate.count() >= retryGate.max()) {
         lastFailure = { host: hostOf(lastSrc), reason: 'stolen' };
         state.error = '反复被打断（Roche 的「音乐保活」占着音频）';
+        pluginClaimsAudio.value = false; // 别再和它抢，交还会话
         emit();
       }
       return;
@@ -446,8 +455,16 @@ export function createPlayer(options) {
   function setupMediaActions() {
     if (!mediaSession()) return;
     setActionHandler('play', function () { resume(); });
-    setActionHandler('pause', function () { userPaused = true; if (audio) audio.pause(); });
-    setActionHandler('stop', function () { userPaused = true; if (audio) audio.pause(); });
+    setActionHandler('pause', function () {
+      userPaused = true;
+      pluginClaimsAudio.value = false;
+      if (audio) audio.pause();
+    });
+    setActionHandler('stop', function () {
+      userPaused = true;
+      pluginClaimsAudio.value = false;
+      if (audio) audio.pause();
+    });
     setActionHandler('previoustrack', function () { if (typeof opts.onPrev === 'function') opts.onPrev(); });
     setActionHandler('nexttrack', function () { if (typeof opts.onNext === 'function') opts.onNext(); });
     setActionHandler('seekto', function (details) {
@@ -538,6 +555,7 @@ export function createPlayer(options) {
     lastFailure = null;
     userPaused = false;
     retryGate.reset();
+    pluginClaimsAudio.value = true;
     probe = [];
     sessionStart = Date.now();
     note('session');
@@ -595,6 +613,7 @@ export function createPlayer(options) {
     if (!state.track && !pendingUrl) return false;
     userPaused = false;
     retryGate.reset();
+    pluginClaimsAudio.value = true;
 
     // 上次被策略拦下的地址：这次点击直接起播，不要重新解析
     if (pendingUrl && (!audio || audio.src !== pendingUrl)) {
@@ -694,6 +713,7 @@ export function createPlayer(options) {
     if (!state.track) return false;
     if (audio && !audio.paused) {
       userPaused = true; // 用户主动暂停：不要自动续播
+      pluginClaimsAudio.value = false; // 交还会话，别继续压着页面的保活音频
       audio.pause();
       return true;
     }
@@ -720,6 +740,7 @@ export function createPlayer(options) {
   function stop() {
     attemptToken += 1;
     userPaused = true;
+    pluginClaimsAudio.value = false;
     try {
       if (audio) {
         audio.pause();
@@ -738,6 +759,7 @@ export function createPlayer(options) {
 
   function dispose() {
     attemptToken += 1;
+    pluginClaimsAudio.value = false;
     try {
       if (audio) {
         audio.pause();

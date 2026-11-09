@@ -1,4 +1,4 @@
-/* music-player v0.60.0 | built 2026-11-09T15:18:18.803Z */
+/* music-player v0.61.0 | built 2026-11-09T15:26:37.163Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1736,6 +1736,7 @@
   }
   var activeAudio = null;
   var guardInstalled = false;
+  var pluginClaimsAudio = { value: false };
   function installPageAudioGuard() {
     if (guardInstalled) return;
     if (typeof window === "undefined" || typeof HTMLMediaElement === "undefined") return;
@@ -1744,7 +1745,7 @@
     if (typeof origPlay !== "function") return;
     HTMLMediaElement.prototype.play = function() {
       try {
-        if (this !== activeAudio && this.loop && activeAudio && !activeAudio.paused) {
+        if (this !== activeAudio && this.loop && pluginClaimsAudio.value) {
           try {
             this.pause();
           } catch (err) {
@@ -1835,7 +1836,7 @@
       state.status = "playing";
       state.error = "";
       userPaused = false;
-      retryGate.reset();
+      pluginClaimsAudio.value = true;
       note("playing");
       emit();
     }
@@ -1846,6 +1847,7 @@
         if (retryGate.count() >= retryGate.max()) {
           lastFailure = { host: hostOf(lastSrc), reason: "stolen" };
           state.error = "反复被打断（Roche 的「音乐保活」占着音频）";
+          pluginClaimsAudio.value = false;
           emit();
         }
         return;
@@ -2050,10 +2052,12 @@
       });
       setActionHandler("pause", function() {
         userPaused = true;
+        pluginClaimsAudio.value = false;
         if (audio) audio.pause();
       });
       setActionHandler("stop", function() {
         userPaused = true;
+        pluginClaimsAudio.value = false;
         if (audio) audio.pause();
       });
       setActionHandler("previoustrack", function() {
@@ -2138,6 +2142,7 @@
       lastFailure = null;
       userPaused = false;
       retryGate.reset();
+      pluginClaimsAudio.value = true;
       probe = [];
       sessionStart = Date.now();
       note("session");
@@ -2183,6 +2188,7 @@
       if (!state.track && !pendingUrl) return false;
       userPaused = false;
       retryGate.reset();
+      pluginClaimsAudio.value = true;
       if (pendingUrl && (!audio || audio.src !== pendingUrl)) {
         if (!audio) recreateAudio();
         audio.src = pendingUrl;
@@ -2273,6 +2279,7 @@
       if (!state.track) return false;
       if (audio && !audio.paused) {
         userPaused = true;
+        pluginClaimsAudio.value = false;
         audio.pause();
         return true;
       }
@@ -2296,6 +2303,7 @@
     function stop() {
       attemptToken += 1;
       userPaused = true;
+      pluginClaimsAudio.value = false;
       try {
         if (audio) {
           audio.pause();
@@ -2314,6 +2322,7 @@
     }
     function dispose() {
       attemptToken += 1;
+      pluginClaimsAudio.value = false;
       try {
         if (audio) {
           audio.pause();
@@ -13313,7 +13322,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.60.0" });
+    app = await createApp({ container, roche, version: "0.61.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -13329,7 +13338,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.60.0",
+    version: "0.61.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
