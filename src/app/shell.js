@@ -48,6 +48,8 @@ export function createShell(container, ctx) {
   var page = null;
   var playerCoverKey = '';
   var lastLyricText = '';
+  var appliedUi = '';
+  var rendering = false;
 
   function isNow() {
     return ctx.state.route === 'now';
@@ -101,8 +103,12 @@ export function createShell(container, ctx) {
   function applyAppearance() {
     var s = ctx.state.settings;
     root.dataset.accent = s.accent || 'red';
-    // 界面风格：mag / classic，样式全部挂在 data-ui 上，切主题不用重建页面
-    root.dataset.ui = s.uiTheme === 'classic' ? 'classic' : 'mag';
+    // 界面风格：mag / classic。两套皮肤的 DOM 不同（刊头 / 歌单卡 / 曲目行），
+    // 切换时要把当前页重新挂载一次，不能只换样式。
+    var nextUi = s.uiTheme === 'classic' ? 'classic' : 'mag';
+    var skinChanged = !!appliedUi && appliedUi !== nextUi;
+    appliedUi = nextUi;
+    root.dataset.ui = nextUi;
     applyHandFont(s.taFontUrl || '');
     // 自定义主色调：只要选了颜色就覆盖 CSS 变量（优先级高于预设色板）
     if (s.accentColor) {
@@ -121,6 +127,9 @@ export function createShell(container, ctx) {
     } else {
       root.dataset.theme = s.theme === 'dark' ? 'dark' : 'light';
     }
+
+    // applyAppearance 会被 renderAll 调用；那里紧接着就会重建页面，这里不要重复挂载
+    if (skinChanged && !rendering && page) renderView();
   }
 
   /* ---------- 键盘 ---------- */
@@ -257,11 +266,16 @@ export function createShell(container, ctx) {
   }
 
   function renderAll() {
-    applyAppearance();
-    renderDock();
-    renderView();
-    renderPlayer();
-    syncKeyboard();
+    rendering = true;
+    try {
+      applyAppearance();
+      renderDock();
+      renderView();
+      renderPlayer();
+      syncKeyboard();
+    } finally {
+      rendering = false;
+    }
   }
 
   function refreshPage() {

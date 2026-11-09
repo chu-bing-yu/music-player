@@ -1,4 +1,4 @@
-/* music-player v0.52.0 | built 2026-11-09T10:04:52.071Z */
+/* music-player v0.53.0 | built 2026-11-09T10:29:02.353Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -453,6 +453,9 @@
     { id: "mag", name: "杂志风" },
     { id: "classic", name: "经典" }
   ];
+  function isClassic(settings) {
+    return !!(settings && settings.uiTheme === "classic");
+  }
   var ACCENTS = [
     { id: "red", name: "赤红", color: "#e14b4b" },
     { id: "blue", name: "雾蓝", color: "#3b82f6" },
@@ -5548,6 +5551,8 @@
   /* 按容器算宽度：390 宽减去左右 24 内边距、3 个 8px 间隙，正好 4 张 */
   flex: 0 0 calc((100% - 24px) / 4);
   min-width: 0;
+  /* 竖排书名是绝对定位在封面上的，这里必须留定位上下文 */
+  position: relative;
   padding: 0;
   border: 0;
   background: transparent;
@@ -5588,29 +5593,42 @@
   height: 22px;
 }
 
-/* 文案放封面下方：一屏 4 张时也读得清 */
+/* 竖排书名压在封面上（像书脊题签）：名字单列竖排，数量小字放封面底部 */
 .mp-shelf__label {
-  padding-top: 7px;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 4px 7px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.24) 0%, rgba(0, 0, 0, 0.06) 42%, rgba(0, 0, 0, 0.45) 100%);
+  pointer-events: none;
 }
 
 .mp-shelf__name {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  /* 单列，不折成两列；太长就裁掉，避免出现「两竖行」的怪样子 */
+  white-space: nowrap;
+  max-height: 100%;
   font-family: var(--mp-serif);
-  font-size: 11.5px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.15;
   letter-spacing: 0.5px;
-  color: var(--mp-ink);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
 
 .mp-shelf__sub {
-  margin-top: 2px;
+  margin-top: auto;
   font-family: var(--mp-sans-cn);
-  font-size: 9.5px;
+  font-size: 9px;
   letter-spacing: 0.5px;
-  color: var(--mp-muted);
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
 }
 
 /* 榜单目录 */
@@ -6607,9 +6625,27 @@
   // src/ui/masthead.js
   function masthead(opts) {
     var o = opts || {};
+    var titleNode = o.titleNode || h("div", {
+      class: "mp-mast__title" + (o.hand ? " mp-mast__title--hand" : ""),
+      text: o.title || ""
+    });
+    if (o.classic) {
+      var classicTitle = o.titleNode || h("div", { class: "mp-header__title", text: o.title || "" });
+      if (o.onTitle) classicTitle.addEventListener("click", o.onTitle);
+      var row = h("div", { class: "mp-header" }, [
+        o.leading || null,
+        classicTitle,
+        o.subNode || null,
+        o.hint ? h("div", { class: "mp-header__sub", text: o.hint }) : null
+      ].filter(Boolean));
+      (o.actions || []).forEach(function(btn) {
+        row.appendChild(btn);
+      });
+      return row;
+    }
     var text = h("div", { class: "mp-mast__text" }, [
       o.date ? h("div", { class: "mp-mast__date", text: o.date }) : null,
-      o.titleNode || h("div", { class: "mp-mast__title" + (o.hand ? " mp-mast__title--hand" : ""), text: o.title || "" })
+      titleNode
     ].filter(Boolean));
     var bar = h("div", { class: "mp-mast__bar" }, [
       o.leading || null,
@@ -6653,7 +6689,19 @@
     var dd = String(d.getDate()).padStart(2, "0");
     return mm + " / " + dd;
   }
+  function classicGreeting() {
+    var hour = (/* @__PURE__ */ new Date()).getHours();
+    if (hour < 6) return "夜深了，来点安静的歌";
+    if (hour < 11) return "早上好，今天听点什么";
+    if (hour < 14) return "中午好，放松一下";
+    if (hour < 18) return "下午好，给你挑了几首";
+    if (hour < 23) return "晚上好，适合慢慢听";
+    return "夜深了，来点安静的歌";
+  }
   function mount(host, ctx) {
+    return isClassic(ctx.state.settings) ? mountClassic(host, ctx) : mountMagazine(host, ctx);
+  }
+  function mountMagazine(host, ctx) {
     var body = h("div", { class: "mp-mag" });
     var refreshing = false;
     var autoFetched = false;
@@ -6821,6 +6869,201 @@
       }
     };
   }
+  function mountClassic(host, ctx) {
+    var body = h("div", { class: "mp-body" });
+    var refreshing = false;
+    var autoFetched = false;
+    var header = masthead({
+      classic: true,
+      title: "推荐",
+      onTitle: function() {
+        ctx.exitOrMinimize();
+      },
+      actions: [
+        iconBtn("search", { label: "搜索", onClick: function() {
+          ctx.goto("search");
+        } }),
+        iconBtn("more", { label: "推荐偏好", onClick: function() {
+          if (ctx.openPrefsPanel) ctx.openPrefsPanel();
+        } })
+      ]
+    });
+    function coverTile(tracks) {
+      var grid = h("div", { class: "mp-rec__mosaic" });
+      var list = (tracks || []).slice(0, 4);
+      for (var i = 0; i < 4; i++) {
+        var t = list[i];
+        var cell = coverNode(t ? ctx.coverOf(t) : "", "mp-rec__tile");
+        if (t) cell.dataset.cover = trackKey(t);
+        grid.appendChild(cell);
+      }
+      return grid;
+    }
+    function aiCard(rec) {
+      var tracks = rec && rec.tracks || [];
+      var name = rec && rec.playlistName || "AI 为你挑的";
+      var playBtn = h("button", { class: "mp-rec__play", type: "button", text: "播放全部" });
+      playBtn.addEventListener("click", function() {
+        if (!tracks.length) return;
+        ctx.playRecommend(tracks, 0);
+      });
+      var refreshBtn = h("button", {
+        class: "mp-rec__refresh",
+        type: "button",
+        text: refreshing ? "正在挑…" : "换一批"
+      });
+      refreshBtn.addEventListener("click", function() {
+        if (refreshing) return;
+        refreshing = true;
+        render2();
+        ctx.refreshRecommend(true).then(function() {
+          refreshing = false;
+          render2();
+        }, function() {
+          refreshing = false;
+          render2();
+        });
+      });
+      return h("div", { class: "mp-rec__card" }, [
+        coverTile(tracks),
+        h("div", { class: "mp-rec__info" }, [
+          h("div", { class: "mp-rec__label", text: "AI 为你挑的" }),
+          h("div", { class: "mp-rec__name", text: name }),
+          h("div", {
+            class: "mp-rec__meta",
+            text: tracks.length ? tracks.length + " 首 · " + (rec.mode === "local" ? "按偏好" : "AI 挑选") : "还没有推荐"
+          }),
+          h("div", { class: "mp-rec__actions" }, [playBtn, refreshBtn])
+        ])
+      ]);
+    }
+    function updateRailFade(rail) {
+      var mid = rail.scrollLeft + rail.clientWidth / 2;
+      var half = rail.clientWidth / 2 || 1;
+      Array.prototype.forEach.call(rail.children, function(card) {
+        var center = card.offsetLeft + card.offsetWidth / 2;
+        var dist = Math.abs(center - mid) / half;
+        var near = Math.max(0, 1 - dist);
+        card.classList.toggle("is-center", dist < 0.36);
+        card.style.opacity = String((0.45 + near * 0.55).toFixed(3));
+        card.style.filter = dist < 0.36 ? "none" : "grayscale(0.6)";
+      });
+    }
+    function playlistsRail() {
+      var list = (ctx.state.playlists || []).filter(function(p) {
+        return p && p.id;
+      });
+      if (!list.length) return null;
+      var rail = h("div", { class: "mp-rec-rail" });
+      list.slice(0, 20).forEach(function(p) {
+        var first = (p.tracks || [])[0];
+        var cover = h("div", { class: "mp-rec-rail__cover" });
+        fillCover(cover, first ? ctx.coverOf(first) : "");
+        if (first) cover.dataset.cover = trackKey(first);
+        var card = h("button", { class: "mp-rec-rail__card", type: "button" }, [
+          cover,
+          h("div", { class: "mp-rec-rail__name", text: p.name }),
+          h("div", { class: "mp-rec-rail__sub", text: (p.tracks || []).length + " 首" })
+        ]);
+        card.addEventListener("click", function() {
+          ctx.goto("playlist", { playlistId: p.id });
+        });
+        rail.appendChild(card);
+      });
+      rail.addEventListener("scroll", function() {
+        updateRailFade(rail);
+      }, { passive: true });
+      requestAnimationFrame(function() {
+        updateRailFade(rail);
+      });
+      return h("div", { class: "mp-rec-railwrap" }, [
+        h("div", { class: "mp-section", text: "我的歌单" }),
+        rail
+      ]);
+    }
+    function trackRow(track, index, tracks) {
+      var cover = coverNode(ctx.coverOf(track), "mp-rec__rowcover");
+      cover.dataset.cover = trackKey(track);
+      var row = h("button", { class: "mp-rec__row", type: "button" }, [
+        cover,
+        h("div", { class: "mp-rec__rowmain" }, [
+          h("div", { class: "mp-rec__rowname", text: track.name || "未知歌曲" }),
+          h("div", { class: "mp-rec__rowsub", text: track.artist || "" })
+        ])
+      ]);
+      row.addEventListener("click", function() {
+        ctx.playRecommend(tracks, index);
+      });
+      return row;
+    }
+    function renderBody() {
+      var rec = ctx.recommendCache ? ctx.recommendCache() : null;
+      var tracks = rec && rec.tracks || [];
+      body.appendChild(h("div", { class: "mp-rec__hello", text: classicGreeting() }));
+      body.appendChild(aiCard(rec));
+      var rail = playlistsRail();
+      if (rail) body.appendChild(rail);
+      if (rec && rec.reason) {
+        body.appendChild(h("div", { class: "mp-rec__hint", text: rec.reason }));
+      }
+      if (tracks.length) {
+        body.appendChild(h("div", { class: "mp-section", text: "今日推荐" }));
+        var listBox = h("div", { class: "mp-rec__list" });
+        tracks.forEach(function(track, i) {
+          listBox.appendChild(trackRow(track, i, tracks));
+        });
+        body.appendChild(listBox);
+      }
+      if (ctx.neteaseReady && ctx.neteaseReady()) {
+        var rank = h("button", { class: "mp-rec__rank", type: "button" }, [
+          h("div", { class: "mp-rec__rankname", text: "排行榜" }),
+          h("div", { class: "mp-rec__ranksub", text: "去搜索页看热歌榜 / 新歌榜" })
+        ]);
+        rank.addEventListener("click", function() {
+          ctx.goto("search");
+        });
+        body.appendChild(rank);
+      }
+    }
+    function render2() {
+      clear(body);
+      try {
+        renderBody();
+      } catch (err) {
+        clear(body);
+        body.appendChild(h("div", { class: "mp-rec__hint", text: "推荐加载失败" }));
+        var retry = h("button", { class: "mp-rec__refresh", type: "button", text: "重试" });
+        retry.addEventListener("click", function() {
+          render2();
+        });
+        body.appendChild(retry);
+      }
+    }
+    var view = h("div", { class: "mp-view" }, [header, body]);
+    host.appendChild(view);
+    render2();
+    var mode = ctx.state.settings && ctx.state.settings.recMode || "manual";
+    var cache = ctx.recommendCache ? ctx.recommendCache() : null;
+    var shouldFetch = !cache || !cache.tracks || mode === "auto" && !autoFetched;
+    if (shouldFetch && ctx.refreshRecommend) {
+      if (mode === "auto") autoFetched = true;
+      refreshing = true;
+      render2();
+      ctx.refreshRecommend(mode === "auto").then(function() {
+        refreshing = false;
+        render2();
+      }, function() {
+        refreshing = false;
+        render2();
+      });
+    }
+    return {
+      refresh: render2,
+      destroy: function() {
+        refreshing = false;
+      }
+    };
+  }
 
   // src/core/sourceLabel.js
   var LABELS = {
@@ -6917,6 +7160,7 @@
       }
     }));
     var header = masthead({
+      classic: isClassic(state.settings),
       // 搜索是推荐页的二级页面，返回放在刊头左侧
       leading: iconBtn("back", { label: "返回推荐", onClick: function() {
         ctx.goto("recommend");
@@ -7158,16 +7402,10 @@
 
   // src/ui/views/playlists.js
   function mount3(host, ctx) {
-    var state = ctx.state;
-    var listBox = h("div", { class: "mp-list mp-body mp-plpage__body" });
-    function openPlaylist(p) {
-      if (p.virtual === "favorites") {
-        ctx.goto("playlist", { playlistId: "__favorites__" });
-        return;
-      }
-      ctx.goto("playlist", { playlistId: p.id });
-    }
-    var addBtn = iconBtn("plus", {
+    return isClassic(ctx.state.settings) ? mountClassic2(host, ctx) : mountMagazine2(host, ctx);
+  }
+  function addButton(ctx) {
+    return iconBtn("plus", {
       label: "新建歌单",
       onClick: function() {
         ctx.openPrompt({
@@ -7179,13 +7417,33 @@
         });
       }
     });
+  }
+  function favoritesEntry(state) {
+    return {
+      id: "__favorites__",
+      virtual: "favorites",
+      name: "我的收藏",
+      tracks: state.favorites || [],
+      createdAt: 0
+    };
+  }
+  function mountMagazine2(host, ctx) {
+    var state = ctx.state;
+    var listBox = h("div", { class: "mp-list mp-body mp-plpage__body" });
+    function openPlaylist(p) {
+      if (p.virtual === "favorites") {
+        ctx.goto("playlist", { playlistId: "__favorites__" });
+        return;
+      }
+      ctx.goto("playlist", { playlistId: p.id });
+    }
     var header = masthead({
       date: todayText(),
       title: "歌单",
       onTitle: function() {
         ctx.exitOrMinimize();
       },
-      actions: [addBtn]
+      actions: [addButton(ctx)]
     });
     function featureRow(p) {
       var first = p.tracks[0];
@@ -7197,7 +7455,7 @@
           h("div", { class: "mp-plfeat__name", text: p.name }),
           h("div", { class: "mp-plfeat__sub", text: fmtSummary(p.tracks.length, playlistDuration(p)) })
         ]),
-        h("span", { class: "mp-plfeat__arrow", html: icon("play") })
+        h("span", { class: "mp-plfeat__arrow", html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>' })
       ]);
       row.addEventListener("click", function() {
         openPlaylist(p);
@@ -7221,13 +7479,7 @@
     }
     function renderList() {
       clear(listBox);
-      listBox.appendChild(featureRow({
-        id: "__favorites__",
-        virtual: "favorites",
-        name: "我的收藏",
-        tracks: state.favorites || [],
-        createdAt: 0
-      }));
+      listBox.appendChild(featureRow(favoritesEntry(state)));
       var mine = state.playlists.filter(function(p) {
         return p.owner !== "char";
       });
@@ -7248,11 +7500,76 @@
     renderList();
     return { refresh: renderList };
   }
+  function mountClassic2(host, ctx) {
+    var state = ctx.state;
+    var listBox = h("div", { class: "mp-list mp-body" });
+    var header = masthead({
+      classic: true,
+      title: "歌单",
+      onTitle: function() {
+        ctx.exitOrMinimize();
+      },
+      actions: [addButton(ctx)]
+    });
+    function plRow(p) {
+      var first = p.tracks[0];
+      var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-pl__cover");
+      if (first) cover.dataset.cover = trackKey(first);
+      var row = h("button", { class: "mp-pl", type: "button" }, [
+        cover,
+        h("div", { class: "mp-pl__main" }, [
+          h("div", { class: "mp-pl__name", text: p.name }),
+          h("div", { class: "mp-pl__sub", text: fmtSummary(p.tracks.length, playlistDuration(p)) })
+        ])
+      ]);
+      row.addEventListener("click", function() {
+        if (p.virtual === "favorites") {
+          ctx.goto("playlist", { playlistId: "__favorites__" });
+          return;
+        }
+        ctx.goto("playlist", { playlistId: p.id });
+      });
+      return row;
+    }
+    function renderList() {
+      clear(listBox);
+      listBox.appendChild(plRow(favoritesEntry(state)));
+      var mine = state.playlists.filter(function(p) {
+        return p.owner !== "char";
+      });
+      var theirs = state.playlists.filter(function(p) {
+        return p.owner === "char";
+      });
+      if (mine.length) {
+        listBox.appendChild(h("div", { class: "mp-section", text: "我的歌单" }));
+        mine.forEach(function(p) {
+          listBox.appendChild(plRow(p));
+        });
+      }
+      if (theirs.length) {
+        listBox.appendChild(h("div", { class: "mp-section", text: "TA 的歌单" }));
+        theirs.forEach(function(p) {
+          listBox.appendChild(plRow(p));
+        });
+      }
+      if (!mine.length && !theirs.length) {
+        listBox.appendChild(emptyHint(
+          "还没有歌单",
+          "右上角 + 新建一个；收藏的歌会固定显示在最上面"
+        ));
+      }
+    }
+    var view = h("div", { class: "mp-view" }, [header, listBox]);
+    host.appendChild(view);
+    renderList();
+    return { refresh: renderList };
+  }
 
   // src/ui/views/playlistDetail.js
   function mount4(host, ctx) {
     var state = ctx.state;
-    var listBox = h("div", { class: "mp-body mp-tracklist" });
+    var classic = isClassic(state.settings);
+    var listBox = h("div", { class: "mp-body" + (classic ? "" : " mp-tracklist") });
     function back2() {
       ctx.goto("playlists");
     }
@@ -7272,8 +7589,14 @@
       }
       return ctx.playlistOf(state.playlistId);
     }
-    var titleEl = h("div", { class: "mp-header__title", text: "歌单" });
-    var subEl = h("div", { class: "mp-mast__hint", text: "" });
+    var titleEl = h("div", {
+      class: classic ? "mp-header__title" : "mp-mast__title",
+      text: "歌单"
+    });
+    var subEl = h("div", {
+      class: classic ? "mp-header__sub" : "mp-mast__hint",
+      text: ""
+    });
     var moreBtn = iconBtn("more", {
       label: "更多",
       onClick: function() {
@@ -7308,13 +7631,13 @@
       }
     });
     var header = masthead({
+      classic,
       leading: iconBtn("back", { label: "返回", onClick: back2 }),
-      titleNode: h("div", { class: "mp-mast__title", text: "歌单" }),
+      titleNode: titleEl,
       subNode: subEl,
       actions: [moreBtn]
     });
-    titleEl = header.querySelector(".mp-mast__title");
-    var actions = h("div", { class: "mp-actions mp-actions--text" });
+    var actions = h("div", { class: "mp-actions" + (classic ? "" : " mp-actions--text") });
     function renderActions(p) {
       clear(actions);
       var disabled = !p.tracks.length;
@@ -7358,6 +7681,28 @@
         return;
       }
       p.tracks.forEach(function(track, i) {
+        if (classic) {
+          listBox.appendChild(songRow({
+            track,
+            coverUrl: ctx.coverOf(track),
+            coverKey: trackKey(track),
+            current: ctx.isCurrent(track),
+            playing: state.player.status === "playing",
+            onPlay: function() {
+              if (ctx.isCurrent(track)) ctx.togglePlay();
+              else ctx.playTracks(p.tracks, i);
+            },
+            onMore: function() {
+              ctx.openSongSheet(track, {
+                playlistId: p.id,
+                index: i,
+                queueTracks: p.tracks,
+                queueIndex: i
+              });
+            }
+          }));
+          return;
+        }
         listBox.appendChild(magTrackRow({
           index: i,
           track,
@@ -8185,6 +8530,7 @@
     var body = h("div", { class: "mp-body" });
     var statsTimer = null;
     var header = masthead({
+      classic: isClassic(state.settings),
       date: todayText(),
       title: "设置",
       onTitle: function() {
@@ -8848,6 +9194,8 @@
     var page = null;
     var playerCoverKey = "";
     var lastLyricText = "";
+    var appliedUi = "";
+    var rendering = false;
     function isNow() {
       return ctx.state.route === "now";
     }
@@ -8893,7 +9241,10 @@
     function applyAppearance() {
       var s = ctx.state.settings;
       root.dataset.accent = s.accent || "red";
-      root.dataset.ui = s.uiTheme === "classic" ? "classic" : "mag";
+      var nextUi = s.uiTheme === "classic" ? "classic" : "mag";
+      var skinChanged = !!appliedUi && appliedUi !== nextUi;
+      appliedUi = nextUi;
+      root.dataset.ui = nextUi;
       applyHandFont(s.taFontUrl || "");
       if (s.accentColor) {
         root.style.setProperty("--mp-accent", s.accentColor);
@@ -8911,6 +9262,7 @@
       } else {
         root.dataset.theme = s.theme === "dark" ? "dark" : "light";
       }
+      if (skinChanged && !rendering && page) renderView();
     }
     function keyboardOpen() {
       var shrunk = false;
@@ -9028,11 +9380,16 @@
       else if (route === "now") page = mount7(viewHost, ctx);
     }
     function renderAll() {
-      applyAppearance();
-      renderDock();
-      renderView();
-      renderPlayer();
-      syncKeyboard();
+      rendering = true;
+      try {
+        applyAppearance();
+        renderDock();
+        renderView();
+        renderPlayer();
+        syncKeyboard();
+      } finally {
+        rendering = false;
+      }
     }
     function refreshPage() {
       if (page && typeof page.refresh === "function") {
@@ -12203,7 +12560,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.52.0" });
+    app = await createApp({ container, roche, version: "0.53.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -12219,7 +12576,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.52.0",
+    version: "0.53.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

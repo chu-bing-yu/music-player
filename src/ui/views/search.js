@@ -6,6 +6,7 @@ import { iconBtn, pageTitle, songRow, emptyHint } from '../components.js';
 import { masthead } from '../masthead.js';
 import { trackKey } from '../../core/track.js';
 import { sourceLabel } from '../../core/sourceLabel.js';
+import { isClassic } from '../../core/settings.js';
 
 export function mount(host, ctx) {
   var state = ctx.state;
@@ -78,6 +79,7 @@ export function mount(host, ctx) {
   // 右上角不再放最小化：一级页左上角已经按「悬浮窗」开关统一处理
 
   var header = masthead({
+    classic: isClassic(state.settings),
     // 搜索是推荐页的二级页面，返回放在刊头左侧
     leading: iconBtn('back', { label: '返回推荐', onClick: function () { ctx.goto('recommend'); } }),
     title: '搜索',

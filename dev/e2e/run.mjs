@@ -400,31 +400,29 @@ try {
   await sleep(200);
   check('换主色调', await evaluate('document.querySelector(".mp-root").dataset.accent === "blue"'));
 
-  // 界面风格：杂志风 / 经典（v0.52.0：等大卡 + 一屏 4 张 + 位移错落）
+  // 界面风格：杂志风（等大卡 + 一屏 4 张 + 位移错落）/ 经典（还原 0.40：大标题刊头 + 竖排列表）
   check('刊头没有竖线', await evaluate('!document.querySelector(".mp-mast__mark")'));
   check('默认是杂志风', await evaluate('document.querySelector(".mp-root").dataset.ui === "mag"'));
+
   await evaluate('window.__t.clickByText(".mp-theme-btn", "经典")');
-  await sleep(250);
+  await sleep(400);
   check('切到经典风格', await evaluate('document.querySelector(".mp-root").dataset.ui === "classic"'));
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
   await sleep(300);
-  check('经典模式一屏 4 张等大方形', await evaluate(`(function () {
-    const rail = document.querySelector('.mp-shelf');
-    const card = rail && rail.querySelector('.mp-shelf__card');
-    if (!card) return false;
-    const rw = rail.getBoundingClientRect().width;
-    const cw = card.getBoundingClientRect().width;
-    const art = card.querySelector('.mp-shelf__art').getBoundingClientRect();
-    // 经典 gap 12：(容器 - 3×12) / 4
-    const fit = Math.abs(cw - (rw - 36) / 4) < 1.5;
-    return fit && Math.abs(art.width - art.height) < 1.5;
-  })()`));
+  check('经典歌单页是 0.40 的竖排列表', await evaluate('document.querySelectorAll(".mp-pl").length >= 1 && !document.querySelector(".mp-shelf")'));
+  check('经典刊头是大标题（无日期细线）', await evaluate('!!document.querySelector(".mp-header__title") && !document.querySelector(".mp-mast")'));
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "推荐")');
+  await sleep(400);
+  check('经典推荐页还是老版式', await evaluate('!!document.querySelector(".mp-rec__card") && !document.querySelector(".mp-mag__feature")'));
 
   await evaluate('window.__t.clickByText(".mp-dock__btn", "设置")');
-  await sleep(250);
+  await sleep(300);
   await evaluate('window.__t.clickByText(".mp-theme-btn", "杂志风")');
-  await sleep(250);
+  await sleep(400);
   check('切回杂志风', await evaluate('document.querySelector(".mp-root").dataset.ui === "mag"'));
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "推荐")');
+  await sleep(400);
+  check('杂志风推荐页回到册页版式', await evaluate('!!document.querySelector(".mp-mag__feature")'));
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
   await sleep(300);
   check('杂志风一屏 4 张、等大竖幅、顶边错落', await evaluate(`(function () {

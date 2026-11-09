@@ -1,14 +1,47 @@
-/** 歌单列表：与推荐页同一套杂志语言（栏目头 + 竖幅封面书架） */
+/**
+ * 歌单列表，两套皮肤：
+ * - 杂志风：栏目头 + 竖幅书架（一屏 4 张，等大、纵向错落）
+ * - 经典：还原 0.40 的竖排列表（54px 封面 + 名称 + 数量），收藏固定在第一行
+ */
 
 import { h, clear } from '../dom.js';
-import { icon } from '../icons.js';
 import { iconBtn, coverNode, emptyHint, shelfRail } from '../components.js';
 import { masthead, todayText, sectionHead } from '../masthead.js';
 import { fmtSummary } from '../../core/format.js';
 import { playlistDuration } from '../../core/playlist.js';
 import { trackKey } from '../../core/track.js';
+import { isClassic } from '../../core/settings.js';
 
 export function mount(host, ctx) {
+  return isClassic(ctx.state.settings) ? mountClassic(host, ctx) : mountMagazine(host, ctx);
+}
+
+function addButton(ctx) {
+  return iconBtn('plus', {
+    label: '新建歌单',
+    onClick: function () {
+      ctx.openPrompt({
+        title: '新建歌单',
+        placeholder: '给歌单起个名字',
+        onSubmit: function (name) { ctx.createPlaylist(name); }
+      });
+    }
+  });
+}
+
+function favoritesEntry(state) {
+  return {
+    id: '__favorites__',
+    virtual: 'favorites',
+    name: '我的收藏',
+    tracks: state.favorites || [],
+    createdAt: 0
+  };
+}
+
+/* ---------------- 杂志风 ---------------- */
+
+function mountMagazine(host, ctx) {
   var state = ctx.state;
   var listBox = h('div', { class: 'mp-list mp-body mp-plpage__body' });
 
@@ -20,22 +53,11 @@ export function mount(host, ctx) {
     ctx.goto('playlist', { playlistId: p.id });
   }
 
-  var addBtn = iconBtn('plus', {
-    label: '新建歌单',
-    onClick: function () {
-      ctx.openPrompt({
-        title: '新建歌单',
-        placeholder: '给歌单起个名字',
-        onSubmit: function (name) { ctx.createPlaylist(name); }
-      });
-    }
-  });
-
   var header = masthead({
     date: todayText(),
     title: '歌单',
     onTitle: function () { ctx.exitOrMinimize(); },
-    actions: [addBtn]
+    actions: [addButton(ctx)]
   });
 
   /** 收藏：单独一行，作为入口 */
@@ -50,7 +72,7 @@ export function mount(host, ctx) {
         h('div', { class: 'mp-plfeat__name', text: p.name }),
         h('div', { class: 'mp-plfeat__sub', text: fmtSummary(p.tracks.length, playlistDuration(p)) })
       ]),
-      h('span', { class: 'mp-plfeat__arrow', html: icon('play') })
+      h('span', { class: 'mp-plfeat__arrow', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>' })
     ]);
     row.addEventListener('click', function () { openPlaylist(p); });
     return row;
@@ -73,21 +95,79 @@ export function mount(host, ctx) {
 
   function renderList() {
     clear(listBox);
-
-    // 收藏固定在最上面，作为一个虚拟歌单
-    listBox.appendChild(featureRow({
-      id: '__favorites__',
-      virtual: 'favorites',
-      name: '我的收藏',
-      tracks: state.favorites || [],
-      createdAt: 0
-    }));
+    listBox.appendChild(featureRow(favoritesEntry(state)));
 
     var mine = state.playlists.filter(function (p) { return p.owner !== 'char'; });
     var theirs = state.playlists.filter(function (p) { return p.owner === 'char'; });
 
     if (mine.length) listBox.appendChild(group('我的歌单', mine));
     if (theirs.length) listBox.appendChild(group('TA 的歌单', theirs));
+
+    if (!mine.length && !theirs.length) {
+      listBox.appendChild(emptyHint(
+        '还没有歌单',
+        '右上角 + 新建一个；收藏的歌会固定显示在最上面'
+      ));
+    }
+  }
+
+  var view = h('div', { class: 'mp-view' }, [header, listBox]);
+  host.appendChild(view);
+  renderList();
+
+  return { refresh: renderList };
+}
+
+/* ---------------- 经典 ---------------- */
+
+function mountClassic(host, ctx) {
+  var state = ctx.state;
+  var listBox = h('div', { class: 'mp-list mp-body' });
+
+  var header = masthead({
+    classic: true,
+    title: '歌单',
+    onTitle: function () { ctx.exitOrMinimize(); },
+    actions: [addButton(ctx)]
+  });
+
+  function plRow(p) {
+    var first = p.tracks[0];
+    var cover = coverNode(first ? ctx.coverOf(first) : '', 'mp-pl__cover');
+    if (first) cover.dataset.cover = trackKey(first);
+
+    var row = h('button', { class: 'mp-pl', type: 'button' }, [
+      cover,
+      h('div', { class: 'mp-pl__main' }, [
+        h('div', { class: 'mp-pl__name', text: p.name }),
+        h('div', { class: 'mp-pl__sub', text: fmtSummary(p.tracks.length, playlistDuration(p)) })
+      ])
+    ]);
+    row.addEventListener('click', function () {
+      if (p.virtual === 'favorites') {
+        ctx.goto('playlist', { playlistId: '__favorites__' });
+        return;
+      }
+      ctx.goto('playlist', { playlistId: p.id });
+    });
+    return row;
+  }
+
+  function renderList() {
+    clear(listBox);
+    listBox.appendChild(plRow(favoritesEntry(state)));
+
+    var mine = state.playlists.filter(function (p) { return p.owner !== 'char'; });
+    var theirs = state.playlists.filter(function (p) { return p.owner === 'char'; });
+
+    if (mine.length) {
+      listBox.appendChild(h('div', { class: 'mp-section', text: '我的歌单' }));
+      mine.forEach(function (p) { listBox.appendChild(plRow(p)); });
+    }
+    if (theirs.length) {
+      listBox.appendChild(h('div', { class: 'mp-section', text: 'TA 的歌单' }));
+      theirs.forEach(function (p) { listBox.appendChild(plRow(p)); });
+    }
 
     if (!mine.length && !theirs.length) {
       listBox.appendChild(emptyHint(

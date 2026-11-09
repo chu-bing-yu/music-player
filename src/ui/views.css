@@ -2348,6 +2348,8 @@
   /* 按容器算宽度：390 宽减去左右 24 内边距、3 个 8px 间隙，正好 4 张 */
   flex: 0 0 calc((100% - 24px) / 4);
   min-width: 0;
+  /* 竖排书名是绝对定位在封面上的，这里必须留定位上下文 */
+  position: relative;
   padding: 0;
   border: 0;
   background: transparent;
@@ -2388,29 +2390,42 @@
   height: 22px;
 }
 
-/* 文案放封面下方：一屏 4 张时也读得清 */
+/* 竖排书名压在封面上（像书脊题签）：名字单列竖排，数量小字放封面底部 */
 .mp-shelf__label {
-  padding-top: 7px;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 4px 7px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.24) 0%, rgba(0, 0, 0, 0.06) 42%, rgba(0, 0, 0, 0.45) 100%);
+  pointer-events: none;
 }
 
 .mp-shelf__name {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  /* 单列，不折成两列；太长就裁掉，避免出现「两竖行」的怪样子 */
+  white-space: nowrap;
+  max-height: 100%;
   font-family: var(--mp-serif);
-  font-size: 11.5px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.15;
   letter-spacing: 0.5px;
-  color: var(--mp-ink);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
 
 .mp-shelf__sub {
-  margin-top: 2px;
+  margin-top: auto;
   font-family: var(--mp-sans-cn);
-  font-size: 9.5px;
+  font-size: 9px;
   letter-spacing: 0.5px;
-  color: var(--mp-muted);
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
 }
 
 /* 榜单目录 */

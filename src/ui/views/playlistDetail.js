@@ -1,15 +1,22 @@
-/** 歌单详情：播放全部 / 随机 / 排序 / 移除 */
+/**
+ * 歌单详情，两套皮肤：
+ * - 杂志风：编号列表（01 + 宋体歌名 + 时长 + ⋯），操作是下划线文字按钮
+ * - 经典：还原 0.40 —— 40px 小封面歌曲行，操作是「播放全部 / 随机播放」胶囊按钮
+ */
 
 import { h, clear } from '../dom.js';
 import { icon } from '../icons.js';
-import { iconBtn, magTrackRow, emptyHint } from '../components.js';
+import { iconBtn, songRow, magTrackRow, emptyHint } from '../components.js';
 import { masthead } from '../masthead.js';
+import { trackKey } from '../../core/track.js';
 import { fmtSummary } from '../../core/format.js';
 import { playlistDuration } from '../../core/playlist.js';
+import { isClassic } from '../../core/settings.js';
 
 export function mount(host, ctx) {
   var state = ctx.state;
-  var listBox = h('div', { class: 'mp-body mp-tracklist' });
+  var classic = isClassic(state.settings);
+  var listBox = h('div', { class: 'mp-body' + (classic ? '' : ' mp-tracklist') });
 
   function back() {
     ctx.goto('playlists');
@@ -35,8 +42,14 @@ export function mount(host, ctx) {
     return ctx.playlistOf(state.playlistId);
   }
 
-  var titleEl = h('div', { class: 'mp-header__title', text: '歌单' });
-  var subEl = h('div', { class: 'mp-mast__hint', text: '' });
+  var titleEl = h('div', {
+    class: classic ? 'mp-header__title' : 'mp-mast__title',
+    text: '歌单'
+  });
+  var subEl = h('div', {
+    class: classic ? 'mp-header__sub' : 'mp-mast__hint',
+    text: ''
+  });
 
   var moreBtn = iconBtn('more', {
     label: '更多',
@@ -69,15 +82,14 @@ export function mount(host, ctx) {
   });
 
   var header = masthead({
+    classic: classic,
     leading: iconBtn('back', { label: '返回', onClick: back }),
-    titleNode: h('div', { class: 'mp-mast__title', text: '歌单' }),
+    titleNode: titleEl,
     subNode: subEl,
     actions: [moreBtn]
   });
-  // 标题交给 masthead 渲染，后续更新沿用 titleEl 引用
-  titleEl = header.querySelector('.mp-mast__title');
 
-  var actions = h('div', { class: 'mp-actions mp-actions--text' });
+  var actions = h('div', { class: 'mp-actions' + (classic ? '' : ' mp-actions--text') });
 
   function renderActions(p) {
     clear(actions);
@@ -126,6 +138,29 @@ export function mount(host, ctx) {
     }
 
     p.tracks.forEach(function (track, i) {
+      if (classic) {
+        listBox.appendChild(songRow({
+          track: track,
+          coverUrl: ctx.coverOf(track),
+          coverKey: trackKey(track),
+          current: ctx.isCurrent(track),
+          playing: state.player.status === 'playing',
+          onPlay: function () {
+            if (ctx.isCurrent(track)) ctx.togglePlay();
+            else ctx.playTracks(p.tracks, i);
+          },
+          onMore: function () {
+            ctx.openSongSheet(track, {
+              playlistId: p.id,
+              index: i,
+              queueTracks: p.tracks,
+              queueIndex: i
+            });
+          }
+        }));
+        return;
+      }
+
       listBox.appendChild(magTrackRow({
         index: i,
         track: track,

@@ -3,7 +3,7 @@
 import { h, clear } from '../dom.js';
 import { pageTitle } from '../components.js';
 import { masthead, todayText } from '../masthead.js';
-import { THEMES, ACCENTS, UI_SKINS, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
+import { THEMES, ACCENTS, UI_SKINS, isClassic, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
 import { qrKey, qrCreate, qrCheck, account as neteaseAccount, isReady as neteaseReady } from '../../services/netease.js';
 
 /** 设置行：只留「字段名 + 控件」，不再放灰色解释（用户要求整页去说明） */
@@ -34,6 +34,7 @@ export function mount(host, ctx) {
   var statsTimer = null;
 
   var header = masthead({
+    classic: isClassic(state.settings),
     date: todayText(),
     title: '设置',
     onTitle: function () { ctx.exitOrMinimize(); }

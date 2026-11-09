@@ -96,6 +96,11 @@ export var UI_SKINS = [
   { id: 'classic', name: '经典' }
 ];
 
+/** 当前是不是经典皮肤（默认杂志风） */
+export function isClassic(settings) {
+  return !!(settings && settings.uiTheme === 'classic');
+}
+
 export var ACCENTS = [
   { id: 'red', name: '赤红', color: '#e14b4b' },
   { id: 'blue', name: '雾蓝', color: '#3b82f6' },
