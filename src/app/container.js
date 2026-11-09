@@ -360,6 +360,15 @@ export async function createApp(opts) {
 
   /* ---------------- 播放 ---------------- */
 
+  /** 失败提示要说人话：被浏览器策略拦下 ≠ 没有版权 */
+  function playFailText() {
+    var fail = player && typeof player.lastFail === 'function' ? player.lastFail() : null;
+    if (fail && fail.reason === 'blocked') return '浏览器拦了自动播放，点一下播放';
+    if (fail && fail.reason === 'interrupted') return '被系统打断，点一下重新加载';
+    if (fail && fail.host) return '放不了（' + fail.host + ' 拒绝或超时），换一首试试';
+    return '这首放不了（音源可能没版权），换一首试试';
+  }
+
   async function playTrack(track) {
     if (!track) return false;
     state.player = Object.assign({}, state.player, { status: 'loading', track: track, error: '' });
@@ -381,7 +390,7 @@ export async function createApp(opts) {
       loadLyrics(track);
       if (state.route === 'now' && shell) shell.refreshPage();
     } else {
-      toast('这首放不了（音源可能没版权），换一首试试');
+      toast(playFailText());
     }
     refresh();
     return ok;
@@ -1177,7 +1186,11 @@ export async function createApp(opts) {
     toast: function (text) { toast(text); },
     isNative: function () { return !!engine; },
     engineLabel: function () {
-      if (!engine) return '网页音频（无状态栏控制）';
+      if (!engine) {
+        // 网页端：把「媒体会话开没开」也写上，方便一眼看出为什么状态栏没卡片
+        var on = player && typeof player.mediaSessionOn === 'function' ? player.mediaSessionOn() : false;
+        return '网页音频 · web' + (on ? ' · 媒体会话开' : '');
+      }
       var size = state.queue ? state.queue.tracks.length : 0;
       var mode = state.settings.shuffle ? 'random' : (state.settings.repeat === REPEAT.ONE ? 'one' : 'loop');
       return '原生 · 队列 ' + size + ' 首 · ' + mode + (state.settings.nativeMinimal ? ' · 极简' : '');
@@ -1469,6 +1482,17 @@ export async function createApp(opts) {
   // 系统媒体控件（安卓通知栏 / 灵动胶囊、iOS 锁屏）：按设置决定用原生引擎还是网页引擎。
   // off = 不映射：两个都不注册媒体会话，系统里不会出现一个点不动的空卡片。
   var mediaMode = resolveMediaMode(state.settings, nativeAvailable());
+
+  // 诊断：网页版「点了没声」时，F12 看这一行就知道走的是哪条链路
+  try {
+    console.info('[mp] audio env', {
+      protocol: typeof location !== 'undefined' ? location.protocol : '',
+      hasNativePlugin: nativeAvailable(),
+      useNative: mediaMode.useNative,
+      mediaSession: mediaMode.mediaSession,
+      systemMedia: state.settings.systemMedia
+    });
+  } catch (err) { /* 忽略 */ }
 
   if (mediaMode.useNative) {
     engine = createNativeEngine({

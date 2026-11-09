@@ -11,9 +11,25 @@
  * 模式：'loop' | 'one' | 'random'
  */
 
+/**
+ * 是不是真的原生环境（APK / WebView）。
+ *
+ * 浏览器里 Capacitor 可能只挂了个 web 桩：插件对象存在、方法也在，但调用不发声。
+ * 以前只看「插件存在」就当成原生，网页版会被误判 → 点了没反应。
+ * 没有 isNativePlatform 的宿主（老版本、dev/preview.html 的假 Capacitor）按旧行为当原生。
+ */
+export function isNativePlatformLike(cap) {
+  if (!cap) return false;
+  if (typeof cap.isNativePlatform === 'function') {
+    try { return !!cap.isNativePlatform(); } catch (err) { return false; }
+  }
+  return true;
+}
+
 function getPlugin() {
   if (typeof window === 'undefined') return null;
   var cap = window.Capacitor;
+  if (!isNativePlatformLike(cap)) return null;
   var plugin = cap && cap.Plugins ? cap.Plugins.BackgroundAudio : null;
   if (!plugin || typeof plugin.replaceQueue !== 'function') return null;
   return plugin;

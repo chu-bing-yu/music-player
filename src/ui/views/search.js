@@ -173,7 +173,12 @@ export function mount(host, ctx) {
     });
 
     if (!s.tracks.length) {
-      resultsBox.appendChild(emptyHint('没有找到歌曲', '换个关键词，或在设置里打开音源'));
+      var cors = (s.errors || []).some(function (err) {
+        return String((err && err.error) || '').indexOf('跨域') !== -1;
+      });
+      resultsBox.appendChild(cors
+        ? emptyHint('浏览器跨域被拦', '去 设置 → 音源 → 代理前缀 填一个代理地址')
+        : emptyHint('没有找到歌曲', '换个关键词，或在设置里打开音源'));
       return;
     }
 

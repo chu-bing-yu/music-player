@@ -10,15 +10,29 @@ export function applyProxy(url, prefix) {
   return p + encodeURIComponent(url);
 }
 
+/** 浏览器里 CORS 失败长得像 TypeError: Failed to fetch，单独标出来便于提示用户配代理 */
+function corsError() {
+  var err = new Error('浏览器跨域被拦');
+  err.code = 'cors';
+  return err;
+}
+
 async function fetchText(url, prefix) {
   var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   var timer = controller ? setTimeout(function () { controller.abort(); }, TIMEOUT_MS) : null;
   try {
-    var res = await fetch(applyProxy(url, prefix), {
-      method: 'GET',
-      cache: 'no-store',
-      signal: controller ? controller.signal : undefined
-    });
+    var res;
+    try {
+      res = await fetch(applyProxy(url, prefix), {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller ? controller.signal : undefined
+      });
+    } catch (err) {
+      // 主动 abort（超时）保持原样；其它多为跨域
+      if (err && (err.name === 'AbortError' || err.code === 'cors')) throw err;
+      throw corsError();
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return await res.text();
   } finally {

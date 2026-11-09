@@ -1,4 +1,4 @@
-/* music-player v0.56.0 | built 2026-11-09T12:55:46.135Z */
+/* music-player v0.57.0 | built 2026-11-09T14:31:50.631Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1139,17 +1139,28 @@
     if (p.indexOf("{url}") !== -1) return p.replace("{url}", encodeURIComponent(url));
     return p + encodeURIComponent(url);
   }
+  function corsError() {
+    var err = new Error("浏览器跨域被拦");
+    err.code = "cors";
+    return err;
+  }
   async function fetchText(url, prefix) {
     var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = controller ? setTimeout(function() {
       controller.abort();
     }, TIMEOUT_MS) : null;
     try {
-      var res = await fetch(applyProxy(url, prefix), {
-        method: "GET",
-        cache: "no-store",
-        signal: controller ? controller.signal : void 0
-      });
+      var res;
+      try {
+        res = await fetch(applyProxy(url, prefix), {
+          method: "GET",
+          cache: "no-store",
+          signal: controller ? controller.signal : void 0
+        });
+      } catch (err) {
+        if (err && (err.name === "AbortError" || err.code === "cors")) throw err;
+        throw corsError();
+      }
       if (!res.ok) throw new Error("HTTP " + res.status);
       return await res.text();
     } finally {
@@ -1651,6 +1662,25 @@
 
   // src/services/player.js
   var MEDIA_ACTIONS = ["play", "pause", "previoustrack", "nexttrack", "stop", "seekto", "seekbackward", "seekforward"];
+  function normalizeAudioUrl(url, proto) {
+    var s = String(url == null ? "" : url).trim();
+    if (!s) return "";
+    var page = proto || (typeof location !== "undefined" ? location.protocol : "");
+    if (s.indexOf("//") === 0) {
+      s = (page || "https:") + s;
+      page = page || "https:";
+    }
+    if (page === "https:" && /^http:\/\//i.test(s)) {
+      s = s.replace(/^http:\/\//i, "https://");
+    }
+    return s;
+  }
+  function isAutoplayBlocked(err) {
+    var name = String(err && err.name || "");
+    var msg = String(err && err.message || "");
+    if (name === "NotAllowedError" || name === "SecurityError") return true;
+    return /gesture|autoplay|not allowed/i.test(msg);
+  }
   function createPlayer(options) {
     var opts = options || {};
     var state = {
@@ -1667,6 +1697,9 @@
     var attemptToken = 0;
     var lastPositionAt = 0;
     var mediaOn = opts.mediaSession !== false;
+    var pendingUrl = "";
+    var pendingTrack = null;
+    var lastFailure = null;
     function emit() {
       if (typeof opts.onChange === "function") opts.onChange(getState());
       updateMediaSession();
@@ -1860,38 +1893,57 @@
       });
     }
     setupMediaActions();
+    function hostOf(url) {
+      try {
+        return new URL(String(url || "")).host;
+      } catch (err) {
+        return "";
+      }
+    }
+    function isBlockedError(err) {
+      return isAutoplayBlocked(err);
+    }
     function tryUrl(url) {
       return new Promise(function(resolve) {
         var settled = false;
         var timer = setTimeout(function() {
-          finish(false);
+          finish("bad");
         }, 12e3);
         function cleanup() {
           clearTimeout(timer);
           audio.removeEventListener("error", onTryError);
-          audio.removeEventListener("canplay", onTryOk);
-          audio.removeEventListener("playing", onTryOk);
+          audio.removeEventListener("playing", onTryPlaying);
         }
-        function finish(ok) {
+        function finish(result2) {
           if (settled) return;
           settled = true;
           cleanup();
-          resolve(ok);
+          resolve(result2);
         }
         function onTryError() {
-          finish(false);
+          finish("bad");
         }
-        function onTryOk() {
-          finish(true);
+        function onTryPlaying() {
+          finish("ok");
         }
         audio.addEventListener("error", onTryError);
-        audio.addEventListener("canplay", onTryOk);
-        audio.addEventListener("playing", onTryOk);
+        audio.addEventListener("playing", onTryPlaying);
         lastSrc = url;
         audio.src = url;
-        var playing = audio.play();
-        if (playing && playing.catch) playing.catch(function() {
-        });
+        var playing = null;
+        try {
+          playing = audio.play();
+        } catch (err) {
+          finish(isBlockedError(err) ? "blocked" : "bad");
+          return;
+        }
+        if (playing && typeof playing.then === "function") {
+          playing.then(function() {
+            finish("ok");
+          }, function(err) {
+            finish(isBlockedError(err) ? "blocked" : "bad");
+          });
+        }
       });
     }
     async function load(track, nextUrl) {
@@ -1901,26 +1953,41 @@
       state.error = "";
       state.time = 0;
       state.duration = track && track.duration || 0;
+      pendingUrl = "";
+      pendingTrack = null;
+      lastFailure = null;
       emit();
       updateMediaSession();
       if (typeof nextUrl !== "function") return false;
       for (var i = 0; i < 6; i++) {
-        var url = "";
+        var raw = "";
         try {
-          url = await nextUrl();
+          raw = await nextUrl();
         } catch (err) {
-          url = "";
+          raw = "";
         }
         if (token !== attemptToken) return false;
-        if (!url) break;
-        var ok = await tryUrl(url);
+        if (!raw) break;
+        var url = normalizeAudioUrl(raw);
+        if (!url) continue;
+        var result2 = await tryUrl(url);
         if (token !== attemptToken) return false;
-        if (ok) {
+        if (result2 === "ok") {
           state.status = "playing";
           state.error = "";
           emit();
           return true;
         }
+        if (result2 === "blocked") {
+          pendingUrl = url;
+          pendingTrack = track;
+          lastFailure = { host: hostOf(url), reason: "blocked" };
+          state.status = "paused";
+          state.error = "浏览器拦了自动播放，点一下播放";
+          emit();
+          return false;
+        }
+        lastFailure = { host: hostOf(url), reason: "bad" };
       }
       state.status = "error";
       state.error = "所有音源都放不了这首";
@@ -1928,12 +1995,28 @@
       return false;
     }
     async function resume() {
-      if (!state.track) return false;
+      if (!state.track && !pendingUrl) return false;
+      if (pendingUrl && (!audio || audio.src !== pendingUrl)) {
+        if (!audio) recreateAudio();
+        audio.src = pendingUrl;
+        audio.currentTime = Math.max(0, (state.time || 0) / 1e3);
+      }
       if (audio && audio.src) {
         try {
           await audio.play();
+          pendingUrl = "";
+          pendingTrack = null;
+          lastFailure = null;
+          state.error = "";
           return true;
         } catch (err) {
+          if (isBlockedError(err)) {
+            state.status = "paused";
+            state.error = "浏览器拦了自动播放，点一下播放";
+            lastFailure = { host: hostOf(lastSrc), reason: "blocked" };
+            emit();
+            return false;
+          }
         }
       }
       if (!lastSrc) return false;
@@ -1944,11 +2027,56 @@
         await audio.play();
         return true;
       } catch (err) {
+        if (isBlockedError(err)) {
+          state.status = "paused";
+          state.error = "浏览器拦了自动播放，点一下播放";
+          lastFailure = { host: hostOf(lastSrc), reason: "blocked" };
+          emit();
+          return false;
+        }
         state.status = "error";
         state.error = "被系统中断，点一下重新加载";
+        lastFailure = { host: hostOf(lastSrc), reason: "interrupted" };
         emit();
         return false;
       }
+    }
+    function armUnlock() {
+      if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
+      var events = ["pointerdown", "keydown", "touchend"];
+      function handler() {
+        if (!audio || !audio.src) return;
+        events.forEach(function(name) {
+          document.removeEventListener(name, handler, true);
+        });
+        try {
+          var muted = audio.muted;
+          audio.muted = true;
+          var p = audio.play();
+          if (p && typeof p.then === "function") {
+            p.then(function() {
+              try {
+                audio.pause();
+              } catch (err) {
+              }
+              audio.muted = muted;
+            }, function() {
+              audio.muted = muted;
+            });
+          } else {
+            audio.pause();
+            audio.muted = muted;
+          }
+        } catch (err) {
+        }
+      }
+      events.forEach(function(name) {
+        document.addEventListener(name, handler, true);
+      });
+    }
+    armUnlock();
+    function lastFail() {
+      return lastFailure;
     }
     async function toggle() {
       if (!state.track) return false;
@@ -2029,6 +2157,10 @@
       mediaSessionOn: function() {
         return mediaOn;
       },
+      lastFail,
+      hasPending: function() {
+        return !!pendingUrl;
+      },
       isPlaying: function() {
         return state.status === "playing";
       }
@@ -2047,9 +2179,21 @@
   }
 
   // src/services/nativeAudio.js
+  function isNativePlatformLike(cap) {
+    if (!cap) return false;
+    if (typeof cap.isNativePlatform === "function") {
+      try {
+        return !!cap.isNativePlatform();
+      } catch (err) {
+        return false;
+      }
+    }
+    return true;
+  }
   function getPlugin() {
     if (typeof window === "undefined") return null;
     var cap = window.Capacitor;
+    if (!isNativePlatformLike(cap)) return null;
     var plugin = cap && cap.Plugins ? cap.Plugins.BackgroundAudio : null;
     if (!plugin || typeof plugin.replaceQueue !== "function") return null;
     return plugin;
@@ -7429,7 +7573,10 @@
         resultsBox.appendChild(h("div", { class: "mp-error", text: label + " 搜索失败：" + err.error }));
       });
       if (!s.tracks.length) {
-        resultsBox.appendChild(emptyHint("没有找到歌曲", "换个关键词，或在设置里打开音源"));
+        var cors = (s.errors || []).some(function(err) {
+          return String(err && err.error || "").indexOf("跨域") !== -1;
+        });
+        resultsBox.appendChild(cors ? emptyHint("浏览器跨域被拦", "去 设置 → 音源 → 代理前缀 填一个代理地址") : emptyHint("没有找到歌曲", "换个关键词，或在设置里打开音源"));
         return;
       }
       var counts = [];
@@ -11701,6 +11848,13 @@
         if (state.route === "now") shell.refreshPage();
       }
     }
+    function playFailText() {
+      var fail = player && typeof player.lastFail === "function" ? player.lastFail() : null;
+      if (fail && fail.reason === "blocked") return "浏览器拦了自动播放，点一下播放";
+      if (fail && fail.reason === "interrupted") return "被系统打断，点一下重新加载";
+      if (fail && fail.host) return "放不了（" + fail.host + " 拒绝或超时），换一首试试";
+      return "这首放不了（音源可能没版权），换一首试试";
+    }
     async function playTrack(track2) {
       if (!track2) return false;
       state.player = Object.assign({}, state.player, { status: "loading", track: track2, error: "" });
@@ -11720,7 +11874,7 @@
         loadLyrics(track2);
         if (state.route === "now" && shell) shell.refreshPage();
       } else {
-        toast("这首放不了（音源可能没版权），换一首试试");
+        toast(playFailText());
       }
       refresh();
       return ok;
@@ -12473,7 +12627,10 @@
         return !!engine;
       },
       engineLabel: function() {
-        if (!engine) return "网页音频（无状态栏控制）";
+        if (!engine) {
+          var on = player && typeof player.mediaSessionOn === "function" ? player.mediaSessionOn() : false;
+          return "网页音频 · web" + (on ? " · 媒体会话开" : "");
+        }
         var size = state.queue ? state.queue.tracks.length : 0;
         var mode = state.settings.shuffle ? "random" : state.settings.repeat === REPEAT.ONE ? "one" : "loop";
         return "原生 · 队列 " + size + " 首 · " + mode + (state.settings.nativeMinimal ? " · 极简" : "");
@@ -12736,6 +12893,16 @@
       shuffle: state.settings.shuffle
     });
     var mediaMode = resolveMediaMode(state.settings, nativeAvailable());
+    try {
+      console.info("[mp] audio env", {
+        protocol: typeof location !== "undefined" ? location.protocol : "",
+        hasNativePlugin: nativeAvailable(),
+        useNative: mediaMode.useNative,
+        mediaSession: mediaMode.mediaSession,
+        systemMedia: state.settings.systemMedia
+      });
+    } catch (err) {
+    }
     if (mediaMode.useNative) {
       engine = createNativeEngine({
         sources,
@@ -12911,7 +13078,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.56.0" });
+    app = await createApp({ container, roche, version: "0.57.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -12927,7 +13094,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.56.0",
+    version: "0.57.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

@@ -8,6 +8,33 @@
 
 var MEDIA_ACTIONS = ['play', 'pause', 'previoustrack', 'nexttrack', 'stop', 'seekto', 'seekbackward', 'seekforward'];
 
+/**
+ * 地址归一：去空白、补协议；https 页面里的 http 直链会被浏览器当混合内容拦掉，先升级。
+ * @param {string} url
+ * @param {string} [proto] 页面协议，默认取 location.protocol
+ */
+export function normalizeAudioUrl(url, proto) {
+  var s = String(url == null ? '' : url).trim();
+  if (!s) return '';
+  var page = proto || (typeof location !== 'undefined' ? location.protocol : '');
+  if (s.indexOf('//') === 0) {
+    s = (page || 'https:') + s;
+    page = page || 'https:';
+  }
+  if (page === 'https:' && /^http:\/\//i.test(s)) {
+    s = s.replace(/^http:\/\//i, 'https://');
+  }
+  return s;
+}
+
+/** 是不是「浏览器拦截自动播放」这类错误（不是地址坏） */
+export function isAutoplayBlocked(err) {
+  var name = String((err && err.name) || '');
+  var msg = String((err && err.message) || '');
+  if (name === 'NotAllowedError' || name === 'SecurityError') return true;
+  return /gesture|autoplay|not allowed/i.test(msg);
+}
+
 export function createPlayer(options) {
   var opts = options || {};
   var state = {
@@ -26,6 +53,11 @@ export function createPlayer(options) {
   // 系统媒体控件（iOS 锁屏 / 灵动岛、安卓通知栏）开关：设置里选「不映射」时整块关掉，
   // 系统里就不会留下一个点不动的空媒体卡片（华为平板就栽在这）。
   var mediaOn = opts.mediaSession !== false;
+  // 被浏览器自动播放策略拦下的地址：留着给下一次点击直接用，不重新解析
+  var pendingUrl = '';
+  var pendingTrack = null;
+  // 最近一次失败：{ host, reason: 'blocked' | 'bad' | 'interrupted' }
+  var lastFailure = null;
 
   function emit() {
     if (typeof opts.onChange === 'function') opts.onChange(getState());
@@ -223,37 +255,64 @@ export function createPlayer(options) {
 
   /* ---------------- 播放 ---------------- */
 
-  /** 单地址尝试：能出声（canplay/playing）算成功，报错或超时算失败 */
+  function hostOf(url) {
+    try {
+      return new URL(String(url || '')).host;
+    } catch (err) {
+      return '';
+    }
+  }
+
+  function isBlockedError(err) {
+    return isAutoplayBlocked(err);
+  }
+
+  /**
+   * 单地址尝试。
+   * @returns {Promise<'ok'|'blocked'|'bad'>}
+   *  ok      真正出声（playing 事件 或 play() resolve）
+   *  blocked 浏览器自动播放策略拦的，地址本身没问题
+   *  bad     地址放不了
+   */
   function tryUrl(url) {
     return new Promise(function (resolve) {
       var settled = false;
-      var timer = setTimeout(function () { finish(false); }, 12000);
+      var timer = setTimeout(function () { finish('bad'); }, 12000);
 
       function cleanup() {
         clearTimeout(timer);
         audio.removeEventListener('error', onTryError);
-        audio.removeEventListener('canplay', onTryOk);
-        audio.removeEventListener('playing', onTryOk);
+        audio.removeEventListener('playing', onTryPlaying);
       }
 
-      function finish(ok) {
+      function finish(result) {
         if (settled) return;
         settled = true;
         cleanup();
-        resolve(ok);
+        resolve(result);
       }
 
-      function onTryError() { finish(false); }
-      function onTryOk() { finish(true); }
+      function onTryError() { finish('bad'); }
+      function onTryPlaying() { finish('ok'); }
 
       audio.addEventListener('error', onTryError);
-      audio.addEventListener('canplay', onTryOk);
-      audio.addEventListener('playing', onTryOk);
+      audio.addEventListener('playing', onTryPlaying);
 
       lastSrc = url;
       audio.src = url;
-      var playing = audio.play();
-      if (playing && playing.catch) playing.catch(function () { /* 交给事件判断 */ });
+
+      var playing = null;
+      try {
+        playing = audio.play();
+      } catch (err) {
+        finish(isBlockedError(err) ? 'blocked' : 'bad');
+        return;
+      }
+      if (playing && typeof playing.then === 'function') {
+        playing.then(function () { finish('ok'); }, function (err) {
+          finish(isBlockedError(err) ? 'blocked' : 'bad');
+        });
+      }
     });
   }
 
@@ -268,29 +327,50 @@ export function createPlayer(options) {
     state.error = '';
     state.time = 0;
     state.duration = (track && track.duration) || 0;
+    pendingUrl = '';
+    pendingTrack = null;
+    lastFailure = null;
     emit();
     updateMediaSession();
 
     if (typeof nextUrl !== 'function') return false;
 
     for (var i = 0; i < 6; i++) {
-      var url = '';
+      var raw = '';
       try {
-        url = await nextUrl();
+        raw = await nextUrl();
       } catch (err) {
-        url = '';
+        raw = '';
       }
       if (token !== attemptToken) return false;
-      if (!url) break;
+      if (!raw) break;
 
-      var ok = await tryUrl(url);
+      var url = normalizeAudioUrl(raw);
+      if (!url) continue;
+
+      var result = await tryUrl(url);
       if (token !== attemptToken) return false;
-      if (ok) {
+
+      if (result === 'ok') {
         state.status = 'playing';
         state.error = '';
         emit();
         return true;
       }
+
+      if (result === 'blocked') {
+        // 自动播放被拦：地址是好的，别继续试别的候选（每个都要等 12 秒），
+        // 也不要标成 error —— 用户再点一下播放就能接着放，地址直接用这份。
+        pendingUrl = url;
+        pendingTrack = track;
+        lastFailure = { host: hostOf(url), reason: 'blocked' };
+        state.status = 'paused';
+        state.error = '浏览器拦了自动播放，点一下播放';
+        emit();
+        return false;
+      }
+
+      lastFailure = { host: hostOf(url), reason: 'bad' };
     }
 
     state.status = 'error';
@@ -299,15 +379,35 @@ export function createPlayer(options) {
     return false;
   }
 
-  /** 从暂停/中断里恢复：先直接 play，不行说明音频会话被抢了，重建 Audio 再放 */
+  /** 从暂停/中断里恢复：先直接 play（这次点击还在手势里），不行再重建 Audio */
   async function resume() {
-    if (!state.track) return false;
+    if (!state.track && !pendingUrl) return false;
+
+    // 上次被策略拦下的地址：这次点击直接起播，不要重新解析
+    if (pendingUrl && (!audio || audio.src !== pendingUrl)) {
+      if (!audio) recreateAudio();
+      audio.src = pendingUrl;
+      audio.currentTime = Math.max(0, (state.time || 0) / 1000);
+    }
 
     if (audio && audio.src) {
       try {
         await audio.play();
+        pendingUrl = '';
+        pendingTrack = null;
+        lastFailure = null;
+        state.error = '';
         return true;
-      } catch (err) { /* 下面重建后再试 */ }
+      } catch (err) {
+        if (isBlockedError(err)) {
+          // 别再重建 Audio：那会把已经拿到播放许可的实例丢掉
+          state.status = 'paused';
+          state.error = '浏览器拦了自动播放，点一下播放';
+          lastFailure = { host: hostOf(lastSrc), reason: 'blocked' };
+          emit();
+          return false;
+        }
+      }
     }
 
     if (!lastSrc) return false;
@@ -318,11 +418,55 @@ export function createPlayer(options) {
       await audio.play();
       return true;
     } catch (err) {
+      if (isBlockedError(err)) {
+        state.status = 'paused';
+        state.error = '浏览器拦了自动播放，点一下播放';
+        lastFailure = { host: hostOf(lastSrc), reason: 'blocked' };
+        emit();
+        return false;
+      }
       state.status = 'error';
       state.error = '被系统中断，点一下重新加载';
+      lastFailure = { host: hostOf(lastSrc), reason: 'interrupted' };
       emit();
       return false;
     }
+  }
+
+  /**
+   * 首次用户手势时给 audio 解个锁（Safari / 严格策略下有用）。
+   * 没有 src 时不去空放，避免把第一次点击白白消耗掉。
+   */
+  function armUnlock() {
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+    var events = ['pointerdown', 'keydown', 'touchend'];
+
+    function handler() {
+      if (!audio || !audio.src) return;
+      events.forEach(function (name) { document.removeEventListener(name, handler, true); });
+      try {
+        var muted = audio.muted;
+        audio.muted = true;
+        var p = audio.play();
+        if (p && typeof p.then === 'function') {
+          p.then(function () {
+            try { audio.pause(); } catch (err) { /* 忽略 */ }
+            audio.muted = muted;
+          }, function () { audio.muted = muted; });
+        } else {
+          audio.pause();
+          audio.muted = muted;
+        }
+      } catch (err) { /* 忽略 */ }
+    }
+
+    events.forEach(function (name) { document.addEventListener(name, handler, true); });
+  }
+
+  armUnlock();
+
+  function lastFail() {
+    return lastFailure;
   }
 
   /** @returns {Promise<boolean>} 失败时上层可以重新解析地址 */
@@ -405,6 +549,8 @@ export function createPlayer(options) {
     setHandlers: setHandlers,
     setMediaSessionEnabled: setMediaSessionEnabled,
     mediaSessionOn: function () { return mediaOn; },
+    lastFail: lastFail,
+    hasPending: function () { return !!pendingUrl; },
     isPlaying: function () { return state.status === 'playing'; }
   };
 }
