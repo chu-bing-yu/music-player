@@ -10,9 +10,12 @@ export var MARK_TYPES = ['play', 'next', 'prev', 'pause', 'resume', 'status', 'a
 var PATTERN = /\[\[\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^\]\n]*))?\]\]/g;
 /**
  * 推荐写法：<!-- mp:play:歌名 -->，聊天里按 Markdown 渲染时会被隐藏。
- * 参数段用 [\s\S] 允许跨行：模型写长乐评时经常把 --> 折到下一行，旧写法（[^>\n]）会整条丢掉。
+ *
+ * 参数段用 [\s\S] 允许跨行；闭合符也放宽成 `-{1,2}\s*-?\s*>`：
+ * 模型写长乐评时经常把 `-->` 折成「- 换行 >」，旧写法要求连续的 `-->`，
+ * 整条指令会被静默丢掉（角色评价了但插件里看不到，就是栽在这）。
  */
-var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([\s\S]*?))?\s*-->/g;
+var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([\s\S]*?))?\s*-{1,2}\s*-?\s*>/g;
 
 /** 参数归一：折叠空白；挑歌的逗号/顿号/分号统一成空格，方便按多关键词搜 */
 function normalizeArg(type, raw) {

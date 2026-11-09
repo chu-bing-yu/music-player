@@ -73,6 +73,26 @@ test('注释指令允许跨行（长乐评被折行也能认）', () => {
   assert.equal(list[0].arg, '克制又有张力的唱腔， 把执念与求而不得唱得透彻');
 });
 
+test('闭合符被折行也能认（- 换行 > / -- 换行 >）', () => {
+  const broken = parseCommands('<!-- mp:comment:前奏清冷副歌\n烈，满是求而不得\n-\n>');
+  assert.equal(broken.length, 1);
+  assert.equal(broken[0].type, 'comment');
+  assert.equal(broken[0].arg, '前奏清冷副歌 烈，满是求而不得');
+
+  const halfBroken = parseCommands('<!-- mp:comment:好听\n--\n>');
+  assert.equal(halfBroken.length, 1);
+  assert.equal(halfBroken[0].arg, '好听');
+
+  const normal = parseCommands('<!-- mp:comment:正常闭合 -->');
+  assert.equal(normal.length, 1);
+  assert.equal(normal[0].arg, '正常闭合');
+});
+
+test('折了闭合符的正文也能被 strip 掉', () => {
+  const text = '好听\n<!-- mp:comment:这句评价\n-\n>';
+  assert.equal(stripCommands(text), '好听');
+});
+
 test('挑歌参数里的逗号/顿号/分号归一成空格', () => {
   const a = parseCommands('<!-- mp:recommend:古风|古风,戏腔、国风 -->');
   assert.equal(a.length, 1);

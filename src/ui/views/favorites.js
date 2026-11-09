@@ -78,7 +78,10 @@ export function mount(host, ctx) {
 
   function nameOf(id) {
     var p = profileOf(id);
-    return (p && p.name) || '角色';
+    if (p && p.name) return p.name;
+    // 没拿到角色 ID 时统一归到 ta 组，显示「TA」而不是「角色」
+    if (String(id) === 'ta') return 'TA';
+    return '角色';
   }
 
   var signMap = Object.create(null); // 角色 ID → 该角色的英文签名
@@ -138,16 +141,26 @@ export function mount(host, ctx) {
     return ctx.taComments ? ctx.taComments('') : [];
   }
 
+  /**
+   * 分组用的角色 ID：空值统一归到 'ta'。
+   * 宿主没把角色 ID 传给插件时，歌单 ownerId 和评论的 characterId 都会是空，
+   * 以前这里直接把空值过滤掉 → 整页空白（评论明明存进去了也看不到）。
+   */
+  function groupIdOf(id) {
+    var s = String(id == null ? '' : id).trim();
+    return s || 'ta';
+  }
+
   function charIds() {
     var seen = Object.create(null);
     var out = [];
     charPlaylistsAll().forEach(function (p) {
-      var id = String(p.ownerId || '');
-      if (id && !seen[id]) { seen[id] = true; out.push(id); }
+      var id = groupIdOf(p.ownerId);
+      if (!seen[id]) { seen[id] = true; out.push(id); }
     });
     allComments().forEach(function (c) {
-      var id = String(c.characterId || '');
-      if (id && !seen[id]) { seen[id] = true; out.push(id); }
+      var id = groupIdOf(c.characterId);
+      if (!seen[id]) { seen[id] = true; out.push(id); }
     });
     return out;
   }
@@ -604,8 +617,8 @@ export function mount(host, ctx) {
     var playlists = charPlaylistsAll();
     var comments = allComments();
     if (currentChar) {
-      playlists = playlists.filter(function (p) { return String(p.ownerId || '') === currentChar; });
-      comments = comments.filter(function (c) { return String(c.characterId || '') === currentChar; });
+      playlists = playlists.filter(function (p) { return groupIdOf(p.ownerId) === currentChar; });
+      comments = comments.filter(function (c) { return groupIdOf(c.characterId) === currentChar; });
     }
 
     var ids = currentChar ? [currentChar] : charIds();
@@ -619,8 +632,8 @@ export function mount(host, ctx) {
     }
 
     ids.forEach(function (id) {
-      var mine = playlists.filter(function (p) { return String(p.ownerId || '') === id; });
-      var words = comments.filter(function (c) { return String(c.characterId || '') === id; });
+      var mine = playlists.filter(function (p) { return groupIdOf(p.ownerId) === id; });
+      var words = comments.filter(function (c) { return groupIdOf(c.characterId) === id; });
       body.appendChild(charBlock(id, mine, words));
     });
   }

@@ -49,16 +49,51 @@ function chatListenOn() {
   return isOn(runtime.conversationId, true);
 }
 
+/**
+ * 从 ctx 里尽量把角色 ID 挖出来。
+ * 宿主不同版本给的东西不一样：有的给 contact，有的只在 conversation 上挂 contactId / peerId；
+ * 取不到就会让角色歌单/乐评挂在空 ID 上，TA 页按 ID 分组建不出块（整页空白）。
+ */
+function characterIdOf(ctx) {
+  if (!ctx) return '';
+  var contact = ctx.contact || ctx.character || ctx.characterInfo || null;
+  if (contact && contact.id) return String(contact.id);
+
+  var keys = ['contactId', 'characterId', 'targetId', 'peerId'];
+  for (var i = 0; i < keys.length; i++) {
+    if (ctx[keys[i]]) return String(ctx[keys[i]]);
+  }
+
+  var conv = ctx.conversation || null;
+  if (conv) {
+    for (var j = 0; j < keys.length; j++) {
+      if (conv[keys[j]]) return String(conv[keys[j]]);
+    }
+  }
+  return '';
+}
+
+function characterNameOf(ctx) {
+  var contact = (ctx && (ctx.contact || ctx.character || ctx.characterInfo)) || null;
+  if (contact) {
+    var name = contact.name || contact.nickname || contact.handle || contact.displayName || '';
+    if (name) return String(name);
+  }
+  var conv = ctx && ctx.conversation;
+  return String((conv && (conv.title || conv.name)) || '');
+}
+
 /** contextProvider 每轮调用：记住当前会话与角色，供轮询使用 */
 export function noteConversation(ctx) {
   if (!ctx) return;
   var cid = ctx.conversationId || (ctx.conversation && ctx.conversation.id) || '';
   if (cid) runtime.conversationId = cid;
 
-  var contact = ctx.contact || null;
-  if (contact && contact.id) {
-    runtime.characterId = String(contact.id);
-    runtime.characterName = String(contact.name || contact.nickname || '');
+  var id = characterIdOf(ctx);
+  if (id) {
+    runtime.characterId = id;
+    var name = characterNameOf(ctx);
+    if (name) runtime.characterName = name;
   }
 }
 
@@ -304,9 +339,38 @@ async function doRecommend(roche, settings, arg) {
   }
 }
 
+/**
+ * 角色 ID 兜底：宿主没把 contact 传进来时，只看「唯一角色」。
+ * 多角色绝不猜（会串号），宁可落成 ta 组让 TA 页兜底展示。
+ */
+async function ensureCharacterId(roche) {
+  if (runtime.characterId) return runtime.characterId;
+
+  var host = runtime.roche || roche || resolveRoche();
+  try {
+    var api = host && host.character;
+    if (!api || typeof api.list !== 'function') return '';
+    var list = await api.list();
+    var items = (list || []).filter(function (c) {
+      return c && (c.id || c.contactId);
+    });
+    if (items.length !== 1) return '';
+    var one = items[0];
+    runtime.characterId = String(one.id || one.contactId);
+    runtime.characterName = String(one.handle || one.name || one.nickname || '');
+    return runtime.characterId;
+  } catch (err) {
+    return '';
+  }
+}
+
 /** 执行一条指令 */
 export async function runCommand(cmd, roche) {
   var settings = await readSettings(roche);
+  // 写库类指令（add / comment / recommend / new）都需要角色 ID
+  if (cmd.type === 'add' || cmd.type === 'comment' || cmd.type === 'recommend' || cmd.type === 'new') {
+    await ensureCharacterId(roche);
+  }
   try {
     switch (cmd.type) {
       case 'play': return await doPlay(cmd.arg, roche, settings);

@@ -653,6 +653,27 @@ try {
   const charPlaylistVisible = await waitFor(`Array.from(document.querySelectorAll('.mp-shelf__name, .mp-pl__name')).some(function (n) { return n.textContent === '角色挑的'; })`, 6000);
   check('角色歌单（只在镜像里）进歌单页就能看到', charPlaylistVisible);
   await evaluate('localStorage.removeItem("mp:mirror:mp:playlists")');
+
+  // v0.56.0：角色 ID 缺失（ownerId / characterId 为空）时，TA 页要有「TA」分组，不能整页空白
+  await evaluate(`(function () {
+    localStorage.setItem('mp:mirror:mp:playlists', JSON.stringify([{
+      id: 'char-blank', name: '没署名的歌单', owner: 'char', ownerId: '',
+      createdAt: Date.now(), updatedAt: Date.now(), tracks: []
+    }]));
+    localStorage.setItem('mp:mirror:mp:comments', JSON.stringify({
+      'tencent:9001': { ta: { text: '前奏清冷副歌烈', at: Date.now(), name: '赐我', artist: '一只白羊' } }
+    }));
+    return true;
+  })()`);
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "TA")');
+  const taFallback = await waitFor(`(function () {
+    var body = document.querySelector('.mp-ta-body');
+    if (!body) return false;
+    var name = document.querySelector('.mp-ta-head__name');
+    return !!name && name.textContent.trim() === 'TA' && body.textContent.indexOf('前奏清冷副歌烈') !== -1;
+  })()`, 8000);
+  check('角色 ID 为空时 TA 页仍有「TA」分组并显示乐评', taFallback);
+  await evaluate('localStorage.removeItem("mp:mirror:mp:playlists"); localStorage.removeItem("mp:mirror:mp:comments");');
 } catch (err) {
   failures.push('运行异常：' + (err && err.message));
   console.error('运行异常：', err);

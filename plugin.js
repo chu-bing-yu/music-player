@@ -1,4 +1,4 @@
-/* music-player v0.55.0 | built 2026-11-09T12:24:51.536Z */
+/* music-player v0.56.0 | built 2026-11-09T12:55:46.135Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -8152,7 +8152,9 @@
     }
     function nameOf(id) {
       var p = profileOf(id);
-      return p && p.name || "角色";
+      if (p && p.name) return p.name;
+      if (String(id) === "ta") return "TA";
+      return "角色";
     }
     var signMap = /* @__PURE__ */ Object.create(null);
     async function loadSigns() {
@@ -8204,19 +8206,23 @@
     function allComments() {
       return ctx.taComments ? ctx.taComments("") : [];
     }
+    function groupIdOf(id) {
+      var s = String(id == null ? "" : id).trim();
+      return s || "ta";
+    }
     function charIds() {
       var seen = /* @__PURE__ */ Object.create(null);
       var out = [];
       charPlaylistsAll().forEach(function(p) {
-        var id = String(p.ownerId || "");
-        if (id && !seen[id]) {
+        var id = groupIdOf(p.ownerId);
+        if (!seen[id]) {
           seen[id] = true;
           out.push(id);
         }
       });
       allComments().forEach(function(c) {
-        var id = String(c.characterId || "");
-        if (id && !seen[id]) {
+        var id = groupIdOf(c.characterId);
+        if (!seen[id]) {
           seen[id] = true;
           out.push(id);
         }
@@ -8631,10 +8637,10 @@
       var comments = allComments();
       if (currentChar) {
         playlists = playlists.filter(function(p) {
-          return String(p.ownerId || "") === currentChar;
+          return groupIdOf(p.ownerId) === currentChar;
         });
         comments = comments.filter(function(c) {
-          return String(c.characterId || "") === currentChar;
+          return groupIdOf(c.characterId) === currentChar;
         });
       }
       var ids = currentChar ? [currentChar] : charIds();
@@ -8647,10 +8653,10 @@
       }
       ids.forEach(function(id) {
         var mine = playlists.filter(function(p) {
-          return String(p.ownerId || "") === id;
+          return groupIdOf(p.ownerId) === id;
         });
         var words = comments.filter(function(c) {
-          return String(c.characterId || "") === id;
+          return groupIdOf(c.characterId) === id;
         });
         body.appendChild(charBlock(id, mine, words));
       });
@@ -10650,7 +10656,7 @@
   // src/core/marker.js
   var MARK_TYPES = ["play", "next", "prev", "pause", "resume", "status", "add", "comment", "new", "recommend", "fav"];
   var PATTERN = /\[\[\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^\]\n]*))?\]\]/g;
-  var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([\s\S]*?))?\s*-->/g;
+  var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([\s\S]*?))?\s*-{1,2}\s*-?\s*>/g;
   function normalizeArg(type, raw) {
     var text = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
     if (type === "recommend") {
@@ -10716,14 +10722,40 @@
   function chatListenOn() {
     return isOn(runtime.conversationId, true);
   }
+  function characterIdOf(ctx) {
+    if (!ctx) return "";
+    var contact = ctx.contact || ctx.character || ctx.characterInfo || null;
+    if (contact && contact.id) return String(contact.id);
+    var keys = ["contactId", "characterId", "targetId", "peerId"];
+    for (var i = 0; i < keys.length; i++) {
+      if (ctx[keys[i]]) return String(ctx[keys[i]]);
+    }
+    var conv = ctx.conversation || null;
+    if (conv) {
+      for (var j = 0; j < keys.length; j++) {
+        if (conv[keys[j]]) return String(conv[keys[j]]);
+      }
+    }
+    return "";
+  }
+  function characterNameOf(ctx) {
+    var contact = ctx && (ctx.contact || ctx.character || ctx.characterInfo) || null;
+    if (contact) {
+      var name = contact.name || contact.nickname || contact.handle || contact.displayName || "";
+      if (name) return String(name);
+    }
+    var conv = ctx && ctx.conversation;
+    return String(conv && (conv.title || conv.name) || "");
+  }
   function noteConversation(ctx) {
     if (!ctx) return;
     var cid = ctx.conversationId || ctx.conversation && ctx.conversation.id || "";
     if (cid) runtime.conversationId = cid;
-    var contact = ctx.contact || null;
-    if (contact && contact.id) {
-      runtime.characterId = String(contact.id);
-      runtime.characterName = String(contact.name || contact.nickname || "");
+    var id = characterIdOf(ctx);
+    if (id) {
+      runtime.characterId = id;
+      var name = characterNameOf(ctx);
+      if (name) runtime.characterName = name;
     }
   }
   function setCommandMode(mode) {
@@ -10924,8 +10956,30 @@
       return { ok: false, reason: String(err && err.message || err) };
     }
   }
+  async function ensureCharacterId(roche) {
+    if (runtime.characterId) return runtime.characterId;
+    var host = runtime.roche || roche || resolveRoche();
+    try {
+      var api2 = host && host.character;
+      if (!api2 || typeof api2.list !== "function") return "";
+      var list = await api2.list();
+      var items = (list || []).filter(function(c) {
+        return c && (c.id || c.contactId);
+      });
+      if (items.length !== 1) return "";
+      var one = items[0];
+      runtime.characterId = String(one.id || one.contactId);
+      runtime.characterName = String(one.handle || one.name || one.nickname || "");
+      return runtime.characterId;
+    } catch (err) {
+      return "";
+    }
+  }
   async function runCommand(cmd, roche) {
     var settings = await readSettings(roche);
+    if (cmd.type === "add" || cmd.type === "comment" || cmd.type === "recommend" || cmd.type === "new") {
+      await ensureCharacterId(roche);
+    }
     try {
       switch (cmd.type) {
         case "play":
@@ -12857,7 +12911,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.55.0" });
+    app = await createApp({ container, roche, version: "0.56.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -12873,7 +12927,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.55.0",
+    version: "0.56.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
