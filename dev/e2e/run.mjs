@@ -515,6 +515,11 @@ try {
       .then(function (r) { return !!(r && r.ok === false && String(r.reason || '').indexOf('关键词') !== -1); });
   })()`));
 
+  // v0.55.0：提示词必须把「关键词 / 单独一行 / 不加 [消息] 前缀」写清楚（改提示词之前先验）
+  const promptText = await evaluate('String(window.__registeredPlugin.chat.contextProvider({ conversationId: "c1" }) || "")');
+  check('提示词要求挑歌必须带关键词', promptText.indexOf('关键词') !== -1 && promptText.indexOf('mp:recommend:') !== -1);
+  check('提示词要求指令单独一行且不加前缀', promptText.indexOf('单独占一行') !== -1 && promptText.indexOf('[消息]') !== -1);
+
   // 提示词可编辑
   await evaluate(`(() => {
     const row = Array.from(document.querySelectorAll('.mp-group .mp-field')).find((r) => r.textContent.includes('一起听提示词'));
@@ -629,6 +634,25 @@ try {
   await evaluate('window.__mockMessages = [{ id: "cmd-1", role: "assistant", content: "好呀，给你放这首 [[mp:play:夜曲]]" }]');
   await sleep(5000);
   check('两种通道的提示词分开存', await evaluate('(() => { var p = window.__registeredPlugin; return true; })()'));
+
+  // v0.55.0：角色在聊天侧写的歌单只落在镜像里，进歌单页就要能看到（不用重开 App）
+  await evaluate(`(function () {
+    var list = [{
+      id: 'char-e2e-' + Date.now(),
+      name: '角色挑的',
+      owner: 'char',
+      ownerId: 'ta-1',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      tracks: [{ source: 'tencent', platform: 'qq', id: 9001, mid: 'm9001', name: '赐我', artist: '一只白羊', duration: 200000 }]
+    }];
+    localStorage.setItem('mp:mirror:mp:playlists', JSON.stringify(list));
+    return true;
+  })()`);
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
+  const charPlaylistVisible = await waitFor(`Array.from(document.querySelectorAll('.mp-shelf__name, .mp-pl__name')).some(function (n) { return n.textContent === '角色挑的'; })`, 6000);
+  check('角色歌单（只在镜像里）进歌单页就能看到', charPlaylistVisible);
+  await evaluate('localStorage.removeItem("mp:mirror:mp:playlists")');
 } catch (err) {
   failures.push('运行异常：' + (err && err.message));
   console.error('运行异常：', err);

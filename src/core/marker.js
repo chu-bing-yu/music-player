@@ -8,8 +8,20 @@
 export var MARK_TYPES = ['play', 'next', 'prev', 'pause', 'resume', 'status', 'add', 'comment', 'new', 'recommend', 'fav'];
 
 var PATTERN = /\[\[\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^\]\n]*))?\]\]/g;
-/** 推荐写法：<!-- mp:play:歌名 -->，聊天里按 Markdown 渲染时会被隐藏 */
-var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^>\n]*?))?\s*-->/g;
+/**
+ * 推荐写法：<!-- mp:play:歌名 -->，聊天里按 Markdown 渲染时会被隐藏。
+ * 参数段用 [\s\S] 允许跨行：模型写长乐评时经常把 --> 折到下一行，旧写法（[^>\n]）会整条丢掉。
+ */
+var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([\s\S]*?))?\s*-->/g;
+
+/** 参数归一：折叠空白；挑歌的逗号/顿号/分号统一成空格，方便按多关键词搜 */
+function normalizeArg(type, raw) {
+  var text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+  if (type === 'recommend') {
+    text = text.replace(/[,，、;；]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  return text;
+}
 
 /** 指令类型白名单（防止模型乱写导致误执行） */
 function normalizeType(raw) {
@@ -36,7 +48,7 @@ export function parseCommands(text) {
     while ((match = pattern.exec(source)) !== null) {
       var type = normalizeType(match[1]);
       if (!type) continue;
-      var arg = String(match[2] == null ? '' : match[2]).trim();
+      var arg = normalizeArg(type, match[2]);
 
       // 需要参数的指令，缺参数直接丢弃。
       // recommend 以前漏在这里：<!-- mp:recommend --> 也会执行，然后插件自己随机抽词搜歌，

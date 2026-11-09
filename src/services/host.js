@@ -54,24 +54,71 @@ export function createHost(roche) {
     } catch (err) { /* 配额满就算了 */ }
   }
 
+  /**
+   * 读的时候把宿主值和镜像合并。
+   *
+   * 以前这里读到宿主值就 `mirrorSet(key, value)`，等于**用旧值把镜像覆盖掉**：
+   * 角色在聊天侧新建的歌单/乐评只写进了镜像，App 一读宿主就被抹掉，
+   * 表现就是「角色建了歌单，音乐 App 里永远看不到」。
+   */
+  function mergeForRead(host, mirror) {
+    if (mirror === null || mirror === undefined) return host;
+    if (host === null || host === undefined) return mirror;
+
+    var hostObj = typeof host === 'object' && !Array.isArray(host);
+    var mirrorObj = typeof mirror === 'object' && !Array.isArray(mirror);
+
+    // 带 at 的对象（队列）：新的那一份直接赢
+    if (hostObj && mirrorObj) {
+      if (host.at && mirror.at) return Number(mirror.at) >= Number(host.at) ? mirror : host;
+      // 普通对象（短评、设置）：浅合并，镜像优先
+      return Object.assign({}, host, mirror);
+    }
+
+    // 列表（歌单 / 收藏）：按 id 取并集，镜像里的条目优先（角色刚写的就是最新的）
+    if (Array.isArray(host) && Array.isArray(mirror)) {
+      var withId = host.concat(mirror).every(function (item) {
+        return item && typeof item === 'object' && item.id !== undefined && item.id !== null;
+      });
+      if (!withId) return mirror.length >= host.length ? mirror : host;
+
+      var map = Object.create(null);
+      host.forEach(function (item) { map[String(item.id)] = item; });
+      mirror.forEach(function (item) { map[String(item.id)] = item; });
+      return Object.keys(map).map(function (id) { return map[id]; });
+    }
+
+    return host;
+  }
+
   var storage = {
     async get(key, fallback) {
+      var fromHost = null;
+      var hasHost = false;
       try {
         if (caps.storage) {
           var value = await raw.storage.get(key);
           if (value !== undefined && value !== null) {
-            memory[key] = value;
-            mirrorSet(key, value);
-            return value;
+            fromHost = value;
+            hasHost = true;
           }
         }
       } catch (err) {
         warn('storage.get ' + key, err);
       }
-      if (key in memory) return memory[key];
 
       // 宿主读不到时再看镜像（跨作用域写入的数据落在这里）
       var mirrored = mirrorGet(key);
+
+      if (hasHost) {
+        var merged = mergeForRead(fromHost, mirrored);
+        memory[key] = merged;
+        // 只有镜像确实贡献了内容才回写；绝不拿宿主值去覆盖镜像
+        if (merged !== fromHost) mirrorSet(key, merged);
+        return merged;
+      }
+
+      if (key in memory) return memory[key];
       if (mirrored !== null) {
         memory[key] = mirrored;
         return mirrored;

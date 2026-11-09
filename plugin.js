@@ -1,4 +1,4 @@
-/* music-player v0.54.0 | built 2026-11-09T11:48:31.413Z */
+/* music-player v0.55.0 | built 2026-11-09T12:24:51.536Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -43,22 +43,56 @@
       } catch (err) {
       }
     }
+    function mergeForRead(host, mirror) {
+      if (mirror === null || mirror === void 0) return host;
+      if (host === null || host === void 0) return mirror;
+      var hostObj = typeof host === "object" && !Array.isArray(host);
+      var mirrorObj = typeof mirror === "object" && !Array.isArray(mirror);
+      if (hostObj && mirrorObj) {
+        if (host.at && mirror.at) return Number(mirror.at) >= Number(host.at) ? mirror : host;
+        return Object.assign({}, host, mirror);
+      }
+      if (Array.isArray(host) && Array.isArray(mirror)) {
+        var withId = host.concat(mirror).every(function(item) {
+          return item && typeof item === "object" && item.id !== void 0 && item.id !== null;
+        });
+        if (!withId) return mirror.length >= host.length ? mirror : host;
+        var map2 = /* @__PURE__ */ Object.create(null);
+        host.forEach(function(item) {
+          map2[String(item.id)] = item;
+        });
+        mirror.forEach(function(item) {
+          map2[String(item.id)] = item;
+        });
+        return Object.keys(map2).map(function(id) {
+          return map2[id];
+        });
+      }
+      return host;
+    }
     var storage = {
       async get(key, fallback) {
+        var fromHost = null;
+        var hasHost = false;
         try {
           if (caps.storage) {
             var value = await raw.storage.get(key);
             if (value !== void 0 && value !== null) {
-              memory[key] = value;
-              mirrorSet(key, value);
-              return value;
+              fromHost = value;
+              hasHost = true;
             }
           }
         } catch (err) {
           warn("storage.get " + key, err);
         }
-        if (key in memory) return memory[key];
         var mirrored = mirrorGet(key);
+        if (hasHost) {
+          var merged = mergeForRead(fromHost, mirrored);
+          memory[key] = merged;
+          if (merged !== fromHost) mirrorSet(key, merged);
+          return merged;
+        }
+        if (key in memory) return memory[key];
         if (mirrored !== null) {
           memory[key] = mirrored;
           return mirrored;
@@ -401,15 +435,17 @@
     "暂停：<!-- mp:pause -->　继续：<!-- mp:resume -->",
     "把当前这首收进你的歌单：<!-- mp:add -->",
     "给当前这首写一句评价：<!-- mp:comment:一句话评价 -->",
-    "新建歌单：<!-- mp:new:歌单名 -->　给我挑几首：<!-- mp:recommend:歌单名|搜索关键词 -->",
-    "注意：挑歌必须在竖线后面写 1~3 个搜索关键词（不要只写歌名），歌单名也由你取，例如 <!-- mp:recommend:雨夜书单|城市雨天 华语慢歌 -->",
+    "新建歌单：<!-- mp:new:歌单名 -->",
+    "给我挑几首：<!-- mp:recommend:歌单名|搜索关键词1 关键词2 -->",
     "",
     "规则：",
     "1. 【重要】不要调用任何工具（music_play / music_next 等），只写上面这种注释指令；",
-    "2. 指令必须单独占一行，且必须是 <!-- ... --> 这种注释形式，不要用方括号；",
-    "3. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；",
-    "4. 用户让你放歌时必须写 <!-- mp:play:歌名 -->；",
-    "5. 切歌或换歌时，可以顺带自然地说一句你对这首歌的感受。"
+    "2. 指令必须单独占一行，行首不要加「[消息]」、角色名、冒号这类格式，也不要包在括号或引号里；",
+    "3. 挑歌时「竖线 + 关键词」缺一不可：只写 <!-- mp:recommend --> 或 <!-- mp:recommend:歌单名 --> 等于没执行，插件不会建歌单；",
+    "4. 关键词是搜索用的词（流派 / 场景 / 情绪，例如「古风 戏腔」「城市雨天 华语慢歌」），不要只写歌名；",
+    "5. 评价必须写成一行、40 字以内，中间不要换行；",
+    "6. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；",
+    "7. 用户让你放歌时必须写 <!-- mp:play:歌名 -->；切歌时可以顺带说一句你的感受。"
   ].join("\n");
   var HYBRID_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
@@ -421,17 +457,21 @@
     "   暂停 <!-- mp:pause -->　继续 <!-- mp:resume -->",
     "   把当前这首收进你的歌单 <!-- mp:add -->",
     "   给当前这首写评价 <!-- mp:comment:一句话评价 -->",
-    "   新建歌单 <!-- mp:new:歌单名 -->　给用户挑几首 <!-- mp:recommend:歌单名|搜索关键词 -->（竖线后必须写 1~3 个真实搜索关键词，歌单名自己取）",
-    "3. 指令必须单独占一行，且必须是 <!-- ... --> 形式；",
-    "4. 没有写指令就等于没有操作，不要只说「已经加好了」；",
-    "5. 切歌时顺带自然地说一句你对这首歌的感受。"
+    "   新建歌单 <!-- mp:new:歌单名 -->",
+    "   给用户挑几首 <!-- mp:recommend:歌单名|搜索关键词1 关键词2 -->",
+    "3. 指令必须单独占一行，行首不要加「[消息]」、角色名、冒号这类格式；",
+    "4. 挑歌的「竖线 + 关键词」缺一不可：<!-- mp:recommend --> 或少关键词都等于没执行，不会建歌单；关键词写流派/场景/情绪（如「古风 戏腔」），不要只写歌名；",
+    "5. 评价必须一行、40 字以内，不要换行；",
+    "6. 没有写指令就等于没有操作，不要只说「已经加好了」；",
+    "7. 切歌时顺带自然地说一句你对这首歌的感受。"
   ].join("\n");
   var TOOL_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
     "可用工具：music_play（点歌）、music_next、music_previous、music_pause、music_resume、",
     "music_add_to_playlist（把当前歌收进你的歌单）、music_comment（给当前歌写评价）、",
     "music_recommend（给别人挑歌）、music_status、music_favorite。",
-    "规则：用户让你放歌时必须真的调用工具，不能只在文字里说「加好了」；工具返回失败就照实说。"
+    "规则：用户让你放歌时必须真的调用工具，不能只在文字里说「加好了」；",
+    "music_recommend 必须带 keyword（流派/场景/情绪），没有关键词就不要调用、也不要吹嘘挑好了；工具返回失败就照实说。"
   ].join("\n");
   var THEMES = [
     { id: "auto", name: "跟随系统" },
@@ -2604,6 +2644,18 @@
     try {
       store.removeItem(REBUILD_FLAG);
     } catch (err) {
+    }
+  }
+  function readQueueMirror() {
+    var store = ls();
+    if (!store) return null;
+    try {
+      var text = store.getItem(QUEUE_MIRROR_KEY);
+      if (!text) return null;
+      var parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" && Array.isArray(parsed.tracks) ? parsed : null;
+    } catch (err) {
+      return null;
     }
   }
   function writeQueueMirror(payload) {
@@ -7561,6 +7613,25 @@
       createdAt: 0
     };
   }
+  function autoRefresh(ctx, renderList) {
+    function pull() {
+      var task = ctx.reloadPlaylists ? ctx.reloadPlaylists() : null;
+      Promise.resolve(task).then(renderList, renderList);
+    }
+    function onVisible() {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState === "visible") pull();
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisible);
+    }
+    pull();
+    return function() {
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisible);
+      }
+    };
+  }
   function mountMagazine2(host, ctx) {
     var state = ctx.state;
     var listBox = h("div", { class: "mp-list mp-body mp-plpage__body" });
@@ -7632,7 +7703,8 @@
     var view = h("div", { class: "mp-view" }, [header, listBox]);
     host.appendChild(view);
     renderList();
-    return { refresh: renderList };
+    var detach = autoRefresh(ctx, renderList);
+    return { refresh: renderList, destroy: detach };
   }
   function mountClassic2(host, ctx) {
     var state = ctx.state;
@@ -7696,7 +7768,8 @@
     var view = h("div", { class: "mp-view" }, [header, listBox]);
     host.appendChild(view);
     renderList();
-    return { refresh: renderList };
+    var detach = autoRefresh(ctx, renderList);
+    return { refresh: renderList, destroy: detach };
   }
 
   // src/ui/views/playlistDetail.js
@@ -10577,7 +10650,14 @@
   // src/core/marker.js
   var MARK_TYPES = ["play", "next", "prev", "pause", "resume", "status", "add", "comment", "new", "recommend", "fav"];
   var PATTERN = /\[\[\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^\]\n]*))?\]\]/g;
-  var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^>\n]*?))?\s*-->/g;
+  var COMMENT_PATTERN = /<!--\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([\s\S]*?))?\s*-->/g;
+  function normalizeArg(type, raw) {
+    var text = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+    if (type === "recommend") {
+      text = text.replace(/[,，、;；]+/g, " ").replace(/\s+/g, " ").trim();
+    }
+    return text;
+  }
   function normalizeType(raw) {
     var type = String(raw || "").toLowerCase();
     if (type === "previous") return "prev";
@@ -10595,7 +10675,7 @@
       while ((match = pattern.exec(source)) !== null) {
         var type = normalizeType(match[1]);
         if (!type) continue;
-        var arg = String(match[2] == null ? "" : match[2]).trim();
+        var arg = normalizeArg(type, match[2]);
         if ((type === "play" || type === "comment" || type === "new" || type === "recommend") && !arg) continue;
         out.push({ type, arg, raw: String(match[0]) });
         if (out.length >= 6) return;
@@ -10771,8 +10851,34 @@
     var added = await addTrackForChar(roche, runtime.characterId, track);
     return added.ok ? { ok: true, playlist: added.playlist, created: added.created, duplicate: added.duplicate } : { ok: false, reason: added.reason };
   }
+  async function fallbackTrack(roche) {
+    var bridge = getBridge();
+    if (bridge && bridge.ready() && typeof bridge.queue === "function") {
+      try {
+        var live = bridge.queue() || [];
+        if (live.length) {
+          var last = live[live.length - 1];
+          if (last && last.track) return last.track;
+        }
+      } catch (err) {
+      }
+    }
+    var mirror = readQueueMirror();
+    if (mirror && mirror.tracks && mirror.tracks.length) {
+      var pos = Number(mirror.pos);
+      if (Number.isFinite(pos) && mirror.tracks[pos]) return mirror.tracks[pos];
+      return mirror.tracks[mirror.tracks.length - 1];
+    }
+    try {
+      var recent = roche && roche.storage ? await roche.storage.get("mp:recent", []) : [];
+      if (Array.isArray(recent) && recent.length) return recent[0];
+    } catch (err) {
+    }
+    return null;
+  }
   async function doComment(text, roche) {
     var track = await currentTrack(roche);
+    if (!track) track = await fallbackTrack(roche);
     if (!track) return { ok: false, reason: "现在没有在放的歌" };
     var saved = await saveComment(roche, runtime.characterId, track, text);
     return saved.ok ? { ok: true, text: saved.text } : { ok: false, reason: saved.reason };
@@ -12558,18 +12664,16 @@
     };
     var loaded = await Promise.all([
       store.loadSettings(),
-      store.loadPlaylists(),
       store.loadFavorites(),
       store.loadRecent(),
-      store.loadSearches(),
-      store.loadComments()
+      store.loadSearches()
     ]);
     state.settings = loaded[0];
-    state.playlists = loaded[1];
-    state.favorites = loaded[2];
-    state.recent = loaded[3];
-    state.searches = loaded[4];
-    state.comments = loaded[5] || {};
+    state.favorites = loaded[1];
+    state.recent = loaded[2];
+    state.searches = loaded[3];
+    await reloadPlaylists();
+    await reloadComments();
     state.prefs = normalizePrefs(await host.storage.get("mp:prefs", null));
     state.rec = await host.storage.get("mp:rec", null);
     state.player.volume = state.settings.volume;
@@ -12753,7 +12857,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.54.0" });
+    app = await createApp({ container, roche, version: "0.55.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -12769,7 +12873,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.54.0",
+    version: "0.55.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

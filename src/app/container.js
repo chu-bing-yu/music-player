@@ -1443,19 +1443,20 @@ export async function createApp(opts) {
 
   var loaded = await Promise.all([
     store.loadSettings(),
-    store.loadPlaylists(),
     store.loadFavorites(),
     store.loadRecent(),
-    store.loadSearches(),
-    store.loadComments()
+    store.loadSearches()
   ]);
 
   state.settings = loaded[0];
-  state.playlists = loaded[1];
-  state.favorites = loaded[2];
-  state.recent = loaded[3];
-  state.searches = loaded[4];
-  state.comments = loaded[5] || {};
+  state.favorites = loaded[1];
+  state.recent = loaded[2];
+  state.searches = loaded[3];
+
+  // 歌单 / 短评必须合并 localStorage 镜像：角色在聊天侧新建的歌单和乐评只写在镜像里
+  // （聊天回调与 App 可能是两份宿主 storage），裸用 store.loadX() 会看不到它们。
+  await reloadPlaylists();
+  await reloadComments();
   state.prefs = normalizePrefs(await host.storage.get('mp:prefs', null));
   state.rec = await host.storage.get('mp:rec', null);
   state.player.volume = state.settings.volume;

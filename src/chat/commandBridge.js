@@ -14,7 +14,7 @@ import { addTrackForChar, saveComment, createCharPlaylist, RECOMMEND_PLAYLIST_NA
 import { createSources } from '../services/sources.js';
 import { createNativeAudio } from '../services/nativeAudio.js';
 import { readChatSettings } from '../services/chatSettings.js';
-import { markRebuildNeeded } from '../services/queueSignals.js';
+import { markRebuildNeeded, readQueueMirror } from '../services/queueSignals.js';
 import { trackKey } from '../core/track.js';
 
 var POLL_MS = 2500;
@@ -210,8 +210,40 @@ async function doAdd(roche) {
     : { ok: false, reason: added.reason };
 }
 
+/**
+ * 角色写乐评时如果 App 那边刚好没有在播的歌，就别静默失败：
+ * 依次回退到 App 队列最后一首 → 队列镜像里的当前曲 → 最近播放第一首。
+ */
+async function fallbackTrack(roche) {
+  var bridge = getBridge();
+  if (bridge && bridge.ready() && typeof bridge.queue === 'function') {
+    try {
+      var live = bridge.queue() || [];
+      if (live.length) {
+        var last = live[live.length - 1];
+        if (last && last.track) return last.track;
+      }
+    } catch (err) { /* 忽略 */ }
+  }
+
+  var mirror = readQueueMirror();
+  if (mirror && mirror.tracks && mirror.tracks.length) {
+    var pos = Number(mirror.pos);
+    if (Number.isFinite(pos) && mirror.tracks[pos]) return mirror.tracks[pos];
+    return mirror.tracks[mirror.tracks.length - 1];
+  }
+
+  try {
+    var recent = roche && roche.storage ? await roche.storage.get('mp:recent', []) : [];
+    if (Array.isArray(recent) && recent.length) return recent[0];
+  } catch (err) { /* 忽略 */ }
+
+  return null;
+}
+
 async function doComment(text, roche) {
   var track = await currentTrack(roche);
+  if (!track) track = await fallbackTrack(roche);
   if (!track) return { ok: false, reason: '现在没有在放的歌' };
 
   var saved = await saveComment(roche, runtime.characterId, track, text);

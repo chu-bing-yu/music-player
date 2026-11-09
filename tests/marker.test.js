@@ -66,6 +66,29 @@ test('strip 也能去掉注释形式', () => {
   assert.equal(stripCommands('好听 <!-- mp:pause -->'), '好听');
 });
 
+test('注释指令允许跨行（长乐评被折行也能认）', () => {
+  const list = parseCommands('好听\n<!-- mp:comment:克制又有张力的唱腔，\n把执念与求而不得唱得透彻\n-->');
+  assert.equal(list.length, 1);
+  assert.equal(list[0].type, 'comment');
+  assert.equal(list[0].arg, '克制又有张力的唱腔， 把执念与求而不得唱得透彻');
+});
+
+test('挑歌参数里的逗号/顿号/分号归一成空格', () => {
+  const a = parseCommands('<!-- mp:recommend:古风|古风,戏腔、国风 -->');
+  assert.equal(a.length, 1);
+  assert.equal(a[0].arg, '古风|古风 戏腔 国风');
+
+  const b = parseCommands('<!-- mp:recommend:夜跑|电子;爵士 -->');
+  assert.equal(b[0].arg, '夜跑|电子 爵士');
+});
+
+test('带 [消息] 前缀也不影响解析', () => {
+  const text = '[消息] 美化测试：旋律都在线，直接加进去了\n<!-- mp:recommend:古风|古风 戏腔 -->';
+  const list = parseCommands(text);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].arg, '古风|古风 戏腔');
+});
+
 test('去重键稳定', () => {
   const cmd = { type: 'play', arg: '晴天', raw: '[[mp:play:晴天]]' };
   assert.equal(dedupeKey('c1', 'm1', cmd), dedupeKey('c1', 'm1', cmd));

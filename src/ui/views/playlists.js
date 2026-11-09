@@ -39,6 +39,34 @@ function favoritesEntry(state) {
   };
 }
 
+/**
+ * 角色在聊天里新建的歌单只落在 localStorage 镜像里（聊天侧与 App 是两份 storage），
+ * 所以进页面、回到前台都要重新拉一次并合并，不能只吃启动时那份 state。
+ * @returns {Function} 卸载时清监听
+ */
+function autoRefresh(ctx, renderList) {
+  function pull() {
+    var task = ctx.reloadPlaylists ? ctx.reloadPlaylists() : null;
+    Promise.resolve(task).then(renderList, renderList);
+  }
+
+  function onVisible() {
+    if (typeof document === 'undefined') return;
+    if (document.visibilityState === 'visible') pull();
+  }
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisible);
+  }
+  pull();
+
+  return function () {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisible);
+    }
+  };
+}
+
 /* ---------------- 杂志风 ---------------- */
 
 function mountMagazine(host, ctx) {
@@ -114,8 +142,9 @@ function mountMagazine(host, ctx) {
   var view = h('div', { class: 'mp-view' }, [header, listBox]);
   host.appendChild(view);
   renderList();
+  var detach = autoRefresh(ctx, renderList);
 
-  return { refresh: renderList };
+  return { refresh: renderList, destroy: detach };
 }
 
 /* ---------------- 经典 ---------------- */
@@ -180,6 +209,7 @@ function mountClassic(host, ctx) {
   var view = h('div', { class: 'mp-view' }, [header, listBox]);
   host.appendChild(view);
   renderList();
+  var detach = autoRefresh(ctx, renderList);
 
-  return { refresh: renderList };
+  return { refresh: renderList, destroy: detach };
 }
