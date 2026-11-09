@@ -152,8 +152,10 @@ export function createPlayer(options) {
   var lastFailure = null;
   // 用户主动暂停（区别于被系统/其它音频打断）
   var userPaused = false;
-  // 打断后自动续播的闸门：800ms 内不重复，最多 5 次
-  var retryGate = createRetryGate(800, 5);
+  // 打断后自动续播的闸门：300ms 内不重复，最多 6 次（被打断后要立刻抢回来）
+  var retryGate = createRetryGate(300, 6);
+  // 是谁调用了 pause（我们自己的代码会留痕，空 = 外部/系统暂停）
+  var pauseBy = '';
   // 事件探针：最近 20 条，设置页能直接看
   var probe = [];
   var sessionStart = Date.now();
@@ -223,15 +225,12 @@ export function createPlayer(options) {
     userPaused = false;
     retryGate.reset();
     note('playing');
-    // 我们开始出声了：把页面里循环播放的保活音频压住，避免它们把会话抢回去
-    silencePageLoops(audio);
     emit();
   }
 
   /**
    * 被打断后的自动续播。
-   * 以前叫 nudged、只允许一次且只在 1 秒内触发，2 秒处被打断就再也不会救；
-   * 现在只要有节流上限，任何位置被打断都尝试拉回来。
+   * 关键点：**立刻**续播（同一段已缓冲的数据，不等 260ms），否则每被打断一次就是一次可听的卡顿。
    */
   function maybeResumeAfterBreak() {
     if (userPaused) return;
@@ -244,23 +243,23 @@ export function createPlayer(options) {
       }
       return;
     }
-    setTimeout(function () {
-      if (!audio || !audio.paused || userPaused) return;
-      silencePageLoops(audio);
-      var p = audio.play();
-      if (p && p.catch) p.catch(function () { /* 下一轮再试 */ });
-    }, 260);
+    // 不等到下一个宏任务：直接在同一轮里 play()，听感上几乎无缝
+    if (!audio.paused) return;
+    var p = audio.play();
+    if (p && p.catch) p.catch(function () { /* 下一轮再试 */ });
   }
 
   function onPause() {
     var wasPlaying = state.status === 'playing';
-    note('pause');
+    var by = pauseBy;
+    pauseBy = '';
+    note('pause' + (by ? '(' + by + ')' : ''));
     if (state.status !== 'error' && state.status !== 'loading') state.status = 'paused';
 
     if (!userPaused && !audio.ended && wasPlaying) {
       lastFailure = { host: hostOf(lastSrc), reason: 'stolen' };
       try {
-        console.warn('[mp] audio interrupted (pause)', hostOf(lastSrc), recentEvents().slice(-5));
+        console.warn('[mp] audio interrupted (pause)', by || 'external', hostOf(lastSrc), recentEvents().slice(-5));
       } catch (err) { /* 忽略 */ }
     }
     emit();
@@ -339,6 +338,27 @@ export function createPlayer(options) {
     audio = new Audio();
     audio.preload = 'auto';
     audio.volume = state.volume;
+
+    // 给 pause 打标：我们自己调用的会留痕，外部/系统暂停则不留痕。
+    // 排查「每几秒 pause 一次」时，事件列表里的 `pause(xxx.js:123)` 一眼就能看出是谁干的。
+    var nativePause = audio.pause.bind(audio);
+    audio.pause = function () {
+      try {
+        var stack = String(new Error().stack || '').split('\n');
+        var hit = '';
+        for (var i = 1; i < stack.length && i < 6; i++) {
+          var line = String(stack[i] || '').trim();
+          if (line.indexOf('player.js') !== -1 && line.indexOf('audio.pause =') !== -1) continue;
+          var m = line.match(/([A-Za-z0-9_\-]+\.js:\d+)/);
+          if (m) { hit = m[1]; break; }
+        }
+        pauseBy = hit || 'js';
+      } catch (err) {
+        pauseBy = 'js';
+      }
+      return nativePause();
+    };
+
     // 让页面音频抢占守卫知道「这个才是插件自己的」
     activeAudio = audio;
     bindAudio(audio);
@@ -636,6 +656,8 @@ export function createPlayer(options) {
 
     function handler() {
       if (!audio || !audio.src) return;
+      // 已经在放就别再「静音试播 + pause」：那一下会被用户听成卡顿
+      if (!audio.paused || state.status === 'playing') return;
       events.forEach(function (name) { document.removeEventListener(name, handler, true); });
       try {
         var muted = audio.muted;

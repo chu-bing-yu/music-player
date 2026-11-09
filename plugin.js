@@ -1,4 +1,4 @@
-/* music-player v0.59.0 | built 2026-11-09T15:07:24.611Z */
+/* music-player v0.60.0 | built 2026-11-09T15:18:18.803Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1756,20 +1756,6 @@
       return origPlay.apply(this, arguments);
     };
   }
-  function silencePageLoops(except) {
-    if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
-    try {
-      var list = document.querySelectorAll("audio, video");
-      Array.prototype.forEach.call(list, function(el) {
-        if (!el || el === except || !el.loop) return;
-        try {
-          if (!el.paused) el.pause();
-        } catch (err) {
-        }
-      });
-    } catch (err) {
-    }
-  }
   function createPlayer(options) {
     var opts = options || {};
     var state = {
@@ -1790,7 +1776,8 @@
     var pendingTrack = null;
     var lastFailure = null;
     var userPaused = false;
-    var retryGate = createRetryGate(800, 5);
+    var retryGate = createRetryGate(300, 6);
+    var pauseBy = "";
     var probe = [];
     var sessionStart = Date.now();
     function note(event) {
@@ -1850,7 +1837,6 @@
       userPaused = false;
       retryGate.reset();
       note("playing");
-      silencePageLoops(audio);
       emit();
     }
     function maybeResumeAfterBreak() {
@@ -1864,22 +1850,21 @@
         }
         return;
       }
-      setTimeout(function() {
-        if (!audio || !audio.paused || userPaused) return;
-        silencePageLoops(audio);
-        var p = audio.play();
-        if (p && p.catch) p.catch(function() {
-        });
-      }, 260);
+      if (!audio.paused) return;
+      var p = audio.play();
+      if (p && p.catch) p.catch(function() {
+      });
     }
     function onPause() {
       var wasPlaying = state.status === "playing";
-      note("pause");
+      var by = pauseBy;
+      pauseBy = "";
+      note("pause" + (by ? "(" + by + ")" : ""));
       if (state.status !== "error" && state.status !== "loading") state.status = "paused";
       if (!userPaused && !audio.ended && wasPlaying) {
         lastFailure = { host: hostOf(lastSrc), reason: "stolen" };
         try {
-          console.warn("[mp] audio interrupted (pause)", hostOf(lastSrc), recentEvents().slice(-5));
+          console.warn("[mp] audio interrupted (pause)", by || "external", hostOf(lastSrc), recentEvents().slice(-5));
         } catch (err) {
         }
       }
@@ -1957,6 +1942,26 @@
       audio = new Audio();
       audio.preload = "auto";
       audio.volume = state.volume;
+      var nativePause = audio.pause.bind(audio);
+      audio.pause = function() {
+        try {
+          var stack = String(new Error().stack || "").split("\n");
+          var hit = "";
+          for (var i = 1; i < stack.length && i < 6; i++) {
+            var line = String(stack[i] || "").trim();
+            if (line.indexOf("player.js") !== -1 && line.indexOf("audio.pause =") !== -1) continue;
+            var m = line.match(/([A-Za-z0-9_\-]+\.js:\d+)/);
+            if (m) {
+              hit = m[1];
+              break;
+            }
+          }
+          pauseBy = hit || "js";
+        } catch (err) {
+          pauseBy = "js";
+        }
+        return nativePause();
+      };
       activeAudio = audio;
       bindAudio(audio);
     }
@@ -2228,6 +2233,7 @@
       var events = ["pointerdown", "keydown", "touchend"];
       function handler() {
         if (!audio || !audio.src) return;
+        if (!audio.paused || state.status === "playing") return;
         events.forEach(function(name) {
           document.removeEventListener(name, handler, true);
         });
@@ -13307,7 +13313,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.59.0" });
+    app = await createApp({ container, roche, version: "0.60.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -13323,7 +13329,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.59.0",
+    version: "0.60.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
