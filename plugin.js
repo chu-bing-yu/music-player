@@ -1,4 +1,4 @@
-/* music-player v0.57.0 | built 2026-11-09T14:31:50.631Z */
+/* music-player v0.58.0 | built 2026-11-09T14:47:34.401Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1681,6 +1681,42 @@
     if (name === "NotAllowedError" || name === "SecurityError") return true;
     return /gesture|autoplay|not allowed/i.test(msg);
   }
+  var activeAudio = null;
+  var guardInstalled = false;
+  function installPageAudioGuard() {
+    if (guardInstalled) return;
+    if (typeof window === "undefined" || typeof HTMLMediaElement === "undefined") return;
+    guardInstalled = true;
+    var origPlay = HTMLMediaElement.prototype.play;
+    if (typeof origPlay !== "function") return;
+    HTMLMediaElement.prototype.play = function() {
+      try {
+        if (this !== activeAudio && this.loop && activeAudio && !activeAudio.paused) {
+          try {
+            this.pause();
+          } catch (err) {
+          }
+          return Promise.resolve();
+        }
+      } catch (err) {
+      }
+      return origPlay.apply(this, arguments);
+    };
+  }
+  function silencePageLoops(except) {
+    if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+    try {
+      var list = document.querySelectorAll("audio, video");
+      Array.prototype.forEach.call(list, function(el) {
+        if (!el || el === except || !el.loop) return;
+        try {
+          if (!el.paused) el.pause();
+        } catch (err) {
+        }
+      });
+    } catch (err) {
+    }
+  }
   function createPlayer(options) {
     var opts = options || {};
     var state = {
@@ -1729,6 +1765,7 @@
     function onPlay() {
       state.status = "playing";
       state.error = "";
+      silencePageLoops(audio);
       emit();
     }
     var nudged = false;
@@ -1736,11 +1773,16 @@
       var wasPlaying = state.status === "playing";
       var nearStart = !!audio && audio.currentTime < 1 && wasPlaying;
       if (state.status !== "error" && state.status !== "loading") state.status = "paused";
+      if (nearStart) {
+        lastFailure = { host: hostOf(lastSrc), reason: "stolen" };
+        state.error = "播放被页面里的保活音频抢了";
+      }
       emit();
       if (nearStart && !nudged) {
         nudged = true;
         setTimeout(function() {
           if (!audio || !audio.paused) return;
+          silencePageLoops(audio);
           audio.play().catch(function() {
             nudged = false;
           });
@@ -1786,9 +1828,11 @@
       audio = new Audio();
       audio.preload = "auto";
       audio.volume = state.volume;
+      activeAudio = audio;
       bindAudio(audio);
     }
     recreateAudio();
+    installPageAudioGuard();
     function mediaSession() {
       if (!mediaOn) return null;
       if (typeof navigator === "undefined" || !navigator.mediaSession) return null;
@@ -11851,6 +11895,7 @@
     function playFailText() {
       var fail = player && typeof player.lastFail === "function" ? player.lastFail() : null;
       if (fail && fail.reason === "blocked") return "浏览器拦了自动播放，点一下播放";
+      if (fail && fail.reason === "stolen") return "被 Roche 的「音乐保活」抢了，去 Roche 设置里关掉它";
       if (fail && fail.reason === "interrupted") return "被系统打断，点一下重新加载";
       if (fail && fail.host) return "放不了（" + fail.host + " 拒绝或超时），换一首试试";
       return "这首放不了（音源可能没版权），换一首试试";
@@ -13078,7 +13123,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.57.0" });
+    app = await createApp({ container, roche, version: "0.58.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -13094,7 +13139,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.57.0",
+    version: "0.58.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

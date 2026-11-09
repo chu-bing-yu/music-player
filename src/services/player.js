@@ -35,6 +35,50 @@ export function isAutoplayBlocked(err) {
   return /gesture|autoplay|not allowed/i.test(msg);
 }
 
+/* ---------------- 页面音频抢占 ----------------
+ * Roche 网页版内置「保活音频」（`new Audio(); loop = true`，一个静音、一个音乐保活），
+ * 它们没有挂进 DOM，插件拿不到引用；但在手机上它们会占住音频会话，
+ * 我们一播就被打断（表现就是点了停住 / 刚出声又没了）。
+ *
+ * 办法：给 HTMLMediaElement.play 打补丁 —— 插件正在放歌时，
+ * 页面里其它 **loop=true** 的音频一律不让播（语音消息之类 loop 是 false，不受影响）。
+ * 插件停了就放行，Roche 的保活可以在下一次用户操作时自己恢复。
+ */
+var activeAudio = null;
+var guardInstalled = false;
+
+export function installPageAudioGuard() {
+  if (guardInstalled) return;
+  if (typeof window === 'undefined' || typeof HTMLMediaElement === 'undefined') return;
+  guardInstalled = true;
+
+  var origPlay = HTMLMediaElement.prototype.play;
+  if (typeof origPlay !== 'function') return;
+
+  HTMLMediaElement.prototype.play = function () {
+    try {
+      if (this !== activeAudio && this.loop && activeAudio && !activeAudio.paused) {
+        try { this.pause(); } catch (err) { /* 忽略 */ }
+        // 假装播过了，免得宿主反复重试
+        return Promise.resolve();
+      }
+    } catch (err) { /* 忽略 */ }
+    return origPlay.apply(this, arguments);
+  };
+}
+
+/** 把页面里正在循环播放的音频压下去（保活音频不一定在 DOM 里，尽力而为） */
+export function silencePageLoops(except) {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  try {
+    var list = document.querySelectorAll('audio, video');
+    Array.prototype.forEach.call(list, function (el) {
+      if (!el || el === except || !el.loop) return;
+      try { if (!el.paused) el.pause(); } catch (err) { /* 忽略 */ }
+    });
+  } catch (err) { /* 忽略 */ }
+}
+
 export function createPlayer(options) {
   var opts = options || {};
   var state = {
@@ -96,6 +140,8 @@ export function createPlayer(options) {
   function onPlay() {
     state.status = 'playing';
     state.error = '';
+    // 我们开始出声了：把页面里循环播放的保活音频压住，避免它们把会话抢回去
+    silencePageLoops(audio);
     emit();
   }
 
@@ -107,12 +153,20 @@ export function createPlayer(options) {
     var nearStart = !!audio && audio.currentTime < 1 && wasPlaying;
 
     if (state.status !== 'error' && state.status !== 'loading') state.status = 'paused';
+
+    // 刚出声就被打断：多半是页面里的保活音频抢会话，标记出来让上层提示用户
+    if (nearStart) {
+      lastFailure = { host: hostOf(lastSrc), reason: 'stolen' };
+      state.error = '播放被页面里的保活音频抢了';
+    }
+
     emit();
 
     if (nearStart && !nudged) {
       nudged = true;
       setTimeout(function () {
         if (!audio || !audio.paused) return;
+        silencePageLoops(audio);
         audio.play().catch(function () { nudged = false; });
       }, 300);
     }
@@ -157,10 +211,14 @@ export function createPlayer(options) {
     audio = new Audio();
     audio.preload = 'auto';
     audio.volume = state.volume;
+    // 让页面音频抢占守卫知道「这个才是插件自己的」
+    activeAudio = audio;
     bindAudio(audio);
   }
 
   recreateAudio();
+  // 打一次补丁：插件放歌时不让页面里的循环音频（Roche 的两个保活音频都是 loop）抢会话
+  installPageAudioGuard();
 
   /* ---------------- 系统媒体控制 ---------------- */
 

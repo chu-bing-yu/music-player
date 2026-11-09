@@ -364,6 +364,7 @@ export async function createApp(opts) {
   function playFailText() {
     var fail = player && typeof player.lastFail === 'function' ? player.lastFail() : null;
     if (fail && fail.reason === 'blocked') return '浏览器拦了自动播放，点一下播放';
+    if (fail && fail.reason === 'stolen') return '被 Roche 的「音乐保活」抢了，去 Roche 设置里关掉它';
     if (fail && fail.reason === 'interrupted') return '被系统打断，点一下重新加载';
     if (fail && fail.host) return '放不了（' + fail.host + ' 拒绝或超时），换一首试试';
     return '这首放不了（音源可能没版权），换一首试试';
