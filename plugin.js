@@ -1,4 +1,4 @@
-/* music-player v0.49.0 | built 2026-11-09T09:06:36.880Z */
+/* music-player v0.50.0 | built 2026-11-09T09:13:38.679Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -5715,6 +5715,32 @@
   color: var(--mp-ink-2);
 }
 
+/* 歌单详情：操作改成文字按钮（下划线），不用大红胶囊 */
+.mp-actions--text {
+  padding: 12px 28px 4px;
+  gap: 20px;
+}
+
+.mp-actions--text .mp-btn {
+  height: auto;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mp-accent);
+  font-family: var(--mp-serif);
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  box-shadow: none;
+}
+
+.mp-actions--text .mp-btn:disabled {
+  opacity: 0.35;
+  background: transparent;
+}
+
 /* 横滑竖条：卡片同尺寸，margin-top 交替做出错落 */
 .mp-plrail {
   display: flex;
@@ -5901,16 +5927,6 @@
   }
 
   // src/ui/components.js
-  function pageTitle(text, onExit) {
-    var el = h("div", { class: "mp-header__title", text });
-    if (onExit) {
-      el.setAttribute("title", "点击退出");
-      el.addEventListener("click", function() {
-        onExit();
-      });
-    }
-    return el;
-  }
   function iconBtn(name, opts) {
     var o = opts || {};
     var btn = h("button", {
@@ -6184,9 +6200,10 @@
     var o = opts || {};
     var text = h("div", { class: "mp-mast__text" }, [
       o.date ? h("div", { class: "mp-mast__date", text: o.date }) : null,
-      h("div", { class: "mp-mast__title" + (o.hand ? " mp-mast__title--hand" : ""), text: o.title || "" })
+      o.titleNode || h("div", { class: "mp-mast__title" + (o.hand ? " mp-mast__title--hand" : ""), text: o.title || "" })
     ].filter(Boolean));
     var bar = h("div", { class: "mp-mast__bar" }, [
+      o.leading || null,
       h("span", { class: "mp-mast__mark" }),
       text,
       o.actions ? h("div", { class: "mp-mast__acts" }, o.actions) : null
@@ -6195,7 +6212,8 @@
       text.addEventListener("click", o.onTitle);
     }
     var wrap = h("div", { class: "mp-mast" }, [bar, h("div", { class: "mp-mast__rule" })]);
-    if (o.hint) wrap.appendChild(h("div", { class: "mp-mast__hint", text: o.hint }));
+    if (o.subNode) wrap.appendChild(o.subNode);
+    else if (o.hint) wrap.appendChild(h("div", { class: "mp-mast__hint", text: o.hint }));
     return wrap;
   }
   function todayText() {
@@ -6512,15 +6530,17 @@
         renderResults();
       }
     }));
-    var header = h("div", { class: "mp-header" }, [
-      // 搜索是推荐页的二级页面，左上角回推荐
-      iconBtn("back", { label: "返回推荐", onClick: function() {
+    var header = masthead({
+      // 搜索是推荐页的二级页面，返回放在刊头左侧
+      leading: iconBtn("back", { label: "返回推荐", onClick: function() {
         ctx.goto("recommend");
       } }),
-      pageTitle("搜索", function() {
+      title: "搜索",
+      onTitle: function() {
         ctx.exitApp();
-      })
-    ].concat(headerRight));
+      },
+      actions: headerRight
+    });
     function chip(label, onClick) {
       var btn = h("button", { class: "mp-rec-chip", type: "button", text: label });
       btn.addEventListener("click", function() {
@@ -6878,7 +6898,7 @@
       return ctx.playlistOf(state.playlistId);
     }
     var titleEl = h("div", { class: "mp-header__title", text: "歌单" });
-    var subEl = h("div", { class: "mp-header__sub", text: "" });
+    var subEl = h("div", { class: "mp-mast__hint", text: "" });
     var moreBtn = iconBtn("more", {
       label: "更多",
       onClick: function() {
@@ -6912,13 +6932,14 @@
         });
       }
     });
-    var header = h("div", { class: "mp-header" }, [
-      iconBtn("back", { label: "返回", onClick: back2 }),
-      titleEl,
-      subEl,
-      moreBtn
-    ]);
-    var actions = h("div", { class: "mp-actions" });
+    var header = masthead({
+      leading: iconBtn("back", { label: "返回", onClick: back2 }),
+      titleNode: h("div", { class: "mp-mast__title", text: "歌单" }),
+      subNode: subEl,
+      actions: [moreBtn]
+    });
+    titleEl = header.querySelector(".mp-mast__title");
+    var actions = h("div", { class: "mp-actions mp-actions--text" });
     function renderActions(p) {
       clear(actions);
       var disabled = !p.tracks.length;
@@ -7796,11 +7817,13 @@
     var state = ctx.state;
     var body = h("div", { class: "mp-body" });
     var statsTimer = null;
-    var header = h("div", { class: "mp-header" }, [
-      pageTitle("设置", function() {
+    var header = masthead({
+      date: todayText(),
+      title: "设置",
+      onTitle: function() {
         ctx.exitOrMinimize();
-      })
-    ]);
+      }
+    });
     function setSource(key, value) {
       var sources = Object.assign({}, state.settings.sources);
       sources[key] = value;
@@ -11849,7 +11872,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.49.0" });
+    app = await createApp({ container, roche, version: "0.50.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11865,7 +11888,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.49.0",
+    version: "0.50.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
