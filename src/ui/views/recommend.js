@@ -5,9 +5,8 @@
 
 import { h, clear } from '../dom.js';
 import { masthead, sectionHead } from '../masthead.js';
-import { iconBtn, coverNode, fillCover, shelfRail } from '../components.js';
+import { iconBtn, fillCover, shelfRail, magTrackRow } from '../components.js';
 import { trackKey } from '../../core/track.js';
-import { fmtTime } from '../../core/format.js';
 
 function greeting() {
   var hour = new Date().getHours();
@@ -102,16 +101,12 @@ export function mount(host, ctx) {
     var list = h('div', { class: 'mp-mag__tracks' });
 
     tracks.slice(0, 20).forEach(function (track, i) {
-      var no = String(i + 1).padStart(2, '0');
-      var row = h('button', { class: 'mp-mag__track', type: 'button' }, [
-        h('span', { class: 'mp-mag__no', text: no }),
-        h('span', { class: 'mp-mag__tname', text: track.name || '未知歌曲' }),
-        h('span', { class: 'mp-mag__time', text: track.duration ? fmtTime(track.duration) : '' })
-      ]);
-      row.addEventListener('click', function () {
-        ctx.playRecommend(tracks, i);
-      });
-      list.appendChild(row);
+      list.appendChild(magTrackRow({
+        index: i,
+        track: track,
+        current: ctx.isCurrent(track),
+        onPlay: function () { ctx.playRecommend(tracks, i); }
+      }));
     });
 
     return list;

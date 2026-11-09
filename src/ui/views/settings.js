@@ -6,20 +6,15 @@ import { masthead, todayText } from '../masthead.js';
 import { THEMES, ACCENTS, UI_SKINS, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
 import { qrKey, qrCreate, qrCheck, account as neteaseAccount, isReady as neteaseReady } from '../../services/netease.js';
 
-function field(label, node, desc) {
-  var left = h('div', { class: 'mp-field__label' }, [
-    h('div', { text: label }),
-    desc ? h('div', { class: 'mp-field__desc', text: desc }) : null
-  ]);
+/** 设置行：只留「字段名 + 控件」，不再放灰色解释（用户要求整页去说明） */
+function field(label, node) {
+  var left = h('div', { class: 'mp-field__label' }, [h('div', { text: label })]);
   return h('div', { class: 'mp-field' }, [left, node]);
 }
 
-/** 控件比较宽（三个按钮那种）时用：标题+说明占一行，控件整行放下面 */
-function fieldStack(label, node, desc) {
-  var left = h('div', { class: 'mp-field__label' }, [
-    h('div', { text: label }),
-    desc ? h('div', { class: 'mp-field__desc', text: desc }) : null
-  ]);
+/** 控件比较宽（三个按钮那种）时用：标题占一行，控件整行放下面 */
+function fieldStack(label, node) {
+  var left = h('div', { class: 'mp-field__label' }, [h('div', { text: label })]);
   return h('div', { class: 'mp-field mp-field--stack' }, [left, node]);
 }
 
@@ -220,8 +215,8 @@ export function mount(host, ctx) {
 
     var appearanceGroup = h('div', { class: 'mp-group' }, [
       h('div', { class: 'mp-group__title', text: '外观' }),
-      field('界面风格', skinRow, '杂志风：宋体标题 + 直角封面 + 细线；经典：圆角卡片 + 方形封面'),
-      field('主题', themeRow, '跟随系统 / 白天白色 / 夜间深色'),
+      field('界面风格', skinRow),
+      field('主题', themeRow),
       // TA 页花瓣开关在 TA 页右上角 ⋯ 里，设置页不重复
       field('手写字体', (function () {
         var box = h('div', { class: 'mp-count' });
@@ -242,13 +237,9 @@ export function mount(host, ctx) {
         box.appendChild(input);
         box.appendChild(clear);
         return box;
-      })(), '字体文件建议 woff2 且 <1MB；超过 5MB 容易卡顿甚至闪退'),
-      field('主色调', h('div', { class: 'mp-dots' }, [dotRow, customDot]),
-        '点色块选预设，点最右边取色器可以完全自定义'),
-      field('悬浮窗', switchEl(!!s.floating, function (v) { ctx.updateSettings({ floating: v }); }),
-        s.floating
-          ? '开：点右上角最小化会缩成悬浮球'
-          : '关：点右上角直接退出 App，不显示悬浮球，音乐继续在后台播放'),
+      })()),
+      field('主色调', h('div', { class: 'mp-dots' }, [dotRow, customDot])),
+      field('悬浮窗', switchEl(!!s.floating, function (v) { ctx.updateSettings({ floating: v }); }))
 
     ]);
 
@@ -282,10 +273,8 @@ export function mount(host, ctx) {
 
     var chatGroup = h('div', { class: 'mp-group' }, [
       h('div', { class: 'mp-group__title', text: '聊天' }),
-      field('一起听（主聊天）', switchEl(!!s.chatListen, function (v) { ctx.updateSettings({ chatListen: v }); }),
-        '开启后主聊天的模型能看到当前在听什么，并可直接点歌、切歌、暂停'),
-      field('角色点歌加入队列', switchEl(!!s.chatAddToQueue, function (v) { ctx.updateSettings({ chatAddToQueue: v }); }),
-        '开：只把搜到的第一首加进当前列表；关：直接用它替换列表'),
+      field('一起听（主聊天）', switchEl(!!s.chatListen, function (v) { ctx.updateSettings({ chatListen: v }); })),
+      field('角色点歌加入队列', switchEl(!!s.chatAddToQueue, function (v) { ctx.updateSettings({ chatAddToQueue: v }); })),
       fieldStack('指令通道', (function () {
         var row = h('div', { class: 'mp-theme-row' });
         [
@@ -302,14 +291,10 @@ export function mount(host, ctx) {
           row.appendChild(btn);
         });
         return row;
-      })(), '混合：点歌走工具（有卡片），其余用注释指令；标记：全部注释；工具：全部 function calling'),
+      })()),
       // 推荐模式 / 推荐数量 / 只推荐能播放的：都在推荐页「偏好」面板里，设置页不再重复
-      field('点卡片播放', switchEl(!!s.cardTapPlay, function (v) { ctx.updateSettings({ cardTapPlay: v }); }),
-        s.cardTapPlay
-          ? '开：每次点卡片都切回这张卡上的歌'
-          : '关：发卡时已经播过，之后再点卡片只显示当前播放状态'),
-      field('一起听提示词', editPromptBtn,
-        '每轮注入给主聊天的说明；占位符 {{title}} {{artist}} {{state}} {{queue}} 会自动替换')
+      field('点卡片播放', switchEl(!!s.cardTapPlay, function (v) { ctx.updateSettings({ cardTapPlay: v }); })),
+      field('一起听提示词', editPromptBtn)
     ]);
 
     var sourceGroup = h('div', { class: 'mp-group' }, [
@@ -345,14 +330,10 @@ export function mount(host, ctx) {
         });
         return row;
       })()),
-      field('QQ 音乐', switchEl(s.sources.tencent, function (v) { setSource('tencent', v); }),
-        '搜索并播放完整歌曲（经公开接口解析）'),
-      field('iTunes', switchEl(s.sources.itunes, function (v) { setSource('itunes', v); }),
-        '苹果官方接口，只有 30 秒试听'),
-      field('免费曲库 Audius', switchEl(s.sources.audius, function (v) { setSource('audius', v); }),
-        '无版权/CC 音乐，能完整播放；以欧美电音为主，中文歌很少'),
-      field('网易云', switchEl(s.sources.netease, function (v) { setSource('netease', v); }),
-        'QQ 放不了时自动找网易云同名歌曲兜底；开了上面的 API 地址还能搜整库')
+      field('QQ 音乐', switchEl(s.sources.tencent, function (v) { setSource('tencent', v); })),
+      field('iTunes', switchEl(s.sources.itunes, function (v) { setSource('itunes', v); })),
+      field('免费曲库 Audius', switchEl(s.sources.audius, function (v) { setSource('audius', v); })),
+      field('网易云', switchEl(s.sources.netease, function (v) { setSource('netease', v); }))
     ]);
 
     var prefixInput = h('input', {
@@ -367,12 +348,12 @@ export function mount(host, ctx) {
 
     var netGroup = h('div', { class: 'mp-group' }, [
       h('div', { class: 'mp-group__title', text: '网络' }),
-      field('代理前缀', prefixInput, ''),
+      field('代理前缀', prefixInput),
       field('音源自检', (function () {
         var btn = h('button', { class: 'mp-btn mp-btn--ghost', type: 'button', text: '运行' });
         btn.addEventListener('click', runSelfTest);
         return btn;
-      })(), '逐个真实请求，告诉你哪个源在这台设备上能用')
+      })())
     ]);
 
     var apiInput = h('input', {
@@ -394,10 +375,9 @@ export function mount(host, ctx) {
 
     var neteaseGroup = h('div', { class: 'mp-group' }, [
       h('div', { class: 'mp-group__title', text: '网易云（可选）' }),
-      field('API 地址', apiInput, '填你自己部署的 NeteaseCloudMusicApi 地址；留空就只用公开音源'),
+      field('API 地址', apiInput),
       field('账号',
-        h('div', { class: 'mp-field__value', text: s.neteaseCookie ? (s.neteaseProfile || '已登录') : '未登录' }),
-        s.neteaseCookie ? '登录后可用自己账号的曲库/歌单' : '填好地址后扫码登录'),
+        h('div', { class: 'mp-field__value', text: s.neteaseCookie ? (s.neteaseProfile || '已登录') : '未登录' })),
       // 排行榜在搜索页底部直接铺开，设置页不再放入口
       field(s.neteaseCookie ? '重新登录' : '扫码登录',
         h('div', { class: 'mp-field__actions' }, [
@@ -411,8 +391,7 @@ export function mount(host, ctx) {
               return out;
             })()
             : null
-        ]),
-        '二维码由你部署的服务生成')
+        ]))
     ]);
 
     var volume = h('input', {
@@ -429,28 +408,21 @@ export function mount(host, ctx) {
 
     var playGroup = h('div', { class: 'mp-group' }, [
       h('div', { class: 'mp-group__title', text: '播放' }),
-      field('播放引擎', h('div', { class: 'mp-field__value', text: ctx.engineLabel() }),
-        ctx.isNative()
-          ? '原生播放器；状态栏/锁屏的按钮由它负责'
-          : '没接上原生播放器，状态栏控制不可用（需要新版宿主）'),
-      field('极简模式', switchEl(!!s.nativeMinimal, function (v) { ctx.updateSettings({ nativeMinimal: v }); }),
-        '默认开启：插件不轮询、不重建，只把队列交给原生播放器，状态栏控制才稳'),
+      field('播放引擎', h('div', { class: 'mp-field__value', text: ctx.engineLabel() })),
+      field('极简模式', switchEl(!!s.nativeMinimal, function (v) { ctx.updateSettings({ nativeMinimal: v }); })),
       field('重建播放会话', (function () {
         var btn = h('button', { class: 'mp-btn mp-btn--ghost', type: 'button', text: '重建' });
         btn.addEventListener('click', function () { ctx.rebuildSession(); });
         return btn;
-      })(), '控制栏按钮点了没反应时按一下：重开原生服务和通知，通常能救活'),
+      })()),
       field('彻底停止', (function () {
         var btn = h('button', { class: 'mp-btn mp-btn--ghost', type: 'button', text: '停止并清除通知' });
         btn.addEventListener('click', function () { ctx.hardStop(); });
         return btn;
-      })(), '不想听的时候按这个：停止播放 + 清空队列 + 状态栏通知一起消失'),
+      })()),
       field(
         '音量',
-        ctx.isNative() ? h('div', { class: 'mp-field__value', text: '跟随系统音量' }) : volume,
-        ctx.isNative()
-          ? '走宿主原生播放器，音量用手机音量键调'
-          : '循环模式和随机播放在播放页右下角的按钮里调'
+        ctx.isNative() ? h('div', { class: 'mp-field__value', text: '跟随系统音量' }) : volume
       )
     ]);
 
@@ -465,8 +437,8 @@ export function mount(host, ctx) {
       field('收藏', h('div', { class: 'mp-field__value', text: state.favorites.length + ' 首' })),
       field('歌单', h('div', { class: 'mp-field__value', text: state.playlists.length + ' 个' })),
       field('搜索历史', h('div', { class: 'mp-field__value', text: state.searches.length + ' 条' })),
-      field('退出 App', exitBtn, '回到 Roche，音乐会继续放在后台播放'),
-      field('卸载插件会一起清空', clearBtn, '插件数据存在宿主 storage 里，卸载即删除')
+      field('退出 App', exitBtn),
+      field('卸载插件会一起清空', clearBtn)
     ]);
 
     var about = h('div', { class: 'mp-about' }, [

@@ -292,8 +292,12 @@ try {
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
   await sleep(200);
   await evaluate('document.querySelector(".mp-plfeat").click()');
-  const favCount = await waitFor('document.querySelectorAll(".mp-row").length === 1');
+  const favCount = await waitFor('document.querySelectorAll(".mp-mag__row").length === 1');
   check('收藏后我的收藏有 1 首', favCount);
+  // v0.52.0：歌单详情是杂志编号列表（无封面缩略图，行尾有 ⋯）
+  check('详情页是编号列表', await evaluate('(function () { const no = document.querySelector(".mp-tracklist .mp-mag__no"); return !!no && no.textContent === "01"; })()'));
+  check('详情页不再有封面缩略图', await evaluate('!document.querySelector(".mp-tracklist .mp-row__cover")'));
+  check('详情页行尾有 ⋯', await evaluate('!!document.querySelector(".mp-tracklist .mp-mag__more")'));
 
   // 新建歌单
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
@@ -396,7 +400,7 @@ try {
   await sleep(200);
   check('换主色调', await evaluate('document.querySelector(".mp-root").dataset.accent === "blue"'));
 
-  // 界面风格：杂志风 / 经典（v0.51.0 双主题）
+  // 界面风格：杂志风 / 经典（v0.52.0：等大卡 + 一屏 4 张 + 位移错落）
   check('刊头没有竖线', await evaluate('!document.querySelector(".mp-mast__mark")'));
   check('默认是杂志风', await evaluate('document.querySelector(".mp-root").dataset.ui === "mag"'));
   await evaluate('window.__t.clickByText(".mp-theme-btn", "经典")');
@@ -404,10 +408,16 @@ try {
   check('切到经典风格', await evaluate('document.querySelector(".mp-root").dataset.ui === "classic"'));
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
   await sleep(300);
-  check('经典模式封面是等大方形', await evaluate(`(function () {
-    const rects = Array.from(document.querySelectorAll('.mp-shelf__art')).map((n) => n.getBoundingClientRect());
-    if (!rects.length) return false;
-    return rects.every((r) => Math.abs(r.width - r.height) < 2);
+  check('经典模式一屏 4 张等大方形', await evaluate(`(function () {
+    const rail = document.querySelector('.mp-shelf');
+    const card = rail && rail.querySelector('.mp-shelf__card');
+    if (!card) return false;
+    const rw = rail.getBoundingClientRect().width;
+    const cw = card.getBoundingClientRect().width;
+    const art = card.querySelector('.mp-shelf__art').getBoundingClientRect();
+    // 经典 gap 12：(容器 - 3×12) / 4
+    const fit = Math.abs(cw - (rw - 36) / 4) < 1.5;
+    return fit && Math.abs(art.width - art.height) < 1.5;
   })()`));
 
   await evaluate('window.__t.clickByText(".mp-dock__btn", "设置")');
@@ -417,24 +427,32 @@ try {
   check('切回杂志风', await evaluate('document.querySelector(".mp-root").dataset.ui === "mag"'));
   await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
   await sleep(300);
-  check('杂志风封面是竖幅且高度错落', await evaluate(`(function () {
+  check('杂志风一屏 4 张、等大竖幅、顶边错落', await evaluate(`(function () {
     const rail = document.querySelector('.mp-shelf');
     const first = rail && rail.querySelector('.mp-shelf__card');
     if (!first) return false;
-    // 只有一张歌单时补两张同结构卡片来量 nth-child 的高度节奏，量完移除
+    // 只有一张歌单时补两张同结构卡片量 nth-child 的位移，量完移除
     const probe = [first.cloneNode(true), first.cloneNode(true)];
     probe.forEach((n) => rail.appendChild(n));
-    const rects = probe.map((n) => n.querySelector('.mp-shelf__art').getBoundingClientRect())
-      .concat([first.querySelector('.mp-shelf__art').getBoundingClientRect()]);
+    const cards = [first].concat(probe);
+    const tops = cards.map((n) => Math.round(n.getBoundingClientRect().top));
+    const heights = cards.map((n) => Math.round(n.querySelector('.mp-shelf__art').getBoundingClientRect().height));
     probe.forEach((n) => n.remove());
-    const portrait = rects.every((r) => r.height > r.width * 1.1);
-    const heights = rects.map((r) => Math.round(r.height));
-    return portrait && Math.max.apply(null, heights) !== Math.min.apply(null, heights);
+    const rw = rail.getBoundingClientRect().width;
+    const cw = first.getBoundingClientRect().width;
+    const art = first.querySelector('.mp-shelf__art').getBoundingClientRect();
+    // 杂志 gap 8：(容器 - 3×8) / 4
+    const fit = Math.abs(cw - (rw - 24) / 4) < 1.5;
+    const portrait = art.height > art.width * 1.2;
+    const sameHeight = Math.max.apply(null, heights) - Math.min.apply(null, heights) <= 1;
+    const staggered = Math.max.apply(null, tops) - Math.min.apply(null, tops) >= 5;
+    return fit && portrait && sameHeight && staggered;
   })()`));
   // 后面的用例都在设置页里读文案，回到设置页
   await evaluate('window.__t.clickByText(".mp-dock__btn", "设置")');
   await sleep(300);
   check('回到设置页', await evaluate('!!document.querySelector(".mp-group")'));
+  check('设置页没有灰色说明', await evaluate('document.querySelectorAll(".mp-field__desc").length === 0'));
 
   // 一起听开关
   check('主聊天默认注入音乐上下文', await evaluate('(function () { var p = window.__registeredPlugin; var s = p.chat.contextProvider({ conversationId: "c1" }); return typeof s === "string" && s.indexOf("音乐插件") !== -1; })()'));

@@ -2,6 +2,7 @@
 
 import { h, clear } from './dom.js';
 import { icon } from './icons.js';
+import { fmtTime } from '../core/format.js';
 
 /** 页面标题：点击即退出 App（不显示额外按钮） */
 export function pageTitle(text, onExit) {
@@ -107,9 +108,9 @@ export function songRow(opts) {
 }
 
 /**
- * 杂志书架：竖幅封面横滑条。
- * 封面高度按 3 步循环（高 / 矮 / 最高），底边对齐，看起来像书架上高低不一的书脊。
- * 名字压在封面底部的渐变压字上，这样整条的底边是齐的，错落感只出现在上沿。
+ * 杂志书架：等大竖幅封面横滑条。
+ * 每张卡尺寸完全一致（一屏正好 4 张），错落靠 nth-child 的纵向偏移（0 / 14 / 7）。
+ * 名字在封面下方，所以位移不会影响文字可读性。
  *
  * @param {{name:string, sub?:string, coverUrl?:string, coverKey?:string, onClick:Function}[]} items
  */
@@ -133,6 +134,43 @@ export function shelfRail(items) {
   });
 
   return rail;
+}
+
+/**
+ * 杂志曲目行：首页「每日推荐」与歌单详情共用，保证两处完全一致。
+ * 结构：div.mp-mag__row > button.mp-mag__track(序号 + 歌名 + 时长) + button.mp-mag__more。
+ * 外层必须是 div —— ⋯ 本身是 button，button 不能套 button。
+ *
+ * @param {{index:number, track:Object, current?:boolean,
+ *          onPlay:Function, onMore?:Function}} opts
+ */
+export function magTrackRow(opts) {
+  var o = opts || {};
+  var track = o.track || {};
+  var index = Number(o.index) || 0;
+
+  var play = h('button', { class: 'mp-mag__track', type: 'button' }, [
+    h('span', { class: 'mp-mag__no', text: String(index + 1).padStart(2, '0') }),
+    h('span', { class: 'mp-mag__tname', text: track.name || '未知歌曲' }),
+    h('span', { class: 'mp-mag__time', text: track.duration ? fmtTime(track.duration) : '' })
+  ]);
+  play.addEventListener('click', function () {
+    if (o.onPlay) o.onPlay();
+  });
+
+  var row = h('div', { class: 'mp-mag__row' + (o.current ? ' is-current' : '') }, [play]);
+
+  if (o.onMore) {
+    var more = h('button', { class: 'mp-mag__more', type: 'button', 'aria-label': '更多' },
+      [h('span', { html: icon('more') })]);
+    more.addEventListener('click', function (e) {
+      e.stopPropagation();
+      o.onMore();
+    });
+    row.appendChild(more);
+  }
+
+  return row;
 }
 
 export function emptyHint(title, sub) {

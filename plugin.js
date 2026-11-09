@@ -1,4 +1,4 @@
-/* music-player v0.51.0 | built 2026-11-09T09:40:36.715Z */
+/* music-player v0.52.0 | built 2026-11-09T10:04:52.071Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -3779,13 +3779,6 @@
   font-size: 14px;
 }
 
-.mp-field__desc {
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--mp-muted);
-  line-height: 1.5;
-}
-
 .mp-field__value {
   flex: 0 0 auto;
   font-size: 13px;
@@ -5443,29 +5436,69 @@
   color: var(--mp-ink-2);
 }
 
-/* 曲目单 */
+/* 曲目单：外层一行负责细线（这样 ⋯ 也在细线之内），内层按钮负责排版 */
 .mp-mag__tracks {
   display: block;
 }
 
+.mp-tracklist {
+  padding: 4px 24px 28px;
+}
+
+.mp-mag__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mp-root[data-theme="light"] .mp-mag__row {
+  border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
 .mp-mag__track {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
-  width: 100%;
-  padding: 9px 2px;
+  padding: 11px 0;
   border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   background: transparent;
   text-align: left;
-}
-
-.mp-root[data-theme="light"] .mp-mag__track {
-  border-bottom-color: rgba(0, 0, 0, 0.06);
+  color: inherit;
 }
 
 .mp-mag__track:active {
-  background: rgba(255, 255, 255, 0.03);
+  background: transparent;
+  opacity: 0.6;
+}
+
+.mp-mag__row.is-current .mp-mag__no,
+.mp-mag__row.is-current .mp-mag__tname {
+  color: var(--mp-accent);
+}
+
+.mp-mag__more {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mp-muted);
+  padding: 0;
+}
+
+.mp-mag__more:active {
+  opacity: 0.55;
+}
+
+.mp-mag__more svg {
+  width: 17px;
+  height: 17px;
 }
 
 .mp-mag__no {
@@ -5495,14 +5528,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 书架：竖幅封面，底边对齐，封面高度按 3 步循环形成错落（推荐页 / 歌单页共用） */
+/* 书架：等大竖幅封面，一屏正好 4 张；错落靠纵向交替偏移（推荐页 / 歌单页共用） */
 .mp-shelf {
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 6px 0 24px;
+  /* 底部要容下 14px 的位移，否则下移的卡会被裁掉 */
+  padding: 4px 0 18px;
   scrollbar-width: none;
 }
 
@@ -5511,34 +5545,35 @@
 }
 
 .mp-shelf__card {
-  position: relative;
-  flex: 0 0 auto;
-  width: 96px;
+  /* 按容器算宽度：390 宽减去左右 24 内边距、3 个 8px 间隙，正好 4 张 */
+  flex: 0 0 calc((100% - 24px) / 4);
+  min-width: 0;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: left;
-  color: #fff;
+  color: var(--mp-ink);
+}
+
+/* 错落：三步循环，只位移不改尺寸，也不影响滚动宽度 */
+.mp-shelf__card:nth-child(3n + 2) {
+  transform: translateY(14px);
+}
+
+.mp-shelf__card:nth-child(3n + 3) {
+  transform: translateY(7px);
 }
 
 .mp-shelf__art {
   position: relative;
   width: 100%;
-  height: 132px;
+  aspect-ratio: 3 / 4;
   overflow: hidden;
   border-radius: 2px;
   background: var(--mp-bg-2);
   display: grid;
   place-items: center;
   color: var(--mp-muted);
-}
-
-.mp-shelf__card:nth-child(3n + 2) .mp-shelf__art {
-  height: 108px;
-}
-
-.mp-shelf__card:nth-child(3n + 3) .mp-shelf__art {
-  height: 150px;
 }
 
 .mp-shelf__art img {
@@ -5553,23 +5588,17 @@
   height: 22px;
 }
 
-/* 名字压在封面底部：整条底边齐平，错落只出现在上沿 */
+/* 文案放封面下方：一屏 4 张时也读得清 */
 .mp-shelf__label {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 26px 8px 8px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.62) 78%);
-  pointer-events: none;
+  padding-top: 7px;
 }
 
 .mp-shelf__name {
   font-family: var(--mp-serif);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.35;
   letter-spacing: 0.5px;
-  color: #fff;
+  color: var(--mp-ink);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -5581,7 +5610,7 @@
   font-family: var(--mp-sans-cn);
   font-size: 9.5px;
   letter-spacing: 0.5px;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--mp-muted);
 }
 
 /* 榜单目录 */
@@ -5926,12 +5955,6 @@
   letter-spacing: 0.5px;
 }
 
-.mp-root[data-ui="mag"] .mp-field__desc {
-  font-family: var(--mp-sans-cn);
-  font-size: 10.5px;
-  letter-spacing: 0.3px;
-}
-
 .mp-root[data-ui="mag"] .mp-theme-row {
   padding: 0;
   gap: 6px;
@@ -6053,15 +6076,21 @@
   text-decoration: none;
 }
 
-.mp-root[data-ui="classic"] .mp-mag__track {
-  padding: 9px 0;
+.mp-root[data-ui="classic"] .mp-tracklist {
+  padding: 0 16px 24px;
+}
+
+.mp-root[data-ui="classic"] .mp-mag__row {
   border-bottom: 0;
 }
 
+.mp-root[data-ui="classic"] .mp-mag__track {
+  padding: 9px 0;
+}
+
+/* 经典模式不要序号，回到普通列表 */
 .mp-root[data-ui="classic"] .mp-mag__no {
-  flex: 0 0 20px;
-  font-family: var(--mp-font);
-  color: var(--mp-muted);
+  display: none;
 }
 
 .mp-root[data-ui="classic"] .mp-mag__tname {
@@ -6085,20 +6114,21 @@
 }
 
 .mp-root[data-ui="classic"] .mp-shelf__card {
-  width: 88px;
+  /* 经典模式同样一屏 4 张，只是换成等大方形、不做位移 */
+  flex: 0 0 calc((100% - 36px) / 4);
+  transform: none;
   color: var(--mp-ink);
 }
 
 .mp-root[data-ui="classic"] .mp-shelf__art {
-  width: 88px;
-  height: 88px;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
   border-radius: 12px;
 }
 
 .mp-root[data-ui="classic"] .mp-shelf__label {
-  position: static;
-  padding: 8px 0 0;
-  background: none;
+  padding-top: 8px;
 }
 
 .mp-root[data-ui="classic"] .mp-shelf__name {
@@ -6241,6 +6271,23 @@
     };
   }
 
+  // src/core/format.js
+  function fmtTime(ms) {
+    var total = Math.max(0, Math.round((Number(ms) || 0) / 1e3));
+    var h2 = Math.floor(total / 3600);
+    var m = Math.floor(total % 3600 / 60);
+    var s = total % 60;
+    var mm = String(m).padStart(2, "0");
+    var ss = String(s).padStart(2, "0");
+    return h2 > 0 ? h2 + ":" + mm + ":" + ss : mm + ":" + ss;
+  }
+  function fmtSummary(count, totalMs) {
+    var songs = Number(count) || 0;
+    if (!songs) return "空歌单";
+    if (!totalMs) return songs + " 首";
+    return songs + " 首 · " + Math.round(totalMs / 6e4) + " 分钟";
+  }
+
   // src/ui/components.js
   function iconBtn(name, opts) {
     var o = opts || {};
@@ -6342,6 +6389,33 @@
       rail.appendChild(card);
     });
     return rail;
+  }
+  function magTrackRow(opts) {
+    var o = opts || {};
+    var track = o.track || {};
+    var index = Number(o.index) || 0;
+    var play = h("button", { class: "mp-mag__track", type: "button" }, [
+      h("span", { class: "mp-mag__no", text: String(index + 1).padStart(2, "0") }),
+      h("span", { class: "mp-mag__tname", text: track.name || "未知歌曲" }),
+      h("span", { class: "mp-mag__time", text: track.duration ? fmtTime(track.duration) : "" })
+    ]);
+    play.addEventListener("click", function() {
+      if (o.onPlay) o.onPlay();
+    });
+    var row = h("div", { class: "mp-mag__row" + (o.current ? " is-current" : "") }, [play]);
+    if (o.onMore) {
+      var more = h(
+        "button",
+        { class: "mp-mag__more", type: "button", "aria-label": "更多" },
+        [h("span", { html: icon("more") })]
+      );
+      more.addEventListener("click", function(e) {
+        e.stopPropagation();
+        o.onMore();
+      });
+      row.appendChild(more);
+    }
+    return row;
   }
   function emptyHint(title, sub) {
     return h("div", { class: "mp-hint" }, [
@@ -6563,23 +6637,6 @@
     return row;
   }
 
-  // src/core/format.js
-  function fmtTime(ms) {
-    var total = Math.max(0, Math.round((Number(ms) || 0) / 1e3));
-    var h2 = Math.floor(total / 3600);
-    var m = Math.floor(total % 3600 / 60);
-    var s = total % 60;
-    var mm = String(m).padStart(2, "0");
-    var ss = String(s).padStart(2, "0");
-    return h2 > 0 ? h2 + ":" + mm + ":" + ss : mm + ":" + ss;
-  }
-  function fmtSummary(count, totalMs) {
-    var songs = Number(count) || 0;
-    if (!songs) return "空歌单";
-    if (!totalMs) return songs + " 首";
-    return songs + " 首 · " + Math.round(totalMs / 6e4) + " 分钟";
-  }
-
   // src/ui/views/recommend.js
   function greeting() {
     var hour = (/* @__PURE__ */ new Date()).getHours();
@@ -6662,16 +6719,14 @@
     function tracklist(tracks) {
       var list = h("div", { class: "mp-mag__tracks" });
       tracks.slice(0, 20).forEach(function(track, i) {
-        var no = String(i + 1).padStart(2, "0");
-        var row = h("button", { class: "mp-mag__track", type: "button" }, [
-          h("span", { class: "mp-mag__no", text: no }),
-          h("span", { class: "mp-mag__tname", text: track.name || "未知歌曲" }),
-          h("span", { class: "mp-mag__time", text: track.duration ? fmtTime(track.duration) : "" })
-        ]);
-        row.addEventListener("click", function() {
-          ctx.playRecommend(tracks, i);
-        });
-        list.appendChild(row);
+        list.appendChild(magTrackRow({
+          index: i,
+          track,
+          current: ctx.isCurrent(track),
+          onPlay: function() {
+            ctx.playRecommend(tracks, i);
+          }
+        }));
       });
       return list;
     }
@@ -7197,7 +7252,7 @@
   // src/ui/views/playlistDetail.js
   function mount4(host, ctx) {
     var state = ctx.state;
-    var listBox = h("div", { class: "mp-body" });
+    var listBox = h("div", { class: "mp-body mp-tracklist" });
     function back2() {
       ctx.goto("playlists");
     }
@@ -7303,12 +7358,10 @@
         return;
       }
       p.tracks.forEach(function(track, i) {
-        listBox.appendChild(songRow({
+        listBox.appendChild(magTrackRow({
+          index: i,
           track,
-          coverUrl: ctx.coverOf(track),
-          coverKey: trackKey(track),
           current: ctx.isCurrent(track),
-          playing: ctx.state.player.status === "playing",
           onPlay: function() {
             if (ctx.isCurrent(track)) ctx.togglePlay();
             else ctx.playTracks(p.tracks, i);
@@ -8108,18 +8161,12 @@
   }
 
   // src/ui/views/settings.js
-  function field(label, node, desc) {
-    var left = h("div", { class: "mp-field__label" }, [
-      h("div", { text: label }),
-      desc ? h("div", { class: "mp-field__desc", text: desc }) : null
-    ]);
+  function field(label, node) {
+    var left = h("div", { class: "mp-field__label" }, [h("div", { text: label })]);
     return h("div", { class: "mp-field" }, [left, node]);
   }
-  function fieldStack(label, node, desc) {
-    var left = h("div", { class: "mp-field__label" }, [
-      h("div", { text: label }),
-      desc ? h("div", { class: "mp-field__desc", text: desc }) : null
-    ]);
+  function fieldStack(label, node) {
+    var left = h("div", { class: "mp-field__label" }, [h("div", { text: label })]);
     return h("div", { class: "mp-field mp-field--stack" }, [left, node]);
   }
   function switchEl(on, onToggle) {
@@ -8307,8 +8354,8 @@
       });
       var appearanceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "外观" }),
-        field("界面风格", skinRow, "杂志风：宋体标题 + 直角封面 + 细线；经典：圆角卡片 + 方形封面"),
-        field("主题", themeRow, "跟随系统 / 白天白色 / 夜间深色"),
+        field("界面风格", skinRow),
+        field("主题", themeRow),
         // TA 页花瓣开关在 TA 页右上角 ⋯ 里，设置页不重复
         field("手写字体", (function() {
           var box = h("div", { class: "mp-count" });
@@ -8329,19 +8376,11 @@
           box.appendChild(input);
           box.appendChild(clear2);
           return box;
-        })(), "字体文件建议 woff2 且 <1MB；超过 5MB 容易卡顿甚至闪退"),
-        field(
-          "主色调",
-          h("div", { class: "mp-dots" }, [dotRow, customDot]),
-          "点色块选预设，点最右边取色器可以完全自定义"
-        ),
-        field(
-          "悬浮窗",
-          switchEl(!!s.floating, function(v) {
-            ctx.updateSettings({ floating: v });
-          }),
-          s.floating ? "开：点右上角最小化会缩成悬浮球" : "关：点右上角直接退出 App，不显示悬浮球，音乐继续在后台播放"
-        )
+        })()),
+        field("主色调", h("div", { class: "mp-dots" }, [dotRow, customDot])),
+        field("悬浮窗", switchEl(!!s.floating, function(v) {
+          ctx.updateSettings({ floating: v });
+        }))
       ]);
       var mode = s.chatCommandMode || "hybrid";
       var promptKey = mode === "mark" ? "chatPrompt" : mode === "tool" ? "chatPromptTool" : "chatPromptHybrid";
@@ -8370,20 +8409,12 @@
       });
       var chatGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "聊天" }),
-        field(
-          "一起听（主聊天）",
-          switchEl(!!s.chatListen, function(v) {
-            ctx.updateSettings({ chatListen: v });
-          }),
-          "开启后主聊天的模型能看到当前在听什么，并可直接点歌、切歌、暂停"
-        ),
-        field(
-          "角色点歌加入队列",
-          switchEl(!!s.chatAddToQueue, function(v) {
-            ctx.updateSettings({ chatAddToQueue: v });
-          }),
-          "开：只把搜到的第一首加进当前列表；关：直接用它替换列表"
-        ),
+        field("一起听（主聊天）", switchEl(!!s.chatListen, function(v) {
+          ctx.updateSettings({ chatListen: v });
+        })),
+        field("角色点歌加入队列", switchEl(!!s.chatAddToQueue, function(v) {
+          ctx.updateSettings({ chatAddToQueue: v });
+        })),
         fieldStack("指令通道", (function() {
           var row = h("div", { class: "mp-theme-row" });
           [
@@ -8402,20 +8433,12 @@
             row.appendChild(btn);
           });
           return row;
-        })(), "混合：点歌走工具（有卡片），其余用注释指令；标记：全部注释；工具：全部 function calling"),
+        })()),
         // 推荐模式 / 推荐数量 / 只推荐能播放的：都在推荐页「偏好」面板里，设置页不再重复
-        field(
-          "点卡片播放",
-          switchEl(!!s.cardTapPlay, function(v) {
-            ctx.updateSettings({ cardTapPlay: v });
-          }),
-          s.cardTapPlay ? "开：每次点卡片都切回这张卡上的歌" : "关：发卡时已经播过，之后再点卡片只显示当前播放状态"
-        ),
-        field(
-          "一起听提示词",
-          editPromptBtn,
-          "每轮注入给主聊天的说明；占位符 {{title}} {{artist}} {{state}} {{queue}} 会自动替换"
-        )
+        field("点卡片播放", switchEl(!!s.cardTapPlay, function(v) {
+          ctx.updateSettings({ cardTapPlay: v });
+        })),
+        field("一起听提示词", editPromptBtn)
       ]);
       var sourceGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "音源" }),
@@ -8454,34 +8477,18 @@
           });
           return row;
         })()),
-        field(
-          "QQ 音乐",
-          switchEl(s.sources.tencent, function(v) {
-            setSource("tencent", v);
-          }),
-          "搜索并播放完整歌曲（经公开接口解析）"
-        ),
-        field(
-          "iTunes",
-          switchEl(s.sources.itunes, function(v) {
-            setSource("itunes", v);
-          }),
-          "苹果官方接口，只有 30 秒试听"
-        ),
-        field(
-          "免费曲库 Audius",
-          switchEl(s.sources.audius, function(v) {
-            setSource("audius", v);
-          }),
-          "无版权/CC 音乐，能完整播放；以欧美电音为主，中文歌很少"
-        ),
-        field(
-          "网易云",
-          switchEl(s.sources.netease, function(v) {
-            setSource("netease", v);
-          }),
-          "QQ 放不了时自动找网易云同名歌曲兜底；开了上面的 API 地址还能搜整库"
-        )
+        field("QQ 音乐", switchEl(s.sources.tencent, function(v) {
+          setSource("tencent", v);
+        })),
+        field("iTunes", switchEl(s.sources.itunes, function(v) {
+          setSource("itunes", v);
+        })),
+        field("免费曲库 Audius", switchEl(s.sources.audius, function(v) {
+          setSource("audius", v);
+        })),
+        field("网易云", switchEl(s.sources.netease, function(v) {
+          setSource("netease", v);
+        }))
       ]);
       var prefixInput = h("input", {
         class: "mp-input",
@@ -8494,12 +8501,12 @@
       });
       var netGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "网络" }),
-        field("代理前缀", prefixInput, ""),
+        field("代理前缀", prefixInput),
         field("音源自检", (function() {
           var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "运行" });
           btn.addEventListener("click", runSelfTest);
           return btn;
-        })(), "逐个真实请求，告诉你哪个源在这台设备上能用")
+        })())
       ]);
       var apiInput = h("input", {
         class: "mp-input",
@@ -8518,11 +8525,10 @@
       loginBtn.addEventListener("click", openQrModal);
       var neteaseGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "网易云（可选）" }),
-        field("API 地址", apiInput, "填你自己部署的 NeteaseCloudMusicApi 地址；留空就只用公开音源"),
+        field("API 地址", apiInput),
         field(
           "账号",
-          h("div", { class: "mp-field__value", text: s.neteaseCookie ? s.neteaseProfile || "已登录" : "未登录" }),
-          s.neteaseCookie ? "登录后可用自己账号的曲库/歌单" : "填好地址后扫码登录"
+          h("div", { class: "mp-field__value", text: s.neteaseCookie ? s.neteaseProfile || "已登录" : "未登录" })
         ),
         // 排行榜在搜索页底部直接铺开，设置页不再放入口
         field(
@@ -8536,8 +8542,7 @@
               });
               return out;
             })() : null
-          ]),
-          "二维码由你部署的服务生成"
+          ])
         )
       ]);
       var volume = h("input", {
@@ -8553,36 +8558,27 @@
       });
       var playGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "播放" }),
-        field(
-          "播放引擎",
-          h("div", { class: "mp-field__value", text: ctx.engineLabel() }),
-          ctx.isNative() ? "原生播放器；状态栏/锁屏的按钮由它负责" : "没接上原生播放器，状态栏控制不可用（需要新版宿主）"
-        ),
-        field(
-          "极简模式",
-          switchEl(!!s.nativeMinimal, function(v) {
-            ctx.updateSettings({ nativeMinimal: v });
-          }),
-          "默认开启：插件不轮询、不重建，只把队列交给原生播放器，状态栏控制才稳"
-        ),
+        field("播放引擎", h("div", { class: "mp-field__value", text: ctx.engineLabel() })),
+        field("极简模式", switchEl(!!s.nativeMinimal, function(v) {
+          ctx.updateSettings({ nativeMinimal: v });
+        })),
         field("重建播放会话", (function() {
           var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "重建" });
           btn.addEventListener("click", function() {
             ctx.rebuildSession();
           });
           return btn;
-        })(), "控制栏按钮点了没反应时按一下：重开原生服务和通知，通常能救活"),
+        })()),
         field("彻底停止", (function() {
           var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "停止并清除通知" });
           btn.addEventListener("click", function() {
             ctx.hardStop();
           });
           return btn;
-        })(), "不想听的时候按这个：停止播放 + 清空队列 + 状态栏通知一起消失"),
+        })()),
         field(
           "音量",
-          ctx.isNative() ? h("div", { class: "mp-field__value", text: "跟随系统音量" }) : volume,
-          ctx.isNative() ? "走宿主原生播放器，音量用手机音量键调" : "循环模式和随机播放在播放页右下角的按钮里调"
+          ctx.isNative() ? h("div", { class: "mp-field__value", text: "跟随系统音量" }) : volume
         )
       ]);
       var clearBtn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "清空数据" });
@@ -8598,8 +8594,8 @@
         field("收藏", h("div", { class: "mp-field__value", text: state.favorites.length + " 首" })),
         field("歌单", h("div", { class: "mp-field__value", text: state.playlists.length + " 个" })),
         field("搜索历史", h("div", { class: "mp-field__value", text: state.searches.length + " 条" })),
-        field("退出 App", exitBtn, "回到 Roche，音乐会继续放在后台播放"),
-        field("卸载插件会一起清空", clearBtn, "插件数据存在宿主 storage 里，卸载即删除")
+        field("退出 App", exitBtn),
+        field("卸载插件会一起清空", clearBtn)
       ]);
       var about = h("div", { class: "mp-about" }, [
         h("div", { text: "音乐播放器 v" + state.version }),
@@ -12207,7 +12203,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.51.0" });
+    app = await createApp({ container, roche, version: "0.52.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -12223,7 +12219,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.51.0",
+    version: "0.52.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

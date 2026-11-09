@@ -2,15 +2,14 @@
 
 import { h, clear } from '../dom.js';
 import { icon } from '../icons.js';
-import { iconBtn, songRow, emptyHint } from '../components.js';
+import { iconBtn, magTrackRow, emptyHint } from '../components.js';
 import { masthead } from '../masthead.js';
-import { trackKey } from '../../core/track.js';
 import { fmtSummary } from '../../core/format.js';
 import { playlistDuration } from '../../core/playlist.js';
 
 export function mount(host, ctx) {
   var state = ctx.state;
-  var listBox = h('div', { class: 'mp-body' });
+  var listBox = h('div', { class: 'mp-body mp-tracklist' });
 
   function back() {
     ctx.goto('playlists');
@@ -127,12 +126,10 @@ export function mount(host, ctx) {
     }
 
     p.tracks.forEach(function (track, i) {
-      listBox.appendChild(songRow({
+      listBox.appendChild(magTrackRow({
+        index: i,
         track: track,
-        coverUrl: ctx.coverOf(track),
-        coverKey: trackKey(track),
         current: ctx.isCurrent(track),
-        playing: ctx.state.player.status === 'playing',
         onPlay: function () {
           if (ctx.isCurrent(track)) ctx.togglePlay();
           else ctx.playTracks(p.tracks, i);
