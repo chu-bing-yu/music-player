@@ -11,7 +11,7 @@
 import { mapTencentTracks, mapItunesTracks, pickNeteaseMatches, preferHttps, neteaseOuterUrl } from '../core/sourceMaps.js';
 import { mergeResults, rankTracks } from '../core/search.js';
 import { normalizeTrack } from '../core/track.js';
-import { fetchJson } from './http.js';
+import { fetchJson, applyProxy } from './http.js';
 import { search as neSearch, songUrl as neUrl, isLoggedIn as neLoggedIn, isReady as neReady } from './netease.js';
 
 var VKEYS = 'https://api.vkeys.cn/v2/music';
@@ -198,7 +198,16 @@ export function createSources() {
    */
   function createResolver(track, settings) {
     var queue = [];
+    // 直链被截断/防盗链时的兜底：走用户配的代理再要一次同一个地址
+    var proxied = [];
+    var prefix = String(settings && settings.prefix || '').trim();
     var filled = { qq: false, netease: false, itunes: false };
+
+    function pushUrl(url) {
+      if (!url) return;
+      queue.push(url);
+      if (prefix) proxied.push(applyProxy(url, prefix));
+    }
 
     var steps = [];
     if (track.source === 'tencent') steps = ['qq', 'netease', 'itunes'];
@@ -206,7 +215,7 @@ export function createSources() {
     else if (track.source === 'netease') steps = neReady(settings) ? ['neapi', 'netease', 'itunes'] : ['netease', 'itunes'];
     else steps = ['netease', 'itunes'];
 
-    if (track.url) queue.push(preferHttps(track.url));
+    if (track.url) pushUrl(preferHttps(track.url));
 
     async function fill(kind) {
       if (kind === 'neapi') {
@@ -216,28 +225,28 @@ export function createSources() {
         } catch (err) {
           apiUrl = '';
         }
-        if (apiUrl) queue.push(preferHttps(apiUrl));
+        if (apiUrl) pushUrl(preferHttps(apiUrl));
         return;
       }
       if (kind === 'qq') {
         if (filled.qq) return;
         filled.qq = true;
         var direct = await tencentUrl(track, settings);
-        if (direct) queue.push(direct);
+        if (direct) pushUrl(direct);
         return;
       }
       if (kind === 'netease') {
         if (filled.netease || !settings.sources.netease) return;
         filled.netease = true;
         var list = await neteaseIds(track, settings);
-        list.forEach(function (u) { if (u) queue.push(u); });
+        list.forEach(function (u) { pushUrl(u); });
         return;
       }
       if (kind === 'itunes') {
         if (filled.itunes || !settings.sources.itunes) return;
         filled.itunes = true;
         var preview = await itunesPreview(track, settings);
-        if (preview) queue.push(preview);
+        if (preview) pushUrl(preview);
       }
     }
 
@@ -245,7 +254,11 @@ export function createSources() {
     return async function nextUrl() {
       for (;;) {
         if (queue.length) return queue.shift();
-        if (stepIndex >= steps.length) return '';
+        if (stepIndex >= steps.length) {
+          // 直链都试完了：把走代理的同一批地址作为最后兜底
+          if (proxied.length) return proxied.shift();
+          return '';
+        }
         var kind = steps[stepIndex++];
         try {
           await fill(kind);

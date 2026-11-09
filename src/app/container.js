@@ -365,9 +365,27 @@ export async function createApp(opts) {
     var fail = player && typeof player.lastFail === 'function' ? player.lastFail() : null;
     if (fail && fail.reason === 'blocked') return '浏览器拦了自动播放，点一下播放';
     if (fail && fail.reason === 'stolen') return '被 Roche 的「音乐保活」抢了，去 Roche 设置里关掉它';
+    if (fail && fail.reason === 'truncated') return '这个音源只给了几秒，换一首试试';
     if (fail && fail.reason === 'interrupted') return '被系统打断，点一下重新加载';
+    if (fail && fail.detail) return '放不了（' + fail.detail + '），换一首试试';
     if (fail && fail.host) return '放不了（' + fail.host + ' 拒绝或超时），换一首试试';
     return '这首放不了（音源可能没版权），换一首试试';
+  }
+
+  // 直链只给一小段时，同一首最多重解析 2 次（换源），再失败就提示换歌
+  var truncRetry = Object.create(null);
+
+  function handleTruncated() {
+    var track = state.player && state.player.track;
+    var key = track ? trackKey(track) : '';
+    var times = (key && truncRetry[key]) || 0;
+    if (key && times < 2) {
+      truncRetry[key] = times + 1;
+      toast('音源只给了一小段，正在换源重试…');
+      playTrack(track);
+      return;
+    }
+    toast('这个音源只给了几秒，换一首试试');
   }
 
   async function playTrack(track) {
@@ -1196,6 +1214,11 @@ export async function createApp(opts) {
       var mode = state.settings.shuffle ? 'random' : (state.settings.repeat === REPEAT.ONE ? 'one' : 'loop');
       return '原生 · 队列 ' + size + ' 首 · ' + mode + (state.settings.nativeMinimal ? ' · 极简' : '');
     },
+    /** 最近 20 条音频事件：网页端排查「放两秒就断」用 */
+    audioEvents: function () {
+      if (engine || !player || typeof player.recentEvents !== 'function') return [];
+      return player.recentEvents();
+    },
     rebuildSession: rebuildSession,
     hardStop: hardStop,
     // TA 页用：角色歌单 + 歌曲短评
@@ -1532,6 +1555,7 @@ export async function createApp(opts) {
       if (shell) shell.renderPlayer();
     },
     onEnded: function () { next(true); },
+    onTruncated: function () { handleTruncated(); },
     onNext: function () { next(false); },
     onPrev: function () { prev(); }
   });

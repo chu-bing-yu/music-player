@@ -35,6 +35,54 @@ export function isAutoplayBlocked(err) {
   return /gesture|autoplay|not allowed/i.test(msg);
 }
 
+/** MediaError.code → 人话 */
+export var MEDIA_ERROR_TEXT = {
+  1: '播放被中止',
+  2: '网络中断',
+  3: '解码失败（文件可能不完整）',
+  4: '这个地址浏览器不支持'
+};
+
+export function mediaErrorText(code) {
+  return MEDIA_ERROR_TEXT[Number(code)] || ('未知错误 ' + code);
+}
+
+/**
+ * 是不是「没播完就结束」——直链只给了一小段就是这个特征。
+ * @param {number} played 实际播到的秒数
+ * @param {number} duration 元数据时长（0/NaN 表示未知）
+ */
+export function isTruncatedPlay(played, duration) {
+  var p = Number(played) || 0;
+  var d = Number(duration) || 0;
+  if (p <= 0) return false;
+  // 完整播完（短视频也包括在内）
+  if (d > 0 && p >= d - 0.8) return false;
+  var limit = d > 0 ? Math.min(10, d / 2) : 10;
+  return p < limit;
+}
+
+/** 重试闸门：800ms 内不重复，最多 5 次 */
+export function createRetryGate(intervalMs, maxTimes) {
+  var gap = Number(intervalMs) || 800;
+  var max = Number(maxTimes) || 5;
+  var count = 0;
+  var lastAt = 0;
+  return {
+    allow: function (now) {
+      var t = Number(now) || Date.now();
+      if (count >= max) return false;
+      if (t - lastAt < gap) return false;
+      count += 1;
+      lastAt = t;
+      return true;
+    },
+    reset: function () { count = 0; lastAt = 0; },
+    count: function () { return count; },
+    max: function () { return max; }
+  };
+}
+
 /* ---------------- 页面音频抢占 ----------------
  * Roche 网页版内置「保活音频」（`new Audio(); loop = true`，一个静音、一个音乐保活），
  * 它们没有挂进 DOM，插件拿不到引用；但在手机上它们会占住音频会话，
@@ -100,8 +148,40 @@ export function createPlayer(options) {
   // 被浏览器自动播放策略拦下的地址：留着给下一次点击直接用，不重新解析
   var pendingUrl = '';
   var pendingTrack = null;
-  // 最近一次失败：{ host, reason: 'blocked' | 'bad' | 'interrupted' }
+  // 最近一次失败：{ host, reason: 'blocked' | 'bad' | 'interrupted' | 'stolen' | 'truncated', detail }
   var lastFailure = null;
+  // 用户主动暂停（区别于被系统/其它音频打断）
+  var userPaused = false;
+  // 打断后自动续播的闸门：800ms 内不重复，最多 5 次
+  var retryGate = createRetryGate(800, 5);
+  // 事件探针：最近 20 条，设置页能直接看
+  var probe = [];
+  var sessionStart = Date.now();
+
+  /** 记一条音频事件（timeupdate 不参与，避免刷屏） */
+  function note(event) {
+    try {
+      if (!audio) return;
+      var buffered = 0;
+      try {
+        if (audio.buffered && audio.buffered.length) {
+          buffered = Number(audio.buffered.end(audio.buffered.length - 1).toFixed(2));
+        }
+      } catch (err) { /* 忽略 */ }
+      probe.push({
+        t: Math.round((Date.now() - sessionStart) / 100) / 10,
+        event: event,
+        time: Number((audio.currentTime || 0).toFixed(2)),
+        duration: Number.isFinite(audio.duration) ? Number(audio.duration.toFixed(2)) : -1,
+        readyState: audio.readyState,
+        networkState: audio.networkState,
+        paused: audio.paused,
+        buffered: buffered,
+        err: audio.error ? audio.error.code : 0
+      });
+      if (probe.length > 20) probe.shift();
+    } catch (err) { /* 忽略 */ }
+  }
 
   function emit() {
     if (typeof opts.onChange === 'function') opts.onChange(getState());
@@ -140,39 +220,72 @@ export function createPlayer(options) {
   function onPlay() {
     state.status = 'playing';
     state.error = '';
+    userPaused = false;
+    retryGate.reset();
+    note('playing');
     // 我们开始出声了：把页面里循环播放的保活音频压住，避免它们把会话抢回去
     silencePageLoops(audio);
     emit();
   }
 
-  /** 网页版（Chrome 打开链接）常出现「刚播就暂停」，这里自愈一次 */
-  var nudged = false;
+  /**
+   * 被打断后的自动续播。
+   * 以前叫 nudged、只允许一次且只在 1 秒内触发，2 秒处被打断就再也不会救；
+   * 现在只要有节流上限，任何位置被打断都尝试拉回来。
+   */
+  function maybeResumeAfterBreak() {
+    if (userPaused) return;
+    if (!audio || audio.ended) return;
+    if (!retryGate.allow(Date.now())) {
+      if (retryGate.count() >= retryGate.max()) {
+        lastFailure = { host: hostOf(lastSrc), reason: 'stolen' };
+        state.error = '反复被打断（Roche 的「音乐保活」占着音频）';
+        emit();
+      }
+      return;
+    }
+    setTimeout(function () {
+      if (!audio || !audio.paused || userPaused) return;
+      silencePageLoops(audio);
+      var p = audio.play();
+      if (p && p.catch) p.catch(function () { /* 下一轮再试 */ });
+    }, 260);
+  }
 
   function onPause() {
     var wasPlaying = state.status === 'playing';
-    var nearStart = !!audio && audio.currentTime < 1 && wasPlaying;
-
+    note('pause');
     if (state.status !== 'error' && state.status !== 'loading') state.status = 'paused';
 
-    // 刚出声就被打断：多半是页面里的保活音频抢会话，标记出来让上层提示用户
-    if (nearStart) {
+    if (!userPaused && !audio.ended && wasPlaying) {
       lastFailure = { host: hostOf(lastSrc), reason: 'stolen' };
-      state.error = '播放被页面里的保活音频抢了';
+      try {
+        console.warn('[mp] audio interrupted (pause)', hostOf(lastSrc), recentEvents().slice(-5));
+      } catch (err) { /* 忽略 */ }
     }
-
     emit();
 
-    if (nearStart && !nudged) {
-      nudged = true;
-      setTimeout(function () {
-        if (!audio || !audio.paused) return;
-        silencePageLoops(audio);
-        audio.play().catch(function () { nudged = false; });
-      }, 300);
-    }
+    if (!userPaused && !audio.ended && wasPlaying) maybeResumeAfterBreak();
   }
 
   function onEnded() {
+    note('ended');
+    var played = Number(audio && audio.currentTime) || 0;
+    var dur = audio && Number.isFinite(audio.duration) ? Number(audio.duration) : 0;
+
+    // 直链只给了一小段：不能当成「正常播完」，否则会被自动切到下一首
+    if (isTruncatedPlay(played, dur)) {
+      lastFailure = { host: hostOf(lastSrc), reason: 'truncated' };
+      state.status = 'error';
+      state.error = '这个音源只给了几秒';
+      try {
+        console.warn('[mp] audio interrupted (truncated)', hostOf(lastSrc), played + '/' + dur, recentEvents().slice(-5));
+      } catch (err) { /* 忽略 */ }
+      emit();
+      if (typeof opts.onTruncated === 'function') opts.onTruncated();
+      return;
+    }
+
     state.status = 'paused';
     state.time = state.duration;
     emit();
@@ -180,12 +293,18 @@ export function createPlayer(options) {
   }
 
   function onError() {
+    note('error');
+    var code = audio && audio.error ? audio.error.code : 0;
+    lastFailure = { host: hostOf(lastSrc), reason: 'bad', detail: mediaErrorText(code) };
     // 地址失效时交给 load() 的候选链处理；这里只标记
     if (state.status === 'loading') return;
     state.status = 'error';
-    state.error = '音频加载失败';
+    state.error = mediaErrorText(code);
     emit();
   }
+
+  var probeFns = [];
+  var PROBE_EVENTS = ['loadstart', 'canplay', 'waiting', 'stalled', 'abort', 'emptied'];
 
   function bindAudio(target) {
     target.addEventListener('timeupdate', onTimeUpdate);
@@ -194,6 +313,13 @@ export function createPlayer(options) {
     target.addEventListener('pause', onPause);
     target.addEventListener('ended', onEnded);
     target.addEventListener('error', onError);
+
+    probeFns = [];
+    PROBE_EVENTS.forEach(function (name) {
+      var fn = function () { note(name); };
+      target.addEventListener(name, fn);
+      probeFns.push([name, fn]);
+    });
   }
 
   function recreateAudio() {
@@ -206,6 +332,8 @@ export function createPlayer(options) {
         audio.removeEventListener('pause', onPause);
         audio.removeEventListener('ended', onEnded);
         audio.removeEventListener('error', onError);
+        probeFns.forEach(function (pair) { audio.removeEventListener(pair[0], pair[1]); });
+        probeFns = [];
       } catch (err) { /* 忽略 */ }
     }
     audio = new Audio();
@@ -298,8 +426,8 @@ export function createPlayer(options) {
   function setupMediaActions() {
     if (!mediaSession()) return;
     setActionHandler('play', function () { resume(); });
-    setActionHandler('pause', function () { if (audio) audio.pause(); });
-    setActionHandler('stop', function () { if (audio) audio.pause(); });
+    setActionHandler('pause', function () { userPaused = true; if (audio) audio.pause(); });
+    setActionHandler('stop', function () { userPaused = true; if (audio) audio.pause(); });
     setActionHandler('previoustrack', function () { if (typeof opts.onPrev === 'function') opts.onPrev(); });
     setActionHandler('nexttrack', function () { if (typeof opts.onNext === 'function') opts.onNext(); });
     setActionHandler('seekto', function (details) {
@@ -388,6 +516,11 @@ export function createPlayer(options) {
     pendingUrl = '';
     pendingTrack = null;
     lastFailure = null;
+    userPaused = false;
+    retryGate.reset();
+    probe = [];
+    sessionStart = Date.now();
+    note('session');
     emit();
     updateMediaSession();
 
@@ -440,6 +573,8 @@ export function createPlayer(options) {
   /** 从暂停/中断里恢复：先直接 play（这次点击还在手势里），不行再重建 Audio */
   async function resume() {
     if (!state.track && !pendingUrl) return false;
+    userPaused = false;
+    retryGate.reset();
 
     // 上次被策略拦下的地址：这次点击直接起播，不要重新解析
     if (pendingUrl && (!audio || audio.src !== pendingUrl)) {
@@ -527,10 +662,16 @@ export function createPlayer(options) {
     return lastFailure;
   }
 
+  /** 最近 20 条音频事件（设置页「最近播放事件」用） */
+  function recentEvents() {
+    return probe.slice();
+  }
+
   /** @returns {Promise<boolean>} 失败时上层可以重新解析地址 */
   async function toggle() {
     if (!state.track) return false;
     if (audio && !audio.paused) {
+      userPaused = true; // 用户主动暂停：不要自动续播
       audio.pause();
       return true;
     }
@@ -556,6 +697,7 @@ export function createPlayer(options) {
 
   function stop() {
     attemptToken += 1;
+    userPaused = true;
     try {
       if (audio) {
         audio.pause();
@@ -608,6 +750,7 @@ export function createPlayer(options) {
     setMediaSessionEnabled: setMediaSessionEnabled,
     mediaSessionOn: function () { return mediaOn; },
     lastFail: lastFail,
+    recentEvents: recentEvents,
     hasPending: function () { return !!pendingUrl; },
     isPlaying: function () { return state.status === 'playing'; }
   };

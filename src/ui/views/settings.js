@@ -428,6 +428,26 @@ export function mount(host, ctx) {
     var playGroup = h('div', { class: 'mp-group' }, [
       h('div', { class: 'mp-group__title', text: '播放' }),
       field('播放引擎', h('div', { class: 'mp-field__value', text: ctx.engineLabel() })),
+      // 网页端「放两秒就断」排查用：最近 20 条音频事件（pause/ended/error…）
+      field('最近播放事件', (function () {
+        var btn = h('button', { class: 'mp-btn mp-btn--ghost', type: 'button', text: '查看' });
+        btn.addEventListener('click', function () {
+          var events = ctx.audioEvents ? ctx.audioEvents() : [];
+          var items = events.length
+            ? events.map(function (e) {
+              return {
+                label: '[' + e.t + 's] ' + e.event +
+                  '　' + e.time + '/' + e.duration + 's' +
+                  '　rs' + e.readyState + ' ns' + e.networkState +
+                  (e.err ? '　err' + e.err : ''),
+                onClick: function () {}
+              };
+            })
+            : [{ label: '还没有事件（或当前走的是原生引擎）', onClick: function () {} }];
+          ctx.openSheet({ title: '最近播放事件', items: items });
+        });
+        return btn;
+      })()),
       field('极简模式', switchEl(!!s.nativeMinimal, function (v) { ctx.updateSettings({ nativeMinimal: v }); })),
       field('重建播放会话', (function () {
         var btn = h('button', { class: 'mp-btn mp-btn--ghost', type: 'button', text: '重建' });

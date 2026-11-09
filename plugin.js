@@ -1,4 +1,4 @@
-/* music-player v0.58.0 | built 2026-11-09T14:47:34.401Z */
+/* music-player v0.59.0 | built 2026-11-09T15:07:24.611Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -1457,13 +1457,20 @@
     }
     function createResolver(track, settings) {
       var queue = [];
+      var proxied = [];
+      var prefix = String(settings && settings.prefix || "").trim();
       var filled = { qq: false, netease: false, itunes: false };
+      function pushUrl(url) {
+        if (!url) return;
+        queue.push(url);
+        if (prefix) proxied.push(applyProxy(url, prefix));
+      }
       var steps = [];
       if (track.source === "tencent") steps = ["qq", "netease", "itunes"];
       else if (track.source === "itunes") steps = ["itunes"];
       else if (track.source === "netease") steps = isReady(settings) ? ["neapi", "netease", "itunes"] : ["netease", "itunes"];
       else steps = ["netease", "itunes"];
-      if (track.url) queue.push(preferHttps(track.url));
+      if (track.url) pushUrl(preferHttps(track.url));
       async function fill(kind) {
         if (kind === "neapi") {
           var apiUrl = "";
@@ -1472,14 +1479,14 @@
           } catch (err) {
             apiUrl = "";
           }
-          if (apiUrl) queue.push(preferHttps(apiUrl));
+          if (apiUrl) pushUrl(preferHttps(apiUrl));
           return;
         }
         if (kind === "qq") {
           if (filled.qq) return;
           filled.qq = true;
           var direct = await tencentUrl(track, settings);
-          if (direct) queue.push(direct);
+          if (direct) pushUrl(direct);
           return;
         }
         if (kind === "netease") {
@@ -1487,7 +1494,7 @@
           filled.netease = true;
           var list = await neteaseIds(track, settings);
           list.forEach(function(u) {
-            if (u) queue.push(u);
+            pushUrl(u);
           });
           return;
         }
@@ -1495,14 +1502,17 @@
           if (filled.itunes || !settings.sources.itunes) return;
           filled.itunes = true;
           var preview = await itunesPreview(track, settings);
-          if (preview) queue.push(preview);
+          if (preview) pushUrl(preview);
         }
       }
       var stepIndex = 0;
       return async function nextUrl() {
         for (; ; ) {
           if (queue.length) return queue.shift();
-          if (stepIndex >= steps.length) return "";
+          if (stepIndex >= steps.length) {
+            if (proxied.length) return proxied.shift();
+            return "";
+          }
           var kind = steps[stepIndex++];
           try {
             await fill(kind);
@@ -1681,6 +1691,49 @@
     if (name === "NotAllowedError" || name === "SecurityError") return true;
     return /gesture|autoplay|not allowed/i.test(msg);
   }
+  var MEDIA_ERROR_TEXT = {
+    1: "播放被中止",
+    2: "网络中断",
+    3: "解码失败（文件可能不完整）",
+    4: "这个地址浏览器不支持"
+  };
+  function mediaErrorText(code) {
+    return MEDIA_ERROR_TEXT[Number(code)] || "未知错误 " + code;
+  }
+  function isTruncatedPlay(played, duration) {
+    var p = Number(played) || 0;
+    var d = Number(duration) || 0;
+    if (p <= 0) return false;
+    if (d > 0 && p >= d - 0.8) return false;
+    var limit = d > 0 ? Math.min(10, d / 2) : 10;
+    return p < limit;
+  }
+  function createRetryGate(intervalMs, maxTimes) {
+    var gap = Number(intervalMs) || 800;
+    var max = Number(maxTimes) || 5;
+    var count = 0;
+    var lastAt = 0;
+    return {
+      allow: function(now) {
+        var t = Number(now) || Date.now();
+        if (count >= max) return false;
+        if (t - lastAt < gap) return false;
+        count += 1;
+        lastAt = t;
+        return true;
+      },
+      reset: function() {
+        count = 0;
+        lastAt = 0;
+      },
+      count: function() {
+        return count;
+      },
+      max: function() {
+        return max;
+      }
+    };
+  }
   var activeAudio = null;
   var guardInstalled = false;
   function installPageAudioGuard() {
@@ -1736,6 +1789,35 @@
     var pendingUrl = "";
     var pendingTrack = null;
     var lastFailure = null;
+    var userPaused = false;
+    var retryGate = createRetryGate(800, 5);
+    var probe = [];
+    var sessionStart = Date.now();
+    function note(event) {
+      try {
+        if (!audio) return;
+        var buffered = 0;
+        try {
+          if (audio.buffered && audio.buffered.length) {
+            buffered = Number(audio.buffered.end(audio.buffered.length - 1).toFixed(2));
+          }
+        } catch (err) {
+        }
+        probe.push({
+          t: Math.round((Date.now() - sessionStart) / 100) / 10,
+          event,
+          time: Number((audio.currentTime || 0).toFixed(2)),
+          duration: Number.isFinite(audio.duration) ? Number(audio.duration.toFixed(2)) : -1,
+          readyState: audio.readyState,
+          networkState: audio.networkState,
+          paused: audio.paused,
+          buffered,
+          err: audio.error ? audio.error.code : 0
+        });
+        if (probe.length > 20) probe.shift();
+      } catch (err) {
+      }
+    }
     function emit() {
       if (typeof opts.onChange === "function") opts.onChange(getState());
       updateMediaSession();
@@ -1765,42 +1847,77 @@
     function onPlay() {
       state.status = "playing";
       state.error = "";
+      userPaused = false;
+      retryGate.reset();
+      note("playing");
       silencePageLoops(audio);
       emit();
     }
-    var nudged = false;
+    function maybeResumeAfterBreak() {
+      if (userPaused) return;
+      if (!audio || audio.ended) return;
+      if (!retryGate.allow(Date.now())) {
+        if (retryGate.count() >= retryGate.max()) {
+          lastFailure = { host: hostOf(lastSrc), reason: "stolen" };
+          state.error = "反复被打断（Roche 的「音乐保活」占着音频）";
+          emit();
+        }
+        return;
+      }
+      setTimeout(function() {
+        if (!audio || !audio.paused || userPaused) return;
+        silencePageLoops(audio);
+        var p = audio.play();
+        if (p && p.catch) p.catch(function() {
+        });
+      }, 260);
+    }
     function onPause() {
       var wasPlaying = state.status === "playing";
-      var nearStart = !!audio && audio.currentTime < 1 && wasPlaying;
+      note("pause");
       if (state.status !== "error" && state.status !== "loading") state.status = "paused";
-      if (nearStart) {
+      if (!userPaused && !audio.ended && wasPlaying) {
         lastFailure = { host: hostOf(lastSrc), reason: "stolen" };
-        state.error = "播放被页面里的保活音频抢了";
+        try {
+          console.warn("[mp] audio interrupted (pause)", hostOf(lastSrc), recentEvents().slice(-5));
+        } catch (err) {
+        }
       }
       emit();
-      if (nearStart && !nudged) {
-        nudged = true;
-        setTimeout(function() {
-          if (!audio || !audio.paused) return;
-          silencePageLoops(audio);
-          audio.play().catch(function() {
-            nudged = false;
-          });
-        }, 300);
-      }
+      if (!userPaused && !audio.ended && wasPlaying) maybeResumeAfterBreak();
     }
     function onEnded() {
+      note("ended");
+      var played = Number(audio && audio.currentTime) || 0;
+      var dur = audio && Number.isFinite(audio.duration) ? Number(audio.duration) : 0;
+      if (isTruncatedPlay(played, dur)) {
+        lastFailure = { host: hostOf(lastSrc), reason: "truncated" };
+        state.status = "error";
+        state.error = "这个音源只给了几秒";
+        try {
+          console.warn("[mp] audio interrupted (truncated)", hostOf(lastSrc), played + "/" + dur, recentEvents().slice(-5));
+        } catch (err) {
+        }
+        emit();
+        if (typeof opts.onTruncated === "function") opts.onTruncated();
+        return;
+      }
       state.status = "paused";
       state.time = state.duration;
       emit();
       if (typeof opts.onEnded === "function") opts.onEnded();
     }
     function onError() {
+      note("error");
+      var code = audio && audio.error ? audio.error.code : 0;
+      lastFailure = { host: hostOf(lastSrc), reason: "bad", detail: mediaErrorText(code) };
       if (state.status === "loading") return;
       state.status = "error";
-      state.error = "音频加载失败";
+      state.error = mediaErrorText(code);
       emit();
     }
+    var probeFns = [];
+    var PROBE_EVENTS = ["loadstart", "canplay", "waiting", "stalled", "abort", "emptied"];
     function bindAudio(target) {
       target.addEventListener("timeupdate", onTimeUpdate);
       target.addEventListener("loadedmetadata", onLoadedMetadata);
@@ -1808,6 +1925,14 @@
       target.addEventListener("pause", onPause);
       target.addEventListener("ended", onEnded);
       target.addEventListener("error", onError);
+      probeFns = [];
+      PROBE_EVENTS.forEach(function(name) {
+        var fn = function() {
+          note(name);
+        };
+        target.addEventListener(name, fn);
+        probeFns.push([name, fn]);
+      });
     }
     function recreateAudio() {
       if (audio) {
@@ -1822,6 +1947,10 @@
           audio.removeEventListener("pause", onPause);
           audio.removeEventListener("ended", onEnded);
           audio.removeEventListener("error", onError);
+          probeFns.forEach(function(pair) {
+            audio.removeEventListener(pair[0], pair[1]);
+          });
+          probeFns = [];
         } catch (err) {
         }
       }
@@ -1915,9 +2044,11 @@
         resume();
       });
       setActionHandler("pause", function() {
+        userPaused = true;
         if (audio) audio.pause();
       });
       setActionHandler("stop", function() {
+        userPaused = true;
         if (audio) audio.pause();
       });
       setActionHandler("previoustrack", function() {
@@ -2000,6 +2131,11 @@
       pendingUrl = "";
       pendingTrack = null;
       lastFailure = null;
+      userPaused = false;
+      retryGate.reset();
+      probe = [];
+      sessionStart = Date.now();
+      note("session");
       emit();
       updateMediaSession();
       if (typeof nextUrl !== "function") return false;
@@ -2040,6 +2176,8 @@
     }
     async function resume() {
       if (!state.track && !pendingUrl) return false;
+      userPaused = false;
+      retryGate.reset();
       if (pendingUrl && (!audio || audio.src !== pendingUrl)) {
         if (!audio) recreateAudio();
         audio.src = pendingUrl;
@@ -2122,9 +2260,13 @@
     function lastFail() {
       return lastFailure;
     }
+    function recentEvents() {
+      return probe.slice();
+    }
     async function toggle() {
       if (!state.track) return false;
       if (audio && !audio.paused) {
+        userPaused = true;
         audio.pause();
         return true;
       }
@@ -2147,6 +2289,7 @@
     }
     function stop() {
       attemptToken += 1;
+      userPaused = true;
       try {
         if (audio) {
           audio.pause();
@@ -2202,6 +2345,7 @@
         return mediaOn;
       },
       lastFail,
+      recentEvents,
       hasPending: function() {
         return !!pendingUrl;
       },
@@ -9325,6 +9469,23 @@
       var playGroup = h("div", { class: "mp-group" }, [
         h("div", { class: "mp-group__title", text: "播放" }),
         field("播放引擎", h("div", { class: "mp-field__value", text: ctx.engineLabel() })),
+        // 网页端「放两秒就断」排查用：最近 20 条音频事件（pause/ended/error…）
+        field("最近播放事件", (function() {
+          var btn = h("button", { class: "mp-btn mp-btn--ghost", type: "button", text: "查看" });
+          btn.addEventListener("click", function() {
+            var events = ctx.audioEvents ? ctx.audioEvents() : [];
+            var items = events.length ? events.map(function(e) {
+              return {
+                label: "[" + e.t + "s] " + e.event + "　" + e.time + "/" + e.duration + "s　rs" + e.readyState + " ns" + e.networkState + (e.err ? "　err" + e.err : ""),
+                onClick: function() {
+                }
+              };
+            }) : [{ label: "还没有事件（或当前走的是原生引擎）", onClick: function() {
+            } }];
+            ctx.openSheet({ title: "最近播放事件", items });
+          });
+          return btn;
+        })()),
         field("极简模式", switchEl(!!s.nativeMinimal, function(v) {
           ctx.updateSettings({ nativeMinimal: v });
         })),
@@ -11896,9 +12057,24 @@
       var fail = player && typeof player.lastFail === "function" ? player.lastFail() : null;
       if (fail && fail.reason === "blocked") return "浏览器拦了自动播放，点一下播放";
       if (fail && fail.reason === "stolen") return "被 Roche 的「音乐保活」抢了，去 Roche 设置里关掉它";
+      if (fail && fail.reason === "truncated") return "这个音源只给了几秒，换一首试试";
       if (fail && fail.reason === "interrupted") return "被系统打断，点一下重新加载";
+      if (fail && fail.detail) return "放不了（" + fail.detail + "），换一首试试";
       if (fail && fail.host) return "放不了（" + fail.host + " 拒绝或超时），换一首试试";
       return "这首放不了（音源可能没版权），换一首试试";
+    }
+    var truncRetry = /* @__PURE__ */ Object.create(null);
+    function handleTruncated() {
+      var track2 = state.player && state.player.track;
+      var key = track2 ? trackKey(track2) : "";
+      var times = key && truncRetry[key] || 0;
+      if (key && times < 2) {
+        truncRetry[key] = times + 1;
+        toast("音源只给了一小段，正在换源重试…");
+        playTrack(track2);
+        return;
+      }
+      toast("这个音源只给了几秒，换一首试试");
     }
     async function playTrack(track2) {
       if (!track2) return false;
@@ -12680,6 +12856,11 @@
         var mode = state.settings.shuffle ? "random" : state.settings.repeat === REPEAT.ONE ? "one" : "loop";
         return "原生 · 队列 " + size + " 首 · " + mode + (state.settings.nativeMinimal ? " · 极简" : "");
       },
+      /** 最近 20 条音频事件：网页端排查「放两秒就断」用 */
+      audioEvents: function() {
+        if (engine || !player || typeof player.recentEvents !== "function") return [];
+        return player.recentEvents();
+      },
       rebuildSession,
       hardStop,
       // TA 页用：角色歌单 + 歌曲短评
@@ -12983,6 +13164,9 @@
       onEnded: function() {
         next(true);
       },
+      onTruncated: function() {
+        handleTruncated();
+      },
       onNext: function() {
         next(false);
       },
@@ -13123,7 +13307,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.58.0" });
+    app = await createApp({ container, roche, version: "0.59.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -13139,7 +13323,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.58.0",
+    version: "0.59.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
