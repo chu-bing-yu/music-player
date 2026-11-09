@@ -23,6 +23,9 @@ export function createPlayer(options) {
   var lastSrc = '';
   var attemptToken = 0;
   var lastPositionAt = 0;
+  // 系统媒体控件（iOS 锁屏 / 灵动岛、安卓通知栏）开关：设置里选「不映射」时整块关掉，
+  // 系统里就不会留下一个点不动的空媒体卡片（华为平板就栽在这）。
+  var mediaOn = opts.mediaSession !== false;
 
   function emit() {
     if (typeof opts.onChange === 'function') opts.onChange(getState());
@@ -130,8 +133,28 @@ export function createPlayer(options) {
   /* ---------------- 系统媒体控制 ---------------- */
 
   function mediaSession() {
+    if (!mediaOn) return null;
     if (typeof navigator === 'undefined' || !navigator.mediaSession) return null;
     return navigator.mediaSession;
+  }
+
+  /** 设置里切换「映射 / 不映射」时调用；关掉要把已注册的会话清理干净 */
+  function setMediaSessionEnabled(on) {
+    var next = on !== false;
+    if (next === mediaOn) return;
+    if (!next) {
+      MEDIA_ACTIONS.forEach(function (action) { setActionHandler(action, null); });
+      var ms = mediaSession();
+      if (ms) {
+        try { ms.metadata = null; } catch (err) { /* 忽略 */ }
+        try { ms.playbackState = 'none'; } catch (err) { /* 忽略 */ }
+      }
+    }
+    mediaOn = next;
+    if (next) {
+      setupMediaActions();
+      updateMediaSession();
+    }
   }
 
   function updateMediaSession() {
@@ -151,7 +174,8 @@ export function createPlayer(options) {
     }
 
     try {
-      ms.playbackState = state.status === 'playing' ? 'playing' : 'paused';
+      if (!state.track) ms.playbackState = 'none';
+      else ms.playbackState = state.status === 'playing' ? 'playing' : 'paused';
     } catch (err) { /* 忽略 */ }
   }
 
@@ -379,6 +403,8 @@ export function createPlayer(options) {
     dispose: dispose,
     getState: getState,
     setHandlers: setHandlers,
+    setMediaSessionEnabled: setMediaSessionEnabled,
+    mediaSessionOn: function () { return mediaOn; },
     isPlaying: function () { return state.status === 'playing'; }
   };
 }
@@ -395,6 +421,8 @@ export function getPlayer(options) {
   } else if (options) {
     shared.setHandlers(options);
     if (typeof options.volume === 'number') shared.setVolume(options.volume);
+    // 允许运行中开关系统媒体会话（引擎不重建，避免打断正在播的歌）
+    if (options.mediaSession !== undefined) shared.setMediaSessionEnabled(options.mediaSession);
   }
   return shared;
 }

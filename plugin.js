@@ -1,4 +1,4 @@
-/* music-player v0.53.0 | built 2026-11-09T10:29:02.353Z */
+/* music-player v0.54.0 | built 2026-11-09T11:48:31.413Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -456,6 +456,17 @@
   function isClassic(settings) {
     return !!(settings && settings.uiTheme === "classic");
   }
+  var MEDIA_MODES = [
+    { id: "auto", name: "自动" },
+    { id: "native", name: "映射" },
+    { id: "off", name: "不映射" }
+  ];
+  function resolveMediaMode(settings, hasNative) {
+    var mode = settings && settings.systemMedia || "auto";
+    if (mode === "off") return { useNative: false, mediaSession: false };
+    if (hasNative) return { useNative: true, mediaSession: false };
+    return { useNative: false, mediaSession: true };
+  }
   var ACCENTS = [
     { id: "red", name: "赤红", color: "#e14b4b" },
     { id: "blue", name: "雾蓝", color: "#3b82f6" },
@@ -476,6 +487,8 @@
       theme: "auto",
       /** 界面风格：mag = 杂志风；classic = 经典 */
       uiTheme: "mag",
+      /** 系统媒体控件：auto / native（映射）/ off（不映射） */
+      systemMedia: "auto",
       accent: "red",
       // 空 = 用预设色块；有值 = 用户自选色（优先级更高）
       accentColor: "",
@@ -562,6 +575,7 @@
       shuffle: modeToQueueFlags(resolvePlayMode(s)).shuffle,
       theme: pickId(THEMES, s.theme, def.theme),
       uiTheme: pickId(UI_SKINS, s.uiTheme, def.uiTheme),
+      systemMedia: pickId(MEDIA_MODES, s.systemMedia, def.systemMedia),
       // custom = 用户自选颜色
       accent: s.accent === "custom" ? "custom" : pickId(ACCENTS, s.accent, def.accent),
       accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || "")) ? String(s.accentColor) : "",
@@ -785,6 +799,46 @@
     return dedupeTracks(raw).slice(0, MAX_RECENT);
   }
 
+  // src/services/chatSettings.js
+  var SETTINGS_MIRROR_KEY = "mp:mirror:mp:settings";
+  function readMirror() {
+    try {
+      if (typeof localStorage === "undefined") return null;
+      var text = localStorage.getItem(SETTINGS_MIRROR_KEY);
+      if (!text) return null;
+      var parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (err) {
+      return null;
+    }
+  }
+  function writeSettingsMirror(settings) {
+    if (!settings || typeof settings !== "object") return;
+    try {
+      if (typeof localStorage === "undefined") return;
+      localStorage.setItem(SETTINGS_MIRROR_KEY, JSON.stringify(settings));
+    } catch (err) {
+    }
+  }
+  async function readChatSettings(roche) {
+    var mirror = readMirror();
+    var fromHost = null;
+    try {
+      if (roche && roche.storage && typeof roche.storage.get === "function") {
+        fromHost = await roche.storage.get("mp:settings", null);
+      }
+    } catch (err) {
+      fromHost = null;
+    }
+    var raw = null;
+    if (mirror && fromHost && typeof fromHost === "object") {
+      raw = Object.assign({}, fromHost, mirror);
+    } else {
+      raw = mirror || fromHost || null;
+    }
+    return normalizeSettings(raw);
+  }
+
   // src/services/store.js
   var KEYS = {
     settings: "mp:settings",
@@ -800,11 +854,14 @@
   function createStore(host) {
     async function loadSettings() {
       var raw = await host.storage.get(KEYS.settings, null);
-      return raw ? normalizeSettings(raw) : defaultSettings();
+      var clean = raw ? normalizeSettings(raw) : defaultSettings();
+      writeSettingsMirror(clean);
+      return clean;
     }
     async function saveSettings(settings) {
       var clean = normalizeSettings(settings);
       await host.storage.set(KEYS.settings, clean);
+      writeSettingsMirror(clean);
       return clean;
     }
     async function loadPlaylists2() {
@@ -1569,6 +1626,7 @@
     var lastSrc = "";
     var attemptToken = 0;
     var lastPositionAt = 0;
+    var mediaOn = opts.mediaSession !== false;
     function emit() {
       if (typeof opts.onChange === "function") opts.onChange(getState());
       updateMediaSession();
@@ -1659,8 +1717,34 @@
     }
     recreateAudio();
     function mediaSession() {
+      if (!mediaOn) return null;
       if (typeof navigator === "undefined" || !navigator.mediaSession) return null;
       return navigator.mediaSession;
+    }
+    function setMediaSessionEnabled(on) {
+      var next = on !== false;
+      if (next === mediaOn) return;
+      if (!next) {
+        MEDIA_ACTIONS.forEach(function(action) {
+          setActionHandler(action, null);
+        });
+        var ms = mediaSession();
+        if (ms) {
+          try {
+            ms.metadata = null;
+          } catch (err) {
+          }
+          try {
+            ms.playbackState = "none";
+          } catch (err) {
+          }
+        }
+      }
+      mediaOn = next;
+      if (next) {
+        setupMediaActions();
+        updateMediaSession();
+      }
     }
     function updateMediaSession() {
       var ms = mediaSession();
@@ -1678,7 +1762,8 @@
         }
       }
       try {
-        ms.playbackState = state.status === "playing" ? "playing" : "paused";
+        if (!state.track) ms.playbackState = "none";
+        else ms.playbackState = state.status === "playing" ? "playing" : "paused";
       } catch (err) {
       }
     }
@@ -1900,6 +1985,10 @@
       dispose,
       getState,
       setHandlers,
+      setMediaSessionEnabled,
+      mediaSessionOn: function() {
+        return mediaOn;
+      },
       isPlaying: function() {
         return state.status === "playing";
       }
@@ -1912,6 +2001,7 @@
     } else if (options) {
       shared.setHandlers(options);
       if (typeof options.volume === "number") shared.setVolume(options.volume);
+      if (options.mediaSession !== void 0) shared.setMediaSessionEnabled(options.mediaSession);
     }
     return shared;
   }
@@ -2479,6 +2569,50 @@
         return idx == null ? -1 : idx;
       }
     };
+  }
+
+  // src/services/queueSignals.js
+  var QUEUE_MIRROR_KEY = "mp:mirror:mp:queue";
+  var REBUILD_FLAG = "mp:needRebuild";
+  function ls() {
+    try {
+      return typeof localStorage === "undefined" ? null : localStorage;
+    } catch (err) {
+      return null;
+    }
+  }
+  function markRebuildNeeded() {
+    var store = ls();
+    if (!store) return;
+    try {
+      store.setItem(REBUILD_FLAG, "1");
+    } catch (err) {
+    }
+  }
+  function isRebuildNeeded() {
+    var store = ls();
+    if (!store) return false;
+    try {
+      return store.getItem(REBUILD_FLAG) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+  function clearRebuildNeeded() {
+    var store = ls();
+    if (!store) return;
+    try {
+      store.removeItem(REBUILD_FLAG);
+    } catch (err) {
+    }
+  }
+  function writeQueueMirror(payload) {
+    var store = ls();
+    if (!store || !payload) return;
+    try {
+      store.setItem(QUEUE_MIRROR_KEY, JSON.stringify(payload));
+    } catch (err) {
+    }
   }
 
   // src/services/taStore.js
@@ -8669,6 +8803,21 @@
         });
         skinRow.appendChild(btn);
       });
+      var mediaRow = h("div", { class: "mp-theme-row" });
+      MEDIA_MODES.forEach(function(m) {
+        var btn = h("button", {
+          class: "mp-theme-btn" + ((s.systemMedia || "auto") === m.id ? " is-active" : ""),
+          type: "button",
+          text: m.name
+        });
+        btn.addEventListener("click", function() {
+          if ((s.systemMedia || "auto") === m.id) return;
+          ctx.updateSettings({ systemMedia: m.id });
+          ctx.toast("重新打开 App 生效");
+          render2();
+        });
+        mediaRow.appendChild(btn);
+      });
       var dotRow = h("div", { class: "mp-dots" });
       ACCENTS.forEach(function(a) {
         var dot = h("button", {
@@ -8724,6 +8873,7 @@
           return box;
         })()),
         field("主色调", h("div", { class: "mp-dots" }, [dotRow, customDot])),
+        field("系统媒体控件", mediaRow),
         field("悬浮窗", switchEl(!!s.floating, function(v) {
           ctx.updateSettings({ floating: v });
         }))
@@ -9699,7 +9849,7 @@
   var REFRESH_MS = 2e3;
   async function openListenPanel(message, roche) {
     ensureStyle();
-    var settings = normalizeSettings(await roche.storage.get("mp:settings", null));
+    var settings = await readChatSettings(roche);
     var sources = createSources();
     var native = createNativeAudio();
     var timer = null;
@@ -10143,7 +10293,7 @@
     var native = typeof window !== "undefined" && window.Capacitor && window.Capacitor.Plugins ? window.Capacitor.Plugins.BackgroundAudio : null;
     if (!native || typeof native.replaceQueue !== "function") return false;
     try {
-      var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+      var settings = await readChatSettings(roche);
       var sources = createSources();
       var url = "";
       try {
@@ -10165,6 +10315,7 @@
         mode: "loop",
         autoplay: true
       });
+      markRebuildNeeded();
       return true;
     } catch (err) {
       return false;
@@ -10175,7 +10326,7 @@
     rememberCard(message, roche);
     var settings = normalizeSettings(null);
     try {
-      settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+      settings = await readChatSettings(roche);
     } catch (err) {
     }
     var cardData = message && message.cardData || {};
@@ -10192,8 +10343,20 @@
     }
     if (settings.cardTapPlay && track && track.name) {
       var snap = getSnapshot();
-      if (!(snap && snap.track && trackKey(snap.track) === trackKey(track))) {
-        playCardTrack(track, roche).catch(function() {
+      var same = !!(snap && snap.track && trackKey(snap.track) === trackKey(track));
+      var playing = !!(snap && snap.isPlaying);
+      if (same && !playing) {
+        var bridge = getBridge();
+        if (bridge && bridge.ready() && typeof bridge.resume === "function") {
+          bridge.resume().catch(function() {
+          });
+        }
+      } else if (!same) {
+        playCardTrack(track, roche).then(function(ok) {
+          if (!ok && roche && roche.ui && typeof roche.ui.toast === "function") {
+            roche.ui.toast("这首歌暂时放不了");
+          }
+        }).catch(function() {
         });
       }
     }
@@ -10232,7 +10395,7 @@
       return;
     }
     var snap = getSnapshot();
-    var settings = normalizeSettings(snap && snap.settings || await roche.storage.get("mp:settings", null));
+    var settings = snap && snap.settings ? normalizeSettings(snap.settings) : await readChatSettings(roche);
     var favorites = snap && snap.favorites || await roche.storage.get("mp:favorites", []) || [];
     var playlists = snap && snap.playlists || await roche.storage.get("mp:playlists", []) || [];
     var sources = createSources();
@@ -10433,7 +10596,7 @@
         var type = normalizeType(match[1]);
         if (!type) continue;
         var arg = String(match[2] == null ? "" : match[2]).trim();
-        if ((type === "play" || type === "comment" || type === "new") && !arg) continue;
+        if ((type === "play" || type === "comment" || type === "new" || type === "recommend") && !arg) continue;
         out.push({ type, arg, raw: String(match[0]) });
         if (out.length >= 6) return;
       }
@@ -10503,9 +10666,9 @@
   }
   async function readSettings(roche) {
     try {
-      return normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+      return await readChatSettings(roche);
     } catch (err) {
-      return normalizeSettings(null);
+      return await readChatSettings(null);
     }
   }
   async function headlessPlay(keyword, roche, settings) {
@@ -10535,6 +10698,7 @@
       mode: "loop",
       autoplay: true
     });
+    markRebuildNeeded();
     return { ok: true, track };
   }
   async function currentTrack(roche) {
@@ -10623,15 +10787,8 @@
       name = parts[0].trim();
       keyword = parts.slice(1).join("|").trim();
     }
-    var seeds = [];
-    if (keyword) {
-      seeds = [keyword];
-    } else {
-      var pool = ["夜晚", "通勤", "雨天", "独处", "周末", "睡前", "城市", "旧时光"];
-      var a = pool[Math.floor(Math.random() * pool.length)];
-      var b = pool[Math.floor(Math.random() * pool.length)];
-      seeds = a === b ? [a] : [a, b];
-    }
+    if (!keyword) return { ok: false, reason: "没给搜索关键词" };
+    var seeds = [keyword];
     var want = Math.max(6, Math.min(50, Number(settings && settings.recCount) || 20));
     var seen = /* @__PURE__ */ Object.create(null);
     var artistCount = /* @__PURE__ */ Object.create(null);
@@ -10850,7 +11007,7 @@
     if (!native.available()) {
       return { ok: false, reason: "这台设备没有原生播放器，需要先打开音乐 App" };
     }
-    var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+    var settings = await readChatSettings(roche);
     var sources = createSources();
     var found = await sources.search(keyword, settings, { limit: 8 });
     if (!found.tracks.length) return { ok: false, reason: "没搜到这首歌" };
@@ -10893,13 +11050,8 @@
         repeat: "off",
         at: Date.now()
       };
-      try {
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem("mp:mirror:mp:queue", JSON.stringify(payload));
-          localStorage.setItem("mp:needRebuild", "1");
-        }
-      } catch (err) {
-      }
+      writeQueueMirror(payload);
+      markRebuildNeeded();
       await roche.storage.set("mp:queue", payload);
     } catch (err) {
     }
@@ -11079,13 +11231,11 @@
       var saved = await saveComment(roche, characterId, track, text);
       return saved.ok ? { ok: true, text: saved.text, track: track.name } : { ok: false, reason: saved.reason };
     }),
-    tool("music_recommend", "按对方最近的喜好挑几首歌，放进名为「为你挑的」的歌单。keyword 由你根据对话决定（例如「城市夜晚」）。", { keyword: "string" }, async function(args, ctx, roche) {
-      var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get("mp:settings", null) : null);
+    tool("music_recommend", "只有当对方明确说「给我挑几首」时才调用。keyword 必须由你根据对话给出（例如「城市夜晚」），没有关键词就不要调用这个工具。", { keyword: "string" }, async function(args, ctx, roche) {
+      var settings = await readChatSettings(roche);
       var sources = createSources();
-      var seed = String(args.keyword || "").trim() || (/^(华语流行)$/.test(String(args.keyword || "")) ? "" : "") || (function() {
-        var recent = (runtime2.recentNames || [])[0];
-        return recent || "华语流行";
-      })();
+      var seed = String(args.keyword || "").trim();
+      if (!seed) return { ok: false, reason: "没给搜索关键词，这次不挑歌" };
       var found = await sources.search(seed, settings, { limit: 8 });
       if (!found.tracks.length) return { ok: false, reason: "没找到可推荐的歌" };
       var characterId = ctx && ctx.contact ? ctx.contact.id : "";
@@ -11198,6 +11348,11 @@
             isPlaying: state.player.status === "playing",
             queueSize: state.queue ? state.queue.tracks.length : 0
           };
+        },
+        /** 聊天里点卡片时用：当前这首但停着 → 续播，不用重新解析地址 */
+        resume: async function() {
+          if (state.player.status !== "playing") await togglePlay();
+          return { ok: true };
         },
         search: async function(keyword, limit) {
           var res = await sources.search(keyword, state.settings, { limit: limit || 5 });
@@ -12026,6 +12181,9 @@
         if (engine) engine.setVolume(state.settings.volume);
         else if (player) player.setVolume(state.settings.volume);
       }
+      if (player && typeof player.setMediaSessionEnabled === "function") {
+        player.setMediaSessionEnabled(resolveMediaMode(state.settings, nativeAvailable()).mediaSession);
+      }
       refresh();
       if (shell) shell.applyAppearance();
     }
@@ -12419,7 +12577,8 @@
       repeat: state.settings.repeat,
       shuffle: state.settings.shuffle
     });
-    if (nativeAvailable()) {
+    var mediaMode = resolveMediaMode(state.settings, nativeAvailable());
+    if (mediaMode.useNative) {
       engine = createNativeEngine({
         sources,
         minimal: !!state.settings.nativeMinimal,
@@ -12446,6 +12605,7 @@
     }
     player = getPlayer({
       volume: state.settings.volume,
+      mediaSession: mediaMode.mediaSession,
       onChange: function(snapshot2) {
         state.player = snapshot2;
         if (shell) shell.renderPlayer();
@@ -12466,6 +12626,40 @@
     installBridge();
     hydrate(await host.storage.get("mp:listen", null));
     syncChatRuntime();
+    var rebuilding = false;
+    function applyPendingRebuild() {
+      if (!engine || !state.queue || rebuilding) return false;
+      if (!isRebuildNeeded()) return false;
+      if (state.queue.tracks.length < 2) return false;
+      var nativeTrack = engine.getState().track;
+      var appTrack = state.player.track || current(state.queue);
+      var idx = -1;
+      if (appTrack) {
+        for (var i = 0; i < state.queue.tracks.length; i++) {
+          if (trackKey(state.queue.tracks[i]) === trackKey(appTrack)) {
+            idx = i;
+            break;
+          }
+        }
+      }
+      if (!(idx >= 0)) {
+        idx = state.queue.order[state.queue.pos];
+        if (!(idx >= 0)) idx = 0;
+      }
+      var sameTrack = !!(nativeTrack && appTrack && trackKey(nativeTrack) === trackKey(appTrack));
+      var resumeAt = sameTrack ? state.player.time || 0 : 0;
+      clearRebuildNeeded();
+      rebuilding = true;
+      return Promise.resolve(engine.playList(state.queue.tracks, idx, state.settings)).then(function() {
+        if (sameTrack && resumeAt > 1500) engine.seek(resumeAt);
+        rebuilding = false;
+        if (shell) shell.renderPlayer();
+        return true;
+      }, function() {
+        rebuilding = false;
+        return false;
+      });
+    }
     if (engine) {
       engine.attach(state.queue.tracks, state.settings).then(function() {
         var nowPlaying = engine.getState().track;
@@ -12487,26 +12681,13 @@
           }
           if (shell) shell.renderPlayer();
         }
-        var needRebuild = null;
-        try {
-          needRebuild = localStorage.getItem("mp:needRebuild");
-        } catch (err) {
-          needRebuild = null;
-        }
-        if (needRebuild && state.queue.tracks.length > 1) {
-          try {
-            localStorage.removeItem("mp:needRebuild");
-          } catch (err) {
-          }
-          var resumeAt = state.player.time || 0;
-          var idx2 = state.queue.order[state.queue.pos];
-          if (!(idx2 >= 0)) idx2 = 0;
-          engine.playList(state.queue.tracks, idx2, state.settings).then(function() {
-            if (resumeAt > 1500) engine.seek(resumeAt);
-          });
-        }
+        applyPendingRebuild();
       });
     }
+    var rebuildTimer = setInterval(function() {
+      if (!engine) return;
+      applyPendingRebuild();
+    }, 1200);
     if (state.player.track) {
       var cached = lyrics.getCached(state.player.track);
       if (cached && cached.length) {
@@ -12523,11 +12704,21 @@
       var exists = state.queue.tracks.some(function(t) {
         return trackKey(t) === trackKey(now);
       });
-      if (exists) return;
+      if (exists) {
+        var cur = current(state.queue);
+        if (!cur || trackKey(cur) !== trackKey(now)) {
+          state.queue = jumpTo(state.queue, trackKey(now));
+          saveQueue();
+          refresh();
+        }
+        return;
+      }
       state.queue = appendTracks(state.queue, [now]);
+      state.queue = jumpTo(state.queue, trackKey(now));
       engine.setList(state.queue.tracks, state.settings);
       saveQueue();
       refresh();
+      applyPendingRebuild();
     }, 4e3);
     var pending = await host.storage.get("mp:pending", null);
     if (pending) {
@@ -12545,6 +12736,8 @@
         searchToken += 1;
         if (queueSyncTimer) clearInterval(queueSyncTimer);
         queueSyncTimer = null;
+        if (rebuildTimer) clearInterval(rebuildTimer);
+        rebuildTimer = null;
         if (player) player.setHandlers({});
         if (engine) engine.dispose();
         clearBridge();
@@ -12560,7 +12753,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.53.0" });
+    app = await createApp({ container, roche, version: "0.54.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -12576,7 +12769,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.53.0",
+    version: "0.54.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

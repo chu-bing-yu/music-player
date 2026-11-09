@@ -27,6 +27,13 @@ test('play 缺参数丢弃', () => {
   assert.equal(parseCommands('[[mp:play:]]').length, 0);
 });
 
+test('recommend 缺参数直接丢弃（不再凭空挑歌）', () => {
+  assert.equal(parseCommands('<!-- mp:recommend -->').length, 0);
+  assert.equal(parseCommands('[[mp:recommend:]]').length, 0);
+  // 只给歌单名没有关键词：仍然算有参数，交给执行层判断（它自己会要求竖线后有关键词）
+  assert.equal(parseCommands('<!-- mp:recommend:雨夜书单|城市雨天 -->').length, 1);
+});
+
 test('comment 可带中文与空格', () => {
   const list = parseCommands('[[mp:comment:这首前奏很好听]]');
   assert.equal(list.length, 1);

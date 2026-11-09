@@ -478,6 +478,43 @@ try {
   check('设置页不再重复可播放开关', await evaluate('document.querySelector(".mp-body").textContent.indexOf("只推荐能播放的") === -1'));
   check('设置页保留点卡片播放', await evaluate('document.querySelector(".mp-body").textContent.indexOf("点卡片播放") !== -1'));
 
+  // v0.54.0：系统媒体控件三档 + 设置镜像（聊天侧要能读到 App 的设置）
+  check('设置页有系统媒体控件三档', await evaluate(`(function () {
+    const row = Array.from(document.querySelectorAll('.mp-group .mp-field')).find((r) => r.textContent.includes('系统媒体控件'));
+    if (!row) return false;
+    const names = Array.from(row.querySelectorAll('.mp-theme-btn')).map((b) => b.textContent);
+    return names.length === 3 && names.indexOf('不映射') !== -1 && names.indexOf('映射') !== -1;
+  })()`));
+  await evaluate(`(function () {
+    const row = Array.from(document.querySelectorAll('.mp-group .mp-field')).find((r) => r.textContent.includes('系统媒体控件'));
+    const btn = Array.from(row.querySelectorAll('.mp-theme-btn')).find((b) => b.textContent === '不映射');
+    if (btn) btn.click();
+    return !!btn;
+  })()`);
+  await sleep(500);
+  check('切到不映射后写进设置镜像', await evaluate(`(function () {
+    try {
+      return JSON.parse(localStorage.getItem('mp:mirror:mp:settings') || '{}').systemMedia === 'off';
+    } catch (e) { return false; }
+  })()`));
+  // 切回自动，免得影响后面「重新打开还在播」这类依赖原生引擎的用例
+  await evaluate(`(function () {
+    const row = Array.from(document.querySelectorAll('.mp-group .mp-field')).find((r) => r.textContent.includes('系统媒体控件'));
+    const btn = Array.from(row.querySelectorAll('.mp-theme-btn')).find((b) => b.textContent === '自动');
+    if (btn) btn.click();
+    return !!btn;
+  })()`);
+  await sleep(400);
+
+  // v0.54.0：角色挑歌必须带关键词，缺关键词直接拒绝（不再随机抽词建歌单）
+  check('工具挑歌缺关键词直接拒绝', await evaluate(`(function () {
+    const p = window.__registeredPlugin;
+    const tool = (p.chat.tools || []).filter(function (t) { return t.id === 'music_recommend'; })[0];
+    if (!tool) return false;
+    return Promise.resolve(tool.execute({ keyword: '' }, { conversationId: 'c1', contact: { id: 'c1' } }, window.roche))
+      .then(function (r) { return !!(r && r.ok === false && String(r.reason || '').indexOf('关键词') !== -1); });
+  })()`));
+
   // 提示词可编辑
   await evaluate(`(() => {
     const row = Array.from(document.querySelectorAll('.mp-group .mp-field')).find((r) => r.textContent.includes('一起听提示词'));

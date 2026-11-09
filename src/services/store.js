@@ -3,6 +3,7 @@
 import { normalizeSettings, defaultSettings } from '../core/settings.js';
 import { normalizePlaylists } from '../core/playlist.js';
 import { normalizeFavorites, normalizeRecent } from '../core/favorites.js';
+import { writeSettingsMirror } from './chatSettings.js';
 
 export var KEYS = {
   settings: 'mp:settings',
@@ -20,12 +21,17 @@ var MAX_SEARCHES = 12;
 export function createStore(host) {
   async function loadSettings() {
     var raw = await host.storage.get(KEYS.settings, null);
-    return raw ? normalizeSettings(raw) : defaultSettings();
+    var clean = raw ? normalizeSettings(raw) : defaultSettings();
+    // 首次进入就把镜像建起来：聊天侧不依赖「用户改过设置」才拿得到真值
+    writeSettingsMirror(clean);
+    return clean;
   }
 
   async function saveSettings(settings) {
     var clean = normalizeSettings(settings);
     await host.storage.set(KEYS.settings, clean);
+    // 聊天回调可能读不到这份宿主 storage，顺手写镜像
+    writeSettingsMirror(clean);
     return clean;
   }
 

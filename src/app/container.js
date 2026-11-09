@@ -7,11 +7,12 @@ import { createLyrics } from '../services/lyrics.js';
 import { getPlayer } from '../services/player.js';
 import { nativeAvailable } from '../services/nativeAudio.js';
 import { createNativeEngine } from '../services/nativeEngine.js';
+import { isRebuildNeeded, clearRebuildNeeded } from '../services/queueSignals.js';
 import {
   createQueue, current, advance, back, setShuffle, setRepeat, nextRepeat, jumpTo, appendTracks, removeAt, REPEAT
 } from '../core/queue.js';
 import { trackKey, normalizeTrack } from '../core/track.js';
-import { nextPlayMode, playModeLabel } from '../core/settings.js';
+import { nextPlayMode, playModeLabel, resolveMediaMode } from '../core/settings.js';
 import {
   toplists as neToplists,
   playlistTracks as nePlaylistTracks,
@@ -156,6 +157,11 @@ export async function createApp(opts) {
           isPlaying: state.player.status === 'playing',
           queueSize: state.queue ? state.queue.tracks.length : 0
         };
+      },
+      /** 聊天里点卡片时用：当前这首但停着 → 续播，不用重新解析地址 */
+      resume: async function () {
+        if (state.player.status !== 'playing') await togglePlay();
+        return { ok: true };
       },
       search: async function (keyword, limit) {
         var res = await sources.search(keyword, state.settings, { limit: limit || 5 });
@@ -1055,6 +1061,11 @@ export async function createApp(opts) {
       if (engine) engine.setVolume(state.settings.volume);
       else if (player) player.setVolume(state.settings.volume);
     }
+    // 系统媒体控件：网页引擎即时开关会话；「原生 ↔ 网页」的引擎切换要重建队列，
+    // 留给下次挂载生效（设置页会提示重新打开 App）。
+    if (player && typeof player.setMediaSessionEnabled === 'function') {
+      player.setMediaSessionEnabled(resolveMediaMode(state.settings, nativeAvailable()).mediaSession);
+    }
     refresh();
     if (shell) shell.applyAppearance();
   }
@@ -1454,8 +1465,11 @@ export async function createApp(opts) {
     shuffle: state.settings.shuffle
   });
 
-  // 优先用宿主原生播放器：状态栏 / 锁屏 / 控制中心才有控制
-  if (nativeAvailable()) {
+  // 系统媒体控件（安卓通知栏 / 灵动胶囊、iOS 锁屏）：按设置决定用原生引擎还是网页引擎。
+  // off = 不映射：两个都不注册媒体会话，系统里不会出现一个点不动的空卡片。
+  var mediaMode = resolveMediaMode(state.settings, nativeAvailable());
+
+  if (mediaMode.useNative) {
     engine = createNativeEngine({
       sources: sources,
       minimal: !!state.settings.nativeMinimal,
@@ -1483,9 +1497,10 @@ export async function createApp(opts) {
     });
   }
 
-  // 没有原生插件时退回 WebView 内的 <audio>，行为保持一致
+  // 没有原生插件（或用户选了「不映射」）时退回 WebView 内的 <audio>，行为保持一致
   player = getPlayer({
     volume: state.settings.volume,
+    mediaSession: mediaMode.mediaSession,
     onChange: function (snapshot) {
       state.player = snapshot;
       if (shell) shell.renderPlayer();
@@ -1501,6 +1516,51 @@ export async function createApp(opts) {
   installBridge();
   hydrateListen(await host.storage.get('mp:listen', null));
   syncChatRuntime();
+
+  /**
+   * 聊天里点歌时原生队列只拿到那一首（聊天侧解析不到整队地址），并留了 mp:needRebuild。
+   * 以前只在 App 首次挂载时检查 —— App 开着的时候状态栏就永远锁在这一首上。
+   * 现在做成可重复调用：attach 完、定时器都会走一遍，且**只有当前曲没变时才 seek**，
+   * 否则重建后跳到新曲是从 0 开始（这正是「切回来放不出来」的原因）。
+   */
+  var rebuilding = false;
+
+  function applyPendingRebuild() {
+    if (!engine || !state.queue || rebuilding) return false;
+    if (!isRebuildNeeded()) return false;
+    if (state.queue.tracks.length < 2) return false; // 真只有一首，没什么可重建的
+
+    var nativeTrack = engine.getState().track;
+    var appTrack = state.player.track || current(state.queue);
+
+    // 以「正在播的那首」为准找下标：队列 pos 可能还停在进行其它歌上
+    var idx = -1;
+    if (appTrack) {
+      for (var i = 0; i < state.queue.tracks.length; i++) {
+        if (trackKey(state.queue.tracks[i]) === trackKey(appTrack)) { idx = i; break; }
+      }
+    }
+    if (!(idx >= 0)) {
+      idx = state.queue.order[state.queue.pos];
+      if (!(idx >= 0)) idx = 0;
+    }
+
+    var sameTrack = !!(nativeTrack && appTrack && trackKey(nativeTrack) === trackKey(appTrack));
+    var resumeAt = sameTrack ? (state.player.time || 0) : 0;
+
+    clearRebuildNeeded();
+    rebuilding = true;
+
+    return Promise.resolve(engine.playList(state.queue.tracks, idx, state.settings)).then(function () {
+      if (sameTrack && resumeAt > 1500) engine.seek(resumeAt);
+      rebuilding = false;
+      if (shell) shell.renderPlayer();
+      return true;
+    }, function () {
+      rebuilding = false;
+      return false;
+    });
+  }
 
   // 原生播放器可能在别的插件里就开始播了：这里只接管状态，不重新起播
   // 注意：队列为空也要 attach，否则拿不到原生正在放的歌（列表会一直显示 0 首）
@@ -1530,26 +1590,15 @@ export async function createApp(opts) {
 
       // 角色在 App 没开时点的歌：原生队列里只有一首，这里用完整队列重建一次，
       // 否则状态栏的上一首/下一首会一直锁在这一首上
-      var needRebuild = null;
-      try {
-        needRebuild = localStorage.getItem('mp:needRebuild');
-      } catch (err) {
-        needRebuild = null;
-      }
-      if (needRebuild && state.queue.tracks.length > 1) {
-        try {
-          localStorage.removeItem('mp:needRebuild');
-        } catch (err) { /* 忽略 */ }
-
-        var resumeAt = state.player.time || 0;
-        var idx2 = state.queue.order[state.queue.pos];
-        if (!(idx2 >= 0)) idx2 = 0;
-        engine.playList(state.queue.tracks, idx2, state.settings).then(function () {
-          if (resumeAt > 1500) engine.seek(resumeAt);
-        });
-      }
+      applyPendingRebuild();
     });
   }
+
+  // App 一直开着的时候也要能收到聊天点歌的信号（以前只在挂载时看一次）
+  var rebuildTimer = setInterval(function () {
+    if (!engine) return;
+    applyPendingRebuild();
+  }, 1200);
 
   // 重新挂载时把正在播的歌的歌词补回来
   if (state.player.track) {
@@ -1571,11 +1620,23 @@ export async function createApp(opts) {
     var exists = state.queue.tracks.some(function (t) {
       return trackKey(t) === trackKey(now);
     });
-    if (exists) return;
+    if (exists) {
+      // 已经在列表里：只要把当前位置挪到它上面，别让 UI 和真实播放错位
+      var cur = current(state.queue);
+      if (!cur || trackKey(cur) !== trackKey(now)) {
+        state.queue = jumpTo(state.queue, trackKey(now));
+        saveQueue();
+        refresh();
+      }
+      return;
+    }
     state.queue = appendTracks(state.queue, [now]);
+    state.queue = jumpTo(state.queue, trackKey(now));
     engine.setList(state.queue.tracks, state.settings);
     saveQueue();
     refresh();
+    // 补进队列后紧接着把原生窗口重建，状态栏才立刻有上一首/下一首
+    applyPendingRebuild();
   }, 4000);
 
   // 从聊天卡片点进来时，storage 里带着要播的歌
@@ -1596,6 +1657,8 @@ export async function createApp(opts) {
       searchToken += 1;
       if (queueSyncTimer) clearInterval(queueSyncTimer);
       queueSyncTimer = null;
+      if (rebuildTimer) clearInterval(rebuildTimer);
+      rebuildTimer = null;
       // 只解绑 UI 回调，不销毁播放：切到别的插件时音乐要继续
       if (player) player.setHandlers({});
       if (engine) engine.dispose();

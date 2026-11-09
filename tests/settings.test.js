@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultSettings, normalizeSettings, atLeastOneSource, DEFAULT_CHAT_PROMPT } from '../src/core/settings.js';
+import { defaultSettings, normalizeSettings, atLeastOneSource, resolveMediaMode, DEFAULT_CHAT_PROMPT } from '../src/core/settings.js';
 import { REPEAT } from '../src/core/queue.js';
 
 test('默认设置：QQ + iTunes + 免费曲库 + 网易云兜底', () => {
@@ -119,4 +119,27 @@ test('主题与主色调可持久化，悬浮开关能关掉', () => {
 test('两个搜索源都关掉时至少打开 QQ', () => {
   const s = atLeastOneSource(normalizeSettings({ sources: { tencent: false, itunes: false } }));
   assert.equal(s.sources.tencent, true);
+});
+
+test('系统媒体控件：默认自动，非法值回退', () => {
+  assert.equal(defaultSettings().systemMedia, 'auto');
+  assert.equal(normalizeSettings({}).systemMedia, 'auto');
+  assert.equal(normalizeSettings({ systemMedia: 'off' }).systemMedia, 'off');
+  assert.equal(normalizeSettings({ systemMedia: 'native' }).systemMedia, 'native');
+  assert.equal(normalizeSettings({ systemMedia: '乱写' }).systemMedia, 'auto');
+});
+
+test('resolveMediaMode：不映射两边都关，有原生优先原生，没原生用 mediaSession', () => {
+  assert.deepEqual(resolveMediaMode({ systemMedia: 'off' }, true), { useNative: false, mediaSession: false });
+  assert.deepEqual(resolveMediaMode({ systemMedia: 'off' }, false), { useNative: false, mediaSession: false });
+
+  assert.deepEqual(resolveMediaMode({ systemMedia: 'auto' }, true), { useNative: true, mediaSession: false });
+  assert.deepEqual(resolveMediaMode({ systemMedia: 'native' }, true), { useNative: true, mediaSession: false });
+
+  // iOS / 没有背景音频插件：映射与自动都退回 mediaSession
+  assert.deepEqual(resolveMediaMode({ systemMedia: 'auto' }, false), { useNative: false, mediaSession: true });
+  assert.deepEqual(resolveMediaMode({ systemMedia: 'native' }, false), { useNative: false, mediaSession: true });
+
+  // 老设置里没有 systemMedia 字段
+  assert.deepEqual(resolveMediaMode({}, true), { useNative: true, mediaSession: false });
 });

@@ -38,8 +38,10 @@ export function parseCommands(text) {
       if (!type) continue;
       var arg = String(match[2] == null ? '' : match[2]).trim();
 
-      // 需要参数的指令，缺参数直接丢弃
-      if ((type === 'play' || type === 'comment' || type === 'new') && !arg) continue;
+      // 需要参数的指令，缺参数直接丢弃。
+      // recommend 以前漏在这里：<!-- mp:recommend --> 也会执行，然后插件自己随机抽词搜歌，
+      // 表现就是「角色没写指令，却凭空多出一个塞满歌的歌单」。
+      if ((type === 'play' || type === 'comment' || type === 'new' || type === 'recommend') && !arg) continue;
 
       out.push({ type: type, arg: arg, raw: String(match[0]) });
       if (out.length >= 6) return; // 一轮最多执行 6 条，防止刷屏

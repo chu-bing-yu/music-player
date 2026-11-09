@@ -10,7 +10,7 @@ import { fillCover } from '../ui/components.js';
 import { getBridge, getSnapshot } from './bridge.js';
 import { createSources } from '../services/sources.js';
 import { createNativeAudio } from '../services/nativeAudio.js';
-import { normalizeSettings } from '../core/settings.js';
+import { readChatSettings } from '../services/chatSettings.js';
 import { trackKey, normalizeTrack } from '../core/track.js';
 import { setState as setListenState, toJSON as listenJSON } from './listenState.js';
 
@@ -19,7 +19,8 @@ var REFRESH_MS = 2000;
 export async function openListenPanel(message, roche) {
   ensureStyle();
 
-  var settings = normalizeSettings(await roche.storage.get('mp:settings', null));
+  // 走镜像：聊天侧直接读宿主 storage 会拿到默认设置（默认开着 QQ 源）
+  var settings = await readChatSettings(roche);
   var sources = createSources();
   var native = createNativeAudio();
   var timer = null;

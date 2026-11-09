@@ -8,6 +8,8 @@ import { icon } from '../ui/icons.js';
 import { fillCover } from '../ui/components.js';
 import { ensureStyle } from '../ui/style.js';
 import { normalizeSettings } from '../core/settings.js';
+import { readChatSettings } from '../services/chatSettings.js';
+import { markRebuildNeeded } from '../services/queueSignals.js';
 import { createSources } from '../services/sources.js';
 import { normalizeTrack, trackKey } from '../core/track.js';
 import { openListenPanel } from './listenPanel.js';
@@ -113,7 +115,7 @@ async function playCardTrack(track, roche) {
   if (!native || typeof native.replaceQueue !== 'function') return false;
 
   try {
-    var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get('mp:settings', null) : null);
+    var settings = await readChatSettings(roche);
     var sources = createSources();
     var url = '';
     try {
@@ -136,6 +138,8 @@ async function playCardTrack(track, roche) {
       mode: 'loop',
       autoplay: true
     });
+    // 原生队列只剩这一首，App 在的话让它用完整队列重建窗口
+    markRebuildNeeded();
     return true;
   } catch (err) {
     return false;
@@ -148,9 +152,10 @@ export async function onCardAction(message, action, payload, roche) {
   rememberCard(message, roche);
 
   // 点卡片要不要重新播放，交给设置决定（默认只显示当前状态，不打断正在听的歌）
+  // 走镜像读设置：聊天侧直接读宿主 storage 会拿到默认值，导致「开了点卡片播放也不生效」
   var settings = normalizeSettings(null);
   try {
-    settings = normalizeSettings(roche && roche.storage ? await roche.storage.get('mp:settings', null) : null);
+    settings = await readChatSettings(roche);
   } catch (err) { /* 用默认值 */ }
 
   // 卡片数据可能缺 track（只存了歌名/文案），这时从 cardData.title / modelText 里捞歌名兜底
@@ -170,8 +175,21 @@ export async function onCardAction(message, action, payload, roche) {
 
   if (settings.cardTapPlay && track && track.name) {
     var snap = getSnapshot();
-    if (!(snap && snap.track && trackKey(snap.track) === trackKey(track))) {
-      playCardTrack(track, roche).catch(function () { /* 播放失败不影响打开面板 */ });
+    var same = !!(snap && snap.track && trackKey(snap.track) === trackKey(track));
+    var playing = !!(snap && snap.isPlaying);
+
+    if (same && !playing) {
+      // 就是当前这首但停着：续播，不再重新解析地址（重新解析经常反而放不出来）
+      var bridge = getBridge();
+      if (bridge && bridge.ready() && typeof bridge.resume === 'function') {
+        bridge.resume().catch(function () { /* 打开面板里还有播放按钮 */ });
+      }
+    } else if (!same) {
+      playCardTrack(track, roche).then(function (ok) {
+        if (!ok && roche && roche.ui && typeof roche.ui.toast === 'function') {
+          roche.ui.toast('这首歌暂时放不了');
+        }
+      }).catch(function () { /* 打开面板里还有播放按钮 */ });
     }
   }
 
@@ -220,7 +238,7 @@ export async function openPlusAction(ctx, roche) {
 
   // 每次都先拿快照：宿主的 storage 在聊天侧可能读不到 App 写的数据
   var snap = getSnapshot();
-  var settings = normalizeSettings((snap && snap.settings) || (await roche.storage.get('mp:settings', null)));
+  var settings = snap && snap.settings ? normalizeSettings(snap.settings) : await readChatSettings(roche);
   var favorites = (snap && snap.favorites) || (await roche.storage.get('mp:favorites', [])) || [];
   var playlists = (snap && snap.playlists) || (await roche.storage.get('mp:playlists', [])) || [];
   var sources = createSources();

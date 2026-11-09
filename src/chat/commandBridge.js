@@ -13,7 +13,8 @@ import { isOn } from './listenState.js';
 import { addTrackForChar, saveComment, createCharPlaylist, RECOMMEND_PLAYLIST_NAME } from '../services/taStore.js';
 import { createSources } from '../services/sources.js';
 import { createNativeAudio } from '../services/nativeAudio.js';
-import { normalizeSettings } from '../core/settings.js';
+import { readChatSettings } from '../services/chatSettings.js';
+import { markRebuildNeeded } from '../services/queueSignals.js';
 import { trackKey } from '../core/track.js';
 
 var POLL_MS = 2500;
@@ -86,9 +87,9 @@ function nativePlugin() {
 
 async function readSettings(roche) {
   try {
-    return normalizeSettings(roche && roche.storage ? await roche.storage.get('mp:settings', null) : null);
+    return await readChatSettings(roche);
   } catch (err) {
-    return normalizeSettings(null);
+    return await readChatSettings(null);
   }
 }
 
@@ -123,6 +124,8 @@ async function headlessPlay(keyword, roche, settings) {
     mode: 'loop',
     autoplay: true
   });
+  // 原生队列现在只有这一首：让 App（如果开着）尽快用完整队列重建窗口
+  markRebuildNeeded();
 
   return { ok: true, track: track };
 }
@@ -228,16 +231,11 @@ async function doRecommend(roche, settings, arg) {
     keyword = parts.slice(1).join('|').trim();
   }
 
-  // 角色没给关键词时随机抽两个场景词，保证每次都不一样
-  var seeds = [];
-  if (keyword) {
-    seeds = [keyword];
-  } else {
-    var pool = ['夜晚', '通勤', '雨天', '独处', '周末', '睡前', '城市', '旧时光'];
-    var a = pool[Math.floor(Math.random() * pool.length)];
-    var b = pool[Math.floor(Math.random() * pool.length)];
-    seeds = a === b ? [a] : [a, b];
-  }
+  // 没有关键词就什么都不做：以前这里会随机抽「夜晚 / 通勤」去搜歌，
+  // 表现就是「角色没写指令，却凭空多出一个塞满歌的歌单」。
+  if (!keyword) return { ok: false, reason: '没给搜索关键词' };
+
+  var seeds = [keyword];
 
   var want = Math.max(6, Math.min(50, Number(settings && settings.recCount) || 20));
   var seen = Object.create(null);

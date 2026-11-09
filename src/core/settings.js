@@ -101,6 +101,32 @@ export function isClassic(settings) {
   return !!(settings && settings.uiTheme === 'classic');
 }
 
+/**
+ * 系统媒体控件（安卓通知栏/灵动胶囊、iOS 锁屏与灵动岛）三档：
+ * auto   自动：能接原生就接原生，接不上就用网页 mediaSession
+ * native 映射：尽量交给系统媒体控件（没有原生时退回 mediaSession）
+ * off    不映射：完全不注册媒体会话，系统里不出现媒体卡片
+ */
+export var MEDIA_MODES = [
+  { id: 'auto', name: '自动' },
+  { id: 'native', name: '映射' },
+  { id: 'off', name: '不映射' }
+];
+
+/**
+ * 决定「用宿主原生播放引擎」还是「网页播放 + navigator.mediaSession」。
+ * @param {Object} settings
+ * @param {boolean} hasNative 宿主是否提供 BackgroundAudio 插件
+ * @returns {{useNative:boolean, mediaSession:boolean}}
+ */
+export function resolveMediaMode(settings, hasNative) {
+  var mode = (settings && settings.systemMedia) || 'auto';
+  if (mode === 'off') return { useNative: false, mediaSession: false };
+  if (hasNative) return { useNative: true, mediaSession: false };
+  // 没有原生播放器：映射 / 自动都只能用网页 mediaSession 顶上（iOS 就靠这个）
+  return { useNative: false, mediaSession: true };
+}
+
 export var ACCENTS = [
   { id: 'red', name: '赤红', color: '#e14b4b' },
   { id: 'blue', name: '雾蓝', color: '#3b82f6' },
@@ -122,6 +148,8 @@ export function defaultSettings() {
     theme: 'auto',
     /** 界面风格：mag = 杂志风；classic = 经典 */
     uiTheme: 'mag',
+    /** 系统媒体控件：auto / native（映射）/ off（不映射） */
+    systemMedia: 'auto',
     accent: 'red',
     // 空 = 用预设色块；有值 = 用户自选色（优先级更高）
     accentColor: '',
@@ -215,6 +243,7 @@ export function normalizeSettings(raw) {
     shuffle: modeToQueueFlags(resolvePlayMode(s)).shuffle,
     theme: pickId(THEMES, s.theme, def.theme),
     uiTheme: pickId(UI_SKINS, s.uiTheme, def.uiTheme),
+    systemMedia: pickId(MEDIA_MODES, s.systemMedia, def.systemMedia),
     // custom = 用户自选颜色
     accent: s.accent === 'custom' ? 'custom' : pickId(ACCENTS, s.accent, def.accent),
     accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || '')) ? String(s.accentColor) : '',

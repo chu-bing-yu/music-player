@@ -3,7 +3,7 @@
 import { h, clear } from '../dom.js';
 import { pageTitle } from '../components.js';
 import { masthead, todayText } from '../masthead.js';
-import { THEMES, ACCENTS, UI_SKINS, isClassic, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
+import { THEMES, ACCENTS, UI_SKINS, MEDIA_MODES, isClassic, DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../../core/settings.js';
 import { qrKey, qrCreate, qrCheck, account as neteaseAccount, isReady as neteaseReady } from '../../services/netease.js';
 
 /** 设置行：只留「字段名 + 控件」，不再放灰色解释（用户要求整页去说明） */
@@ -181,6 +181,23 @@ export function mount(host, ctx) {
       skinRow.appendChild(btn);
     });
 
+    // 系统媒体控件：映射 / 不映射。改引擎要重建播放窗口，所以提示重开生效
+    var mediaRow = h('div', { class: 'mp-theme-row' });
+    MEDIA_MODES.forEach(function (m) {
+      var btn = h('button', {
+        class: 'mp-theme-btn' + ((s.systemMedia || 'auto') === m.id ? ' is-active' : ''),
+        type: 'button',
+        text: m.name
+      });
+      btn.addEventListener('click', function () {
+        if ((s.systemMedia || 'auto') === m.id) return;
+        ctx.updateSettings({ systemMedia: m.id });
+        ctx.toast('重新打开 App 生效');
+        render();
+      });
+      mediaRow.appendChild(btn);
+    });
+
     var dotRow = h('div', { class: 'mp-dots' });
     ACCENTS.forEach(function (a) {
       var dot = h('button', {
@@ -240,6 +257,7 @@ export function mount(host, ctx) {
         return box;
       })()),
       field('主色调', h('div', { class: 'mp-dots' }, [dotRow, customDot])),
+      field('系统媒体控件', mediaRow),
       field('悬浮窗', switchEl(!!s.floating, function (v) { ctx.updateSettings({ floating: v }); }))
 
     ]);

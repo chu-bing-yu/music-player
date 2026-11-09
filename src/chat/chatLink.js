@@ -13,7 +13,9 @@ import { getBridge } from './bridge.js';
 import { isOn } from './listenState.js';
 import { noteConversation } from './commandBridge.js';
 import { addTrackForChar, saveComment, createCharPlaylist, RECOMMEND_PLAYLIST_NAME } from '../services/taStore.js';
-import { DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT, normalizeSettings } from '../core/settings.js';
+import { DEFAULT_CHAT_PROMPT, TOOL_CHAT_PROMPT, HYBRID_CHAT_PROMPT } from '../core/settings.js';
+import { readChatSettings } from '../services/chatSettings.js';
+import { markRebuildNeeded, writeQueueMirror } from '../services/queueSignals.js';
 import { createSources } from '../services/sources.js';
 import { createNativeAudio } from '../services/nativeAudio.js';
 import { trackKey } from '../core/track.js';
@@ -96,7 +98,7 @@ async function headlessPlay(keyword, roche) {
     return { ok: false, reason: '这台设备没有原生播放器，需要先打开音乐 App' };
   }
 
-  var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get('mp:settings', null) : null);
+  var settings = await readChatSettings(roche);
   var sources = createSources();
   var found = await sources.search(keyword, settings, { limit: 8 });
   if (!found.tracks.length) return { ok: false, reason: '没搜到这首歌' };
@@ -148,13 +150,10 @@ async function headlessPlay(keyword, roche) {
 
     // 关键：聊天侧拿到的 roche.storage 与 App 侧可能是两个作用域，
     // 这里同时写一份 localStorage 镜像，App 启动时读镜像才不会丢歌
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('mp:mirror:mp:queue', JSON.stringify(payload));
-        // 标记：原生队列现在只有这一首，App 打开后要用完整队列重建（否则上一首/下一首被锁死）
-        localStorage.setItem('mp:needRebuild', '1');
-      }
-    } catch (err) { /* 忽略 */ }
+    writeQueueMirror(payload);
+    // 标记：原生队列现在只有这一首，App（不管开没开）看到就用完整队列重建窗口，
+    // 否则状态栏的上一首/下一首会一直锁在这一首上
+    markRebuildNeeded();
 
     await roche.storage.set('mp:queue', payload);
   } catch (err) { /* 写不进去也不影响播放 */ }
@@ -385,16 +384,12 @@ export var chatTools = [
     return saved.ok ? { ok: true, text: saved.text, track: track.name } : { ok: false, reason: saved.reason };
   }),
 
-  tool('music_recommend', '按对方最近的喜好挑几首歌，放进名为「为你挑的」的歌单。keyword 由你根据对话决定（例如「城市夜晚」）。', { keyword: 'string' }, async function (args, ctx, roche) {
-    var settings = normalizeSettings(roche && roche.storage ? await roche.storage.get('mp:settings', null) : null);
+  tool('music_recommend', '只有当对方明确说「给我挑几首」时才调用。keyword 必须由你根据对话给出（例如「城市夜晚」），没有关键词就不要调用这个工具。', { keyword: 'string' }, async function (args, ctx, roche) {
+    var settings = await readChatSettings(roche);
     var sources = createSources();
-    // 关键词由角色给（工具参数 keyword），缺省用最近在听的歌手兜底
-    var seed = String(args.keyword || '').trim()
-      || (/^(华语流行)$/.test(String(args.keyword || '')) ? '' : '')
-      || (function () {
-        var recent = (runtime.recentNames || [])[0];
-        return recent || '华语流行';
-      })();
+    // 不再拿「最近在听的歌手」兜底：没关键词就不建歌单，避免角色自作主张挑歌
+    var seed = String(args.keyword || '').trim();
+    if (!seed) return { ok: false, reason: '没给搜索关键词，这次不挑歌' };
 
     var found = await sources.search(seed, settings, { limit: 8 });
     if (!found.tracks.length) return { ok: false, reason: '没找到可推荐的歌' };
