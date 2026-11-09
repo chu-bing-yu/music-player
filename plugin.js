@@ -1,4 +1,4 @@
-/* music-player v0.48.0 | built 2026-11-08T13:39:15.255Z */
+/* music-player v0.49.0 | built 2026-11-09T09:06:36.880Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -5198,6 +5198,80 @@
   padding: 0 24px 40px;
 }
 
+/* ========== 统一刊头：左对齐 + 竖线锚点 ========== */
+.mp-mast {
+  flex: 0 0 auto;
+  padding: calc(16px + env(safe-area-inset-top)) 28px 0;
+}
+
+.mp-mast__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mp-mast__mark {
+  flex: 0 0 auto;
+  width: 2px;
+  height: 26px;
+  border-radius: 1px;
+  background: var(--mp-accent);
+}
+
+.mp-mast__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mp-mast__date {
+  font-family: var(--mp-sans-cn);
+  font-size: 10.5px;
+  letter-spacing: 3px;
+  color: var(--mp-ink-2);
+  line-height: 1.2;
+}
+
+.mp-mast__title {
+  margin-top: 2px;
+  font-family: var(--mp-serif);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: 3px;
+  color: var(--mp-ink);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-mast__title--hand {
+  font-family: var(--mp-hand-font);
+  letter-spacing: 1px;
+}
+
+.mp-mast__acts {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.mp-mast__rule {
+  margin-top: 12px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.06));
+}
+
+.mp-root[data-theme="light"] .mp-mast__rule {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.04));
+}
+
+.mp-mast__hint {
+  padding: 8px 0 0;
+  font-family: var(--mp-sans-cn);
+  font-size: 11.5px;
+  color: var(--mp-ink-2);
+}
+
 /* 报头：居中日期行 + 居中大标题 + 双线收边 */
 .mp-mag__top {
   position: relative;
@@ -5422,9 +5496,10 @@
 /* 我的歌单：小封面横滑卡 */
 .mp-mag__shelf {
   display: flex;
+  align-items: flex-start;
   gap: 12px;
   overflow-x: auto;
-  padding: 2px 0 8px;
+  padding: 2px 0 34px;
   scrollbar-width: none;
 }
 
@@ -5434,16 +5509,24 @@
 
 .mp-mag__shelfcard {
   flex: 0 0 auto;
-  width: 96px;
+  width: 88px;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: left;
 }
 
+.mp-mag__shelfcard:nth-child(3n + 2) {
+  margin-top: 16px;
+}
+
+.mp-mag__shelfcard:nth-child(3n + 3) {
+  margin-top: 8px;
+}
+
 .mp-mag__shelfcover {
-  width: 96px;
-  height: 96px;
+  width: 88px;
+  height: 88px;
   border-radius: 12px;
   overflow: hidden;
   background: var(--mp-bg-2);
@@ -5632,23 +5715,40 @@
   color: var(--mp-ink-2);
 }
 
-/* 两列网格 */
-.mp-plgrid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px 14px;
+/* 横滑竖条：卡片同尺寸，margin-top 交替做出错落 */
+.mp-plrail {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 2px 0 34px;
+  scrollbar-width: none;
+}
+
+.mp-plrail::-webkit-scrollbar {
+  display: none;
 }
 
 .mp-plcard {
+  flex: 0 0 auto;
+  width: 88px;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: left;
 }
 
+.mp-plcard:nth-child(3n + 2) {
+  margin-top: 16px;
+}
+
+.mp-plcard:nth-child(3n + 3) {
+  margin-top: 8px;
+}
+
 .mp-plcard__cover {
-  width: 100%;
-  aspect-ratio: 1 / 1;
+  width: 88px;
+  height: 88px;
   border-radius: 12px;
   overflow: hidden;
   background: var(--mp-bg-2);
@@ -6079,6 +6179,30 @@
     return route;
   }
 
+  // src/ui/masthead.js
+  function masthead(opts) {
+    var o = opts || {};
+    var text = h("div", { class: "mp-mast__text" }, [
+      o.date ? h("div", { class: "mp-mast__date", text: o.date }) : null,
+      h("div", { class: "mp-mast__title" + (o.hand ? " mp-mast__title--hand" : ""), text: o.title || "" })
+    ].filter(Boolean));
+    var bar = h("div", { class: "mp-mast__bar" }, [
+      h("span", { class: "mp-mast__mark" }),
+      text,
+      o.actions ? h("div", { class: "mp-mast__acts" }, o.actions) : null
+    ].filter(Boolean));
+    if (o.onTitle) {
+      text.addEventListener("click", o.onTitle);
+    }
+    var wrap = h("div", { class: "mp-mast" }, [bar, h("div", { class: "mp-mast__rule" })]);
+    if (o.hint) wrap.appendChild(h("div", { class: "mp-mast__hint", text: o.hint }));
+    return wrap;
+  }
+  function todayText() {
+    var d = /* @__PURE__ */ new Date();
+    return String(d.getMonth() + 1).padStart(2, "0") + " / " + String(d.getDate()).padStart(2, "0");
+  }
+
   // src/core/format.js
   function fmtTime(ms) {
     var total = Math.max(0, Math.round((Number(ms) || 0) / 1e3));
@@ -6116,25 +6240,21 @@
     var body = h("div", { class: "mp-mag" });
     var refreshing = false;
     var autoFetched = false;
-    var greet = h("div", { class: "mp-mag__greet", text: greeting() });
-    greet.addEventListener("click", function() {
-      ctx.exitOrMinimize();
-    });
-    var header = h("div", { class: "mp-mag__top" }, [
-      h("div", { class: "mp-mag__mast" }, [
-        h("div", { class: "mp-mag__date", text: today() + "  星期" + "日一二三四五六"[(/* @__PURE__ */ new Date()).getDay()] }),
-        greet,
-        h("div", { class: "mp-mag__doublerule" })
-      ]),
-      h("div", { class: "mp-mag__acts" }, [
+    var header = masthead({
+      date: today(),
+      title: greeting(),
+      onTitle: function() {
+        ctx.exitOrMinimize();
+      },
+      actions: [
         iconBtn("search", { label: "搜索", onClick: function() {
           ctx.goto("search");
         } }),
         iconBtn("gear", { label: "推荐偏好", onClick: function() {
           if (ctx.openPrefsPanel) ctx.openPrefsPanel();
         } })
-      ])
-    ]);
+      ]
+    });
     function headRow(text, action) {
       var row = h("div", { class: "mp-mag__head" }, [
         h("span", { class: "mp-mag__headtext", text }),
@@ -6641,10 +6761,6 @@
       }
       ctx.goto("playlist", { playlistId: p.id });
     }
-    var titleEl = h("div", { class: "mp-plpage__title", text: "Playlists" });
-    titleEl.addEventListener("click", function() {
-      ctx.exitOrMinimize();
-    });
     var addBtn = iconBtn("plus", {
       label: "新建歌单",
       onClick: function() {
@@ -6657,17 +6773,14 @@
         });
       }
     });
-    addBtn.classList.add("mp-plpage__add");
-    var d = /* @__PURE__ */ new Date();
-    var dateText = String(d.getMonth() + 1).padStart(2, "0") + " / " + String(d.getDate()).padStart(2, "0") + "  星期" + "日一二三四五六"[d.getDay()];
-    var header = h("div", { class: "mp-plpage__top" }, [
-      h("div", { class: "mp-plpage__mast" }, [
-        h("div", { class: "mp-plpage__date", text: dateText }),
-        titleEl,
-        h("div", { class: "mp-plpage__rule" })
-      ]),
-      addBtn
-    ]);
+    var header = masthead({
+      date: todayText(),
+      title: "歌单",
+      onTitle: function() {
+        ctx.exitOrMinimize();
+      },
+      actions: [addBtn]
+    });
     function featureRow(p) {
       var first = p.tracks[0];
       var cover = coverNode(first ? ctx.coverOf(first) : "", "mp-plfeat__cover");
@@ -6698,8 +6811,8 @@
       });
       return card;
     }
-    function grid(list) {
-      var box = h("div", { class: "mp-plgrid" });
+    function rail(list) {
+      var box = h("div", { class: "mp-plrail" });
       list.forEach(function(p) {
         box.appendChild(plCard(p));
       });
@@ -6722,11 +6835,11 @@
       });
       if (mine.length) {
         listBox.appendChild(h("div", { class: "mp-plpage__head", text: "我的歌单" }));
-        listBox.appendChild(grid(mine));
+        listBox.appendChild(rail(mine));
       }
       if (theirs.length) {
         listBox.appendChild(h("div", { class: "mp-plpage__head", text: "TA 的歌单" }));
-        listBox.appendChild(grid(theirs));
+        listBox.appendChild(rail(theirs));
       }
       if (!mine.length && !theirs.length) {
         listBox.appendChild(emptyHint(
@@ -11736,7 +11849,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.48.0" });
+    app = await createApp({ container, roche, version: "0.49.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -11752,7 +11865,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.48.0",
+    version: "0.49.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
