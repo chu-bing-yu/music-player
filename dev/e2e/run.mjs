@@ -635,6 +635,33 @@ try {
   await sleep(5000);
   check('两种通道的提示词分开存', await evaluate('(() => { var p = window.__registeredPlugin; return true; })()'));
 
+  // v0.62.0：AI 看到的歌名必须等于当前在播（以前只吃缓存，切歌后是上一首）
+  const nowPlaying = await evaluate('(document.querySelector(".mp-player__name") || {}).textContent || ""');
+  const promptHasCurrent = await evaluate(`(function () {
+    var now = ${JSON.stringify('')};
+    var name = document.querySelector('.mp-player__name');
+    now = name ? String(name.textContent || '').trim() : '';
+    if (!now) return false;
+    var text = String(window.__registeredPlugin.chat.contextProvider({ conversationId: 'conv-cmd', contact: { id: 'ta-1' } }) || '');
+    return text.indexOf(now) !== -1;
+  })()`);
+  check('提示词里的歌名 = 当前在播', promptHasCurrent, nowPlaying);
+
+  // v0.62.0：核心回归 —— 最新一条只是普通回复时，上一条里的评论指令仍要执行
+  await evaluate('localStorage.removeItem("mp:mirror:mp:comments")');
+  await evaluate(`window.__mockMessages = [
+    { id: "cmd-c1", role: "assistant", content: "好听\\n<!-- mp:comment:副歌一进来就被击中了 -->" },
+    { id: "cmd-c2", role: "assistant", content: "嗯，我也这么觉得。" }
+  ]`);
+  const commentSaved = await waitFor(`(function () {
+    try {
+      var raw = localStorage.getItem('mp:mirror:mp:comments') || '';
+      return raw.indexOf('副歌一进来就被击中了') !== -1;
+    } catch (e) { return false; }
+  })()`, 9000);
+  check('最新一条无指令时，上一条的评论仍被执行', commentSaved);
+  await evaluate('localStorage.removeItem("mp:mirror:mp:comments")');
+
   // v0.55.0：角色在聊天侧写的歌单只落在镜像里，进歌单页就要能看到（不用重开 App）
   await evaluate(`(function () {
     var list = [{

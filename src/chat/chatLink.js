@@ -9,7 +9,8 @@
  */
 
 import { MESSAGE_TYPE } from './card.js';
-import { getBridge } from './bridge.js';
+import { getBridge, getSnapshot } from './bridge.js';
+import { resolveLiveStatus } from '../core/liveStatus.js';
 import { isOn } from './listenState.js';
 import { noteConversation } from './commandBridge.js';
 import { addTrackForChar, saveComment, createCharPlaylist, RECOMMEND_PLAYLIST_NAME } from '../services/taStore.js';
@@ -39,6 +40,16 @@ export function setChatRuntime(patch) {
   Object.keys(patch).forEach(function (key) {
     runtime[key] = patch[key];
   });
+}
+
+/** 取一次当前播放状态（给 contextProvider 与工具解释用） */
+export function currentLiveStatus() {
+  var bridge = getBridge();
+  var live = null;
+  try {
+    if (bridge && typeof bridge.status === 'function') live = bridge.status();
+  } catch (err) { live = null; }
+  return resolveLiveStatus({ bridgeStatus: live, snapshot: getSnapshot(), runtime: runtime });
 }
 
 function nativePlugin() {
@@ -203,15 +214,20 @@ async function pushCard(ctx, roche, track, status) {
 
 /* ---------------- contextProvider ---------------- */
 
-/** 把设置里编辑过的提示词模板渲染成最终文本（占位符替换） */
-export function renderChatPrompt(templateOverride) {
+/**
+ * 把设置里编辑过的提示词模板渲染成最终文本（占位符替换）。
+ * @param {string} [templateOverride] 自定义模板
+ * @param {{title:string, artist:string, isPlaying:boolean, queueSize:number}} [status] 实时状态
+ */
+export function renderChatPrompt(templateOverride, status) {
   var template = String(templateOverride || runtime.chatPrompt || DEFAULT_CHAT_PROMPT);
-  var stateText = runtime.isPlaying ? '正在播放' : (runtime.title ? '已暂停' : '');
+  var st = status || currentLiveStatus();
+  var stateText = st.isPlaying ? '正在播放' : (st.title ? '已暂停' : '');
   return template
-    .replace(/\{\{title\}\}/g, runtime.title || '（没在放歌）')
-    .replace(/\{\{artist\}\}/g, runtime.artist || '')
+    .replace(/\{\{title\}\}/g, st.title || '（没在放歌）')
+    .replace(/\{\{artist\}\}/g, st.artist || '')
     .replace(/\{\{state\}\}/g, stateText)
-    .replace(/\{\{queue\}\}/g, String(runtime.queueSize || 0))
+    .replace(/\{\{queue\}\}/g, String(st.queueSize || 0))
     .trim();
 }
 
@@ -233,7 +249,8 @@ export function chatContextProvider(ctx) {
   else if (mode === 'tool') template = runtime.chatPromptTool || TOOL_CHAT_PROMPT;
   else template = runtime.chatPromptHybrid || HYBRID_CHAT_PROMPT;
 
-  return renderChatPrompt(template) || null;
+  // 用实时状态渲染：后台/锁屏切歌后，AI 也能立刻看到正确的那一首
+  return renderChatPrompt(template, currentLiveStatus()) || null;
 }
 
 /* ---------------- tools ---------------- */

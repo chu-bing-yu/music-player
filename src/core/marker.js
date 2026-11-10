@@ -69,6 +69,35 @@ export function parseCommands(text) {
 }
 
 /** 从正文里去掉标记，避免把指令原样显示给用户 */
+/**
+ * 模型「照抄提示词里的示例」时会写出这些词，必须识别出来拒掉：
+ * 例如 <!-- mp:recommend:歌单名|搜索关键词1 搜索关键词2 -->、<!-- mp:comment:一句话评价 -->
+ */
+var PLACEHOLDER_WORDS = ['歌单名', '搜索关键词', '关键词1', '关键词2', '一句话评价', '歌名', '评价内容'];
+
+export function isPlaceholderArg(text) {
+  var s = String(text == null ? '' : text).trim();
+  if (!s) return false;
+  return PLACEHOLDER_WORDS.some(function (w) { return s.indexOf(w) !== -1; });
+}
+
+/**
+ * 解析挑歌参数：`歌单名|关键词1 关键词2`，也容忍半角/全角竖线。
+ * 没写竖线时整段当关键词（歌单名由调用方兜底）。
+ * @returns {{name:string, keyword:string, placeholder:boolean}}
+ */
+export function parseRecommendArg(raw) {
+  var text = String(raw == null ? '' : raw).replace(/｜/g, '|').trim();
+  var name = '';
+  var keyword = text;
+  var idx = text.indexOf('|');
+  if (idx !== -1) {
+    name = text.slice(0, idx).trim();
+    keyword = text.slice(idx + 1).trim();
+  }
+  return { name: name, keyword: keyword, placeholder: isPlaceholderArg(text) };
+}
+
 export function stripCommands(text) {
   return String(text || '')
     .replace(COMMENT_PATTERN, '')

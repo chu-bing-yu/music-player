@@ -126,7 +126,7 @@ test('提示词把「关键词必填 / 单独一行 / 不加消息前缀」写�
   const hybrid = defaultSettings().chatPromptHybrid;
 
   [mark, hybrid].forEach((text) => {
-    assert.ok(text.indexOf('mp:recommend:歌单名|') !== -1, '要给出带竖线的完整格式');
+    assert.ok(/mp:recommend:[^|\s>]+\|/.test(text), '要给出带真实歌单名 + 竖线的完整格式');
     assert.ok(text.indexOf('关键词') !== -1, '要强调关键词');
     assert.ok(text.indexOf('单独占一行') !== -1, '要强调单独一行');
     assert.ok(text.indexOf('[消息]') !== -1, '要明确不要加消息前缀');

@@ -109,6 +109,20 @@ export async function createApp(opts) {
 
   /* ---------------- 主聊天桥 ---------------- */
 
+  /**
+   * 200ms 尾触发的合并同步：原生引擎 500ms 心跳 + 切歌事件会连续触发，
+   * 全量 syncChatRuntime 里还要 setCommandMode / saveSnapshot，没必要每次都跑。
+   */
+  var chatSyncTimer = null;
+
+  function syncChatRuntimeSoon() {
+    if (chatSyncTimer) return;
+    chatSyncTimer = setTimeout(function () {
+      chatSyncTimer = null;
+      syncChatRuntime();
+    }, 200);
+  }
+
   function syncChatRuntime() {
     setChatRuntime({
       chatListen: !!state.settings.chatListen,
@@ -151,9 +165,9 @@ export async function createApp(opts) {
       ready: function () { return !!shell; },
       status: function () {
         return {
-          playing: state.player.track
-            ? { name: state.player.track.name, artist: state.player.track.artist }
-            : null,
+          // 返回整首歌对象（带 id/source）：只给 name+artist 会让 trackKey 为空，
+          // 角色写乐评时被 saveComment 判成「没有正在播放的歌」——评论就是这么丢的。
+          playing: state.player.track || null,
           isPlaying: state.player.status === 'playing',
           queueSize: state.queue ? state.queue.tracks.length : 0
         };
@@ -1525,6 +1539,8 @@ export async function createApp(opts) {
       onChange: function (snapshot) {
         state.player = snapshot;
         if (shell) shell.renderPlayer();
+        // 锁屏/通知栏/别的插件切歌时也要让 AI 立刻看到新歌，别等下一次 refresh
+        syncChatRuntimeSoon();
       },
       onTrackChange: function (track) {
         // 列表里没有就先补进去（角色在 App 没开时点的歌走这条路）
@@ -1542,6 +1558,7 @@ export async function createApp(opts) {
         saveQueue();
         loadLyrics(track);
         if (shell) shell.renderPlayer();
+        syncChatRuntimeSoon();
       }
     });
   }
@@ -1709,6 +1726,8 @@ export async function createApp(opts) {
       queueSyncTimer = null;
       if (rebuildTimer) clearInterval(rebuildTimer);
       rebuildTimer = null;
+      if (chatSyncTimer) clearTimeout(chatSyncTimer);
+      chatSyncTimer = null;
       // 只解绑 UI 回调，不销毁播放：切到别的插件时音乐要继续
       if (player) player.setHandlers({});
       if (engine) engine.dispose();

@@ -1,4 +1,4 @@
-/* music-player v0.61.0 | built 2026-11-09T15:26:37.163Z */
+/* music-player v0.62.0 | built 2026-11-10T13:39:22.438Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -429,39 +429,35 @@
   var DEFAULT_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
     "",
-    "你能操作音乐。需要操作时，在回复最后单独一行写一条 HTML 注释指令（聊天里不会显示）：",
-    "点歌 / 加歌：<!-- mp:play:歌名 -->",
-    "上一首：<!-- mp:prev -->　下一首：<!-- mp:next -->",
-    "暂停：<!-- mp:pause -->　继续：<!-- mp:resume -->",
+    "你能操作音乐。需要操作时，在回复最后单独一行写一条 HTML 注释指令（聊天里不会显示）。示例：",
+    "点歌：<!-- mp:play:晴天 -->",
+    "上一首 <!-- mp:prev -->　下一首 <!-- mp:next -->　暂停 <!-- mp:pause -->　继续 <!-- mp:resume -->",
     "把当前这首收进你的歌单：<!-- mp:add -->",
-    "给当前这首写一句评价：<!-- mp:comment:一句话评价 -->",
-    "新建歌单：<!-- mp:new:歌单名 -->",
-    "给我挑几首：<!-- mp:recommend:歌单名|搜索关键词1 关键词2 -->",
+    "给当前这首写评价：<!-- mp:comment:副歌一进来就被击中了 -->",
+    "新建歌单：<!-- mp:new:雨夜书单 -->",
+    "给用户挑几首：<!-- mp:recommend:雨夜书单|城市雨天 华语慢歌 -->",
     "",
     "规则：",
-    "1. 【重要】不要调用任何工具（music_play / music_next 等），只写上面这种注释指令；",
-    "2. 指令必须单独占一行，行首不要加「[消息]」、角色名、冒号这类格式，也不要包在括号或引号里；",
-    "3. 挑歌时「竖线 + 关键词」缺一不可：只写 <!-- mp:recommend --> 或 <!-- mp:recommend:歌单名 --> 等于没执行，插件不会建歌单；",
-    "4. 关键词是搜索用的词（流派 / 场景 / 情绪，例如「古风 戏腔」「城市雨天 华语慢歌」），不要只写歌名；",
-    "5. 评价必须写成一行、40 字以内，中间不要换行；",
-    "6. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；",
-    "7. 用户让你放歌时必须写 <!-- mp:play:歌名 -->；切歌时可以顺带说一句你的感受。"
+    "1. 把示例里的歌名 / 歌单名 / 关键词 / 评价换成本次真实内容，照抄示例文字等于没执行；",
+    "2. 指令单独占一行，行首不要加「[消息]」、角色名、冒号，也不要包在括号或引号里；不要调用任何工具；",
+    "3. 挑歌必须写成「歌单名|关键词」：竖线前后都要有真实内容，少一个都不会建歌单；关键词写流派 / 场景 / 情绪（如「古风 戏腔」），不要只写歌名；",
+    "4. 评价一行、40 字以内、不要换行；你既然评论了这首歌，就必须写这条评价指令，否则 TA 页看不到你的评价；",
+    "5. 没有写指令就等于没有操作，不要只说「已经加好了」「已经在播了」；用户让你放歌时必须写点歌指令。"
   ].join("\n");
   var HYBRID_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
     "",
     "操作规则：",
     "1. 用户想听歌 / 换歌 → 必须调用工具 music_play（这样才会发「一起听」卡片）；",
-    "2. 其他操作 → 在回复最后单独一行写 HTML 注释指令（聊天里不会显示）：",
-    "   下一首 <!-- mp:next -->　上一首 <!-- mp:prev -->",
-    "   暂停 <!-- mp:pause -->　继续 <!-- mp:resume -->",
+    "2. 其他操作 → 在回复最后单独一行写 HTML 注释指令（聊天里不会显示）。示例：",
+    "   下一首 <!-- mp:next -->　上一首 <!-- mp:prev -->　暂停 <!-- mp:pause -->　继续 <!-- mp:resume -->",
     "   把当前这首收进你的歌单 <!-- mp:add -->",
-    "   给当前这首写评价 <!-- mp:comment:一句话评价 -->",
-    "   新建歌单 <!-- mp:new:歌单名 -->",
-    "   给用户挑几首 <!-- mp:recommend:歌单名|搜索关键词1 关键词2 -->",
-    "3. 指令必须单独占一行，行首不要加「[消息]」、角色名、冒号这类格式；",
-    "4. 挑歌的「竖线 + 关键词」缺一不可：<!-- mp:recommend --> 或少关键词都等于没执行，不会建歌单；关键词写流派/场景/情绪（如「古风 戏腔」），不要只写歌名；",
-    "5. 评价必须一行、40 字以内，不要换行；",
+    "   给当前这首写评价 <!-- mp:comment:副歌一进来就被击中了 -->",
+    "   新建歌单 <!-- mp:new:雨夜书单 -->",
+    "   给用户挑几首 <!-- mp:recommend:雨夜书单|城市雨天 华语慢歌 -->",
+    "3. 把示例里的歌单名 / 关键词 / 评价换成本次真实内容，照抄示例文字等于没执行；指令单独占一行，行首不要加「[消息]」、角色名、冒号；",
+    "4. 挑歌必须写成「歌单名|关键词」，竖线前后都要有真实内容，少一个都不会建歌单；关键词写流派 / 场景 / 情绪（如「古风 戏腔」），不要只写歌名；",
+    "5. 评价一行、40 字以内、不要换行；你既然评论了这首歌，就必须写这条评价指令，否则 TA 页看不到；",
     "6. 没有写指令就等于没有操作，不要只说「已经加好了」；",
     "7. 切歌时顺带自然地说一句你对这首歌的感受。"
   ].join("\n");
@@ -3156,7 +3152,7 @@
   async function saveComment(roche, characterId, track, text) {
     var clean = cleanComment(text);
     if (!clean) return { ok: false, reason: "短评为空" };
-    var key = trackKey(track);
+    var key = trackKey(track) || (track && track.name ? "name|" + track.name + "|" + (track.artist || "") : "");
     if (!key) return { ok: false, reason: "没有正在播放的歌" };
     var map2 = await loadComments(roche);
     var entry = map2[key] && typeof map2[key] === "object" ? map2[key] : {};
@@ -11020,6 +11016,33 @@
     }, 30);
   }
 
+  // src/core/liveStatus.js
+  function resolveLiveStatus(input) {
+    var opts = input || {};
+    var live = opts.bridgeStatus || null;
+    var snap = opts.snapshot || null;
+    var rt = opts.runtime || {};
+    var track = live && live.playing || snap && snap.track || null;
+    var title = track && track.name ? String(track.name) : "";
+    var artist = track && track.artist ? String(track.artist) : "";
+    var isPlaying;
+    if (live && typeof live.isPlaying === "boolean") isPlaying = live.isPlaying;
+    else if (snap && typeof snap.isPlaying === "boolean") isPlaying = snap.isPlaying;
+    else isPlaying = !!rt.isPlaying;
+    var queueSize;
+    if (live && typeof live.queueSize === "number") queueSize = live.queueSize;
+    else if (snap && snap.queue && Array.isArray(snap.queue.tracks)) queueSize = snap.queue.tracks.length;
+    else if (typeof rt.queueSize === "number") queueSize = rt.queueSize;
+    else queueSize = 0;
+    if (!title && rt.title) {
+      title = String(rt.title);
+      artist = String(rt.artist || "");
+      if (typeof rt.isPlaying === "boolean") isPlaying = rt.isPlaying;
+      if (typeof rt.queueSize === "number") queueSize = rt.queueSize;
+    }
+    return { title, artist, isPlaying: !!isPlaying, queueSize };
+  }
+
   // src/core/marker.js
   var MARK_TYPES = ["play", "next", "prev", "pause", "resume", "status", "add", "comment", "new", "recommend", "fav"];
   var PATTERN = /\[\[\s*mp\s*:\s*([a-zA-Z]+)\s*(?::\s*([^\]\n]*))?\]\]/g;
@@ -11058,8 +11081,70 @@
     if (out.length < 6) collect(PATTERN);
     return out;
   }
+  var PLACEHOLDER_WORDS = ["歌单名", "搜索关键词", "关键词1", "关键词2", "一句话评价", "歌名", "评价内容"];
+  function isPlaceholderArg(text) {
+    var s = String(text == null ? "" : text).trim();
+    if (!s) return false;
+    return PLACEHOLDER_WORDS.some(function(w) {
+      return s.indexOf(w) !== -1;
+    });
+  }
+  function parseRecommendArg(raw) {
+    var text = String(raw == null ? "" : raw).replace(/｜/g, "|").trim();
+    var name = "";
+    var keyword = text;
+    var idx = text.indexOf("|");
+    if (idx !== -1) {
+      name = text.slice(0, idx).trim();
+      keyword = text.slice(idx + 1).trim();
+    }
+    return { name, keyword, placeholder: isPlaceholderArg(text) };
+  }
   function dedupeKey(conversationId, messageId, cmd) {
     return [conversationId || "", messageId || "", cmd.raw || cmd.type].join("|");
+  }
+
+  // src/core/pendingCommands.js
+  function messageTextOf(msg) {
+    if (!msg) return "";
+    return String(msg.content || msg.text || msg.body || "");
+  }
+  function messageRoleOf(msg) {
+    if (!msg) return "";
+    return String(msg.role || msg.senderType || (msg.isMe ? "user" : "assistant"));
+  }
+  function messageIdOf(msg) {
+    if (!msg) return "";
+    return String(msg.id || msg.messageId || msg.createdAt || "");
+  }
+  function pickPendingCommands(messages, opts) {
+    var o = opts || {};
+    var list = Array.isArray(messages) ? messages : [];
+    var mode = o.mode || "hybrid";
+    var lastId = String(o.lastId || "");
+    var done = typeof o.done === "function" ? o.done : function() {
+      return false;
+    };
+    for (var i = list.length - 1; i >= 0; i--) {
+      var msg = list[i];
+      if (messageRoleOf(msg) !== "assistant") continue;
+      var id = messageIdOf(msg);
+      if (!id) continue;
+      if (lastId && id === lastId) continue;
+      var cmds = parseCommands(messageTextOf(msg));
+      if (mode === "hybrid") {
+        cmds = cmds.filter(function(c) {
+          return c.type !== "play";
+        });
+      }
+      if (!cmds.length) continue;
+      var pending = cmds.filter(function(cmd) {
+        return !done(cmd, id);
+      });
+      if (!pending.length) continue;
+      return { id, cmds: pending };
+    }
+    return null;
   }
 
   // src/chat/commandBridge.js
@@ -11074,6 +11159,10 @@
     mode: "mark",
     // mark | tool
     degraded: false,
+    // 读消息连续失败次数：到 5 次才降级，读到一次就清零
+    readFailures: 0,
+    // 执行失败的重试计数（同一个 key 最多重试 2 次）
+    retries: /* @__PURE__ */ Object.create(null),
     timer: null,
     executed: [],
     lastMessageId: ""
@@ -11128,6 +11217,8 @@
   function setCommandMode(mode) {
     runtime.mode = mode === "mark" ? "mark" : mode === "tool" ? "tool" : "hybrid";
     runtime.degraded = false;
+    runtime.readFailures = 0;
+    runtime.retries = /* @__PURE__ */ Object.create(null);
   }
   function commandStatus() {
     return {
@@ -11284,14 +11375,10 @@
   }
   async function doRecommend(roche, settings, arg) {
     var sources = createSources();
-    var raw = String(arg || "").trim();
-    var name = "";
-    var keyword = raw;
-    if (raw.indexOf("|") !== -1) {
-      var parts = raw.split("|");
-      name = parts[0].trim();
-      keyword = parts.slice(1).join("|").trim();
-    }
+    var parsed = parseRecommendArg(arg);
+    var name = parsed.name;
+    var keyword = parsed.keyword;
+    if (parsed.placeholder) return { ok: false, reason: "照抄了示例文字，这次不建歌单" };
     if (!keyword) return { ok: false, reason: "没给搜索关键词" };
     var seeds = [keyword];
     var want = Math.max(6, Math.min(50, Number(settings && settings.recCount) || 20));
@@ -11361,8 +11448,12 @@
           return await doControl("resume");
         case "add":
           return await doAdd(roche);
-        case "comment":
-          return await doComment(cmd.arg, roche);
+        case "comment": {
+          var words = String(cmd.arg || "").trim();
+          if (!words) return { ok: false, reason: "没有评价内容" };
+          if (isPlaceholderArg(words)) return { ok: false, reason: "照抄了示例里的评价，这次不写乐评" };
+          return await doComment(words.slice(0, 40), roche);
+        }
         case "recommend":
           return await doRecommend(roche, settings, cmd.arg);
         case "new": {
@@ -11383,14 +11474,6 @@
     if (raw && Array.isArray(raw.messages)) return raw.messages;
     if (raw && Array.isArray(raw.items)) return raw.items;
     return [];
-  }
-  function messageText(msg) {
-    if (!msg) return "";
-    return String(msg.content || msg.text || msg.body || "");
-  }
-  function messageRole(msg) {
-    if (!msg) return "";
-    return String(msg.role || msg.senderType || (msg.isMe ? "user" : "assistant"));
   }
   var CONTENT_TTL = 60 * 1e3;
   function alreadyDone(key) {
@@ -11414,6 +11497,20 @@
     } catch (err) {
     }
   }
+  function noteReadFailure() {
+    runtime.readFailures = (runtime.readFailures || 0) + 1;
+    if (runtime.readFailures >= 5) runtime.degraded = true;
+  }
+  function unmarkDone(key, contentKey) {
+    var retryKey = "r|" + key;
+    var tried = runtime.retries[retryKey] || 0;
+    if (tried >= 2) return;
+    runtime.retries[retryKey] = tried + 1;
+    runtime.executed = runtime.executed.filter(function(item) {
+      if (typeof item === "string") return item !== key && item !== contentKey;
+      return !(item && (item.k === key || item.k === contentKey));
+    });
+  }
   async function pollOnce() {
     if (runtime.mode === "tool") return;
     if (runtime.degraded) return;
@@ -11421,42 +11518,42 @@
     if (!chatListenOn()) return;
     var roche = resolveRoche();
     if (!roche || !roche.memory || typeof roche.memory.getShortTerm !== "function") {
-      runtime.degraded = true;
+      noteReadFailure();
       return;
     }
     var raw = null;
     try {
       raw = await roche.memory.getShortTerm({ conversationId: runtime.conversationId, limit: 8 });
     } catch (err) {
-      runtime.degraded = true;
+      noteReadFailure();
       return;
     }
+    runtime.readFailures = 0;
+    runtime.degraded = false;
     var messages = pickMessages(raw);
     if (!messages.length) return;
-    for (var i = messages.length - 1; i >= 0; i--) {
-      var msg = messages[i];
-      if (messageRole(msg) !== "assistant") continue;
-      var id = String(msg.id || msg.messageId || msg.createdAt || "");
-      if (!id || id === runtime.lastMessageId) return;
-      runtime.lastMessageId = id;
-      var cmds = parseCommands(messageText(msg));
-      if (runtime.mode === "hybrid") {
-        cmds = cmds.filter(function(c) {
-          return c.type !== "play";
-        });
+    var convo = runtime.conversationId;
+    var picked = pickPendingCommands(messages, {
+      mode: runtime.mode,
+      lastId: runtime.lastMessageId,
+      done: function(cmd2, id) {
+        return alreadyDone(dedupeKey(convo, id, cmd2)) || alreadyDone("c|" + cmd2.type + "|" + (cmd2.arg || ""));
       }
-      if (!cmds.length) return;
-      for (var j = 0; j < cmds.length; j++) {
-        var key = dedupeKey(runtime.conversationId, id, cmds[j]);
-        var contentKey = "c|" + cmds[j].type + "|" + (cmds[j].arg || "");
-        if (alreadyDone(key) || alreadyDone(contentKey)) continue;
-        markDone(key, cmds[j]);
-        try {
-          await runCommand(cmds[j], roche);
-        } catch (err) {
-        }
+    });
+    if (!picked) return;
+    runtime.lastMessageId = picked.id;
+    for (var j = 0; j < picked.cmds.length; j++) {
+      var cmd = picked.cmds[j];
+      var key = dedupeKey(convo, picked.id, cmd);
+      var contentKey = "c|" + cmd.type + "|" + (cmd.arg || "");
+      markDone(key, cmd);
+      var res = null;
+      try {
+        res = await runCommand(cmd, roche);
+      } catch (err) {
+        res = { ok: false, reason: String(err && err.message || err) };
       }
-      return;
+      if (res && res.ok === false) unmarkDone(key, contentKey);
     }
   }
   function startCommandBridge() {
@@ -11492,6 +11589,16 @@
     Object.keys(patch).forEach(function(key) {
       runtime2[key] = patch[key];
     });
+  }
+  function currentLiveStatus() {
+    var bridge = getBridge();
+    var live = null;
+    try {
+      if (bridge && typeof bridge.status === "function") live = bridge.status();
+    } catch (err) {
+      live = null;
+    }
+    return resolveLiveStatus({ bridgeStatus: live, snapshot: getSnapshot(), runtime: runtime2 });
   }
   function nativePlugin2() {
     if (typeof window === "undefined") return null;
@@ -11608,10 +11715,11 @@
     } catch (err) {
     }
   }
-  function renderChatPrompt(templateOverride) {
+  function renderChatPrompt(templateOverride, status) {
     var template = String(templateOverride || runtime2.chatPrompt || DEFAULT_CHAT_PROMPT);
-    var stateText = runtime2.isPlaying ? "正在播放" : runtime2.title ? "已暂停" : "";
-    return template.replace(/\{\{title\}\}/g, runtime2.title || "（没在放歌）").replace(/\{\{artist\}\}/g, runtime2.artist || "").replace(/\{\{state\}\}/g, stateText).replace(/\{\{queue\}\}/g, String(runtime2.queueSize || 0)).trim();
+    var st = status || currentLiveStatus();
+    var stateText = st.isPlaying ? "正在播放" : st.title ? "已暂停" : "";
+    return template.replace(/\{\{title\}\}/g, st.title || "（没在放歌）").replace(/\{\{artist\}\}/g, st.artist || "").replace(/\{\{state\}\}/g, stateText).replace(/\{\{queue\}\}/g, String(st.queueSize || 0)).trim();
   }
   function conversationIdOf(ctx) {
     if (!ctx) return "";
@@ -11625,7 +11733,7 @@
     if (mode === "mark") template = runtime2.chatPrompt || DEFAULT_CHAT_PROMPT;
     else if (mode === "tool") template = runtime2.chatPromptTool || TOOL_CHAT_PROMPT;
     else template = runtime2.chatPromptHybrid || HYBRID_CHAT_PROMPT;
-    return renderChatPrompt(template) || null;
+    return renderChatPrompt(template, currentLiveStatus()) || null;
   }
   function tool(id, description, parameters, run) {
     return {
@@ -11836,6 +11944,14 @@
       }
       syncChatRuntime();
     }
+    var chatSyncTimer = null;
+    function syncChatRuntimeSoon() {
+      if (chatSyncTimer) return;
+      chatSyncTimer = setTimeout(function() {
+        chatSyncTimer = null;
+        syncChatRuntime();
+      }, 200);
+    }
     function syncChatRuntime() {
       setChatRuntime({
         chatListen: !!state.settings.chatListen,
@@ -11871,7 +11987,9 @@
         },
         status: function() {
           return {
-            playing: state.player.track ? { name: state.player.track.name, artist: state.player.track.artist } : null,
+            // 返回整首歌对象（带 id/source）：只给 name+artist 会让 trackKey 为空，
+            // 角色写乐评时被 saveComment 判成「没有正在播放的歌」——评论就是这么丢的。
+            playing: state.player.track || null,
             isPlaying: state.player.status === "playing",
             queueSize: state.queue ? state.queue.tracks.length : 0
           };
@@ -13151,6 +13269,7 @@
         onChange: function(snapshot2) {
           state.player = snapshot2;
           if (shell) shell.renderPlayer();
+          syncChatRuntimeSoon();
         },
         onTrackChange: function(track2) {
           var inList = state.queue && state.queue.tracks.some(function(t) {
@@ -13166,6 +13285,7 @@
           saveQueue();
           loadLyrics(track2);
           if (shell) shell.renderPlayer();
+          syncChatRuntimeSoon();
         }
       });
     }
@@ -13307,6 +13427,8 @@
         queueSyncTimer = null;
         if (rebuildTimer) clearInterval(rebuildTimer);
         rebuildTimer = null;
+        if (chatSyncTimer) clearTimeout(chatSyncTimer);
+        chatSyncTimer = null;
         if (player) player.setHandlers({});
         if (engine) engine.dispose();
         clearBridge();
@@ -13322,7 +13444,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.61.0" });
+    app = await createApp({ container, roche, version: "0.62.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -13338,7 +13460,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.61.0",
+    version: "0.62.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

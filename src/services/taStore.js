@@ -185,7 +185,11 @@ export async function loadComments(roche) {
 export async function saveComment(roche, characterId, track, text) {
   var clean = cleanComment(text);
   if (!clean) return { ok: false, reason: '短评为空' };
-  var key = trackKey(track);
+  // 有的来源（原生播放器状态）只有歌名没有 id，退化成 name|artist 当 key，
+  // 否则 trackKey 为空 → 直接判「没有正在播放的歌」，乐评就丢了。
+  var key = trackKey(track) || (track && track.name
+    ? 'name|' + track.name + '|' + (track.artist || '')
+    : '');
   if (!key) return { ok: false, reason: '没有正在播放的歌' };
 
   var map = await loadComments(roche);

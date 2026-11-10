@@ -7,7 +7,8 @@
  * 拿不到会话消息（宿主没开放 memory）时自动降级为工具模式，不报错。
  */
 
-import { parseCommands, dedupeKey } from '../core/marker.js';
+import { parseCommands, dedupeKey, parseRecommendArg, isPlaceholderArg } from '../core/marker.js';
+import { pickPendingCommands } from '../core/pendingCommands.js';
 import { getBridge } from './bridge.js';
 import { isOn } from './listenState.js';
 import { addTrackForChar, saveComment, createCharPlaylist, RECOMMEND_PLAYLIST_NAME } from '../services/taStore.js';
@@ -28,6 +29,10 @@ var runtime = {
   roche: null,
   mode: 'mark', // mark | tool
   degraded: false,
+  // 读消息连续失败次数：到 5 次才降级，读到一次就清零
+  readFailures: 0,
+  // 执行失败的重试计数（同一个 key 最多重试 2 次）
+  retries: Object.create(null),
   timer: null,
   executed: [],
   lastMessageId: ''
@@ -100,6 +105,8 @@ export function noteConversation(ctx) {
 export function setCommandMode(mode) {
   runtime.mode = mode === 'mark' ? 'mark' : (mode === 'tool' ? 'tool' : 'hybrid');
   runtime.degraded = false;
+  runtime.readFailures = 0;
+  runtime.retries = Object.create(null);
 }
 
 export function commandStatus() {
@@ -287,16 +294,14 @@ async function doComment(text, roche) {
 
 async function doRecommend(roche, settings, arg) {
   var sources = createSources();
-  var raw = String(arg || '').trim();
 
   // 支持两种写法：`关键词` 或 `歌单名|关键词`
-  var name = '';
-  var keyword = raw;
-  if (raw.indexOf('|') !== -1) {
-    var parts = raw.split('|');
-    name = parts[0].trim();
-    keyword = parts.slice(1).join('|').trim();
-  }
+  var parsed = parseRecommendArg(arg);
+  var name = parsed.name;
+  var keyword = parsed.keyword;
+
+  // 模型照抄示例（歌单名|搜索关键词1 搜索关键词2）时不能拿它去搜，否则建出一堆垃圾
+  if (parsed.placeholder) return { ok: false, reason: '照抄了示例文字，这次不建歌单' };
 
   // 没有关键词就什么都不做：以前这里会随机抽「夜晚 / 通勤」去搜歌，
   // 表现就是「角色没写指令，却凭空多出一个塞满歌的歌单」。
@@ -379,7 +384,13 @@ export async function runCommand(cmd, roche) {
       case 'pause': return await doControl('pause');
       case 'resume': return await doControl('resume');
       case 'add': return await doAdd(roche);
-      case 'comment': return await doComment(cmd.arg, roche);
+      case 'comment': {
+        var words = String(cmd.arg || '').trim();
+        if (!words) return { ok: false, reason: '没有评价内容' };
+        // 照抄示例（一句话评价）就别存了，TA 页会变成一页废话
+        if (isPlaceholderArg(words)) return { ok: false, reason: '照抄了示例里的评价，这次不写乐评' };
+        return await doComment(words.slice(0, 40), roche);
+      }
       case 'recommend': return await doRecommend(roche, settings, cmd.arg);
       case 'new': {
         var made = await createCharPlaylist(roche, runtime.characterId, cmd.arg, []);
@@ -443,6 +454,25 @@ function markDone(key, cmd) {
   } catch (err) { /* 忽略 */ }
 }
 
+/** 读消息失败：连续失败到阈值才降级，避免一次网络抖动把功能永久关掉 */
+function noteReadFailure() {
+  runtime.readFailures = (runtime.readFailures || 0) + 1;
+  if (runtime.readFailures >= 5) runtime.degraded = true;
+}
+
+/** 执行失败时撤销「已执行」标记，下一轮还能再试（但同一个 key 最多重试 2 次，别刷屏） */
+function unmarkDone(key, contentKey) {
+  var retryKey = 'r|' + key;
+  var tried = runtime.retries[retryKey] || 0;
+  if (tried >= 2) return;
+  runtime.retries[retryKey] = tried + 1;
+
+  runtime.executed = runtime.executed.filter(function (item) {
+    if (typeof item === 'string') return item !== key && item !== contentKey;
+    return !(item && (item.k === key || item.k === contentKey));
+  });
+}
+
 async function pollOnce() {
   // 工具通道不轮询；混合通道只执行非点歌指令（点歌交给工具，才有卡片）
   if (runtime.mode === 'tool') return;
@@ -452,7 +482,7 @@ async function pollOnce() {
 
   var roche = resolveRoche();
   if (!roche || !roche.memory || typeof roche.memory.getShortTerm !== 'function') {
-    runtime.degraded = true;
+    noteReadFailure();
     return;
   }
 
@@ -460,39 +490,43 @@ async function pollOnce() {
   try {
     raw = await roche.memory.getShortTerm({ conversationId: runtime.conversationId, limit: 8 });
   } catch (err) {
-    runtime.degraded = true;
+    noteReadFailure();
     return;
   }
+  // 读成功就算恢复，别让一次异常永久停掉轮询
+  runtime.readFailures = 0;
+  runtime.degraded = false;
 
   var messages = pickMessages(raw);
   if (!messages.length) return;
 
-  for (var i = messages.length - 1; i >= 0; i--) {
-    var msg = messages[i];
-    if (messageRole(msg) !== 'assistant') continue;
-
-    var id = String(msg.id || msg.messageId || msg.createdAt || '');
-    if (!id || id === runtime.lastMessageId) return;
-    runtime.lastMessageId = id;
-
-    var cmds = parseCommands(messageText(msg));
-    if (runtime.mode === 'hybrid') {
-      // 混合模式：点歌由工具负责，这里跳过 play，避免同一首歌被处理两次
-      cmds = cmds.filter(function (c) { return c.type !== 'play'; });
+  var convo = runtime.conversationId;
+  var picked = pickPendingCommands(messages, {
+    mode: runtime.mode,
+    lastId: runtime.lastMessageId,
+    done: function (cmd, id) {
+      return alreadyDone(dedupeKey(convo, id, cmd))
+        || alreadyDone('c|' + cmd.type + '|' + (cmd.arg || ''));
     }
-    if (!cmds.length) return;
+  });
+  if (!picked) return;
 
-    for (var j = 0; j < cmds.length; j++) {
-      var key = dedupeKey(runtime.conversationId, id, cmds[j]);
-      var contentKey = 'c|' + cmds[j].type + '|' + (cmds[j].arg || '');
-      // 消息级 + 内容级（60 秒内）双重去重：编辑消息不会重复执行，过一会儿又能重新点
-      if (alreadyDone(key) || alreadyDone(contentKey)) continue;
-      markDone(key, cmds[j]);
-      try {
-        await runCommand(cmds[j], roche);
-      } catch (err) { /* 单条失败不影响其它 */ }
+  // 只有真取到待执行消息才记 lastMessageId（以前是先记再看，导致漏读）
+  runtime.lastMessageId = picked.id;
+
+  for (var j = 0; j < picked.cmds.length; j++) {
+    var cmd = picked.cmds[j];
+    var key = dedupeKey(convo, picked.id, cmd);
+    var contentKey = 'c|' + cmd.type + '|' + (cmd.arg || '');
+    markDone(key, cmd);
+
+    var res = null;
+    try {
+      res = await runCommand(cmd, roche);
+    } catch (err) {
+      res = { ok: false, reason: String((err && err.message) || err) };
     }
-    return;
+    if (res && res.ok === false) unmarkDone(key, contentKey);
   }
 }
 
