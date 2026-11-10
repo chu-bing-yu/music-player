@@ -664,8 +664,8 @@ export async function createApp(opts) {
   /** 网易云排行榜：拉榜单列表 → 点一个直接播该榜前 30 首 */
   async function openNeteaseToplist() {
     if (!shell) return;
-    if (!state.settings.neteaseApi) {
-      toast('先在设置里填网易云 API 地址');
+    if (!neteaseReady(state.settings)) {
+      toast('网易云服务不可用');
       return;
     }
     toast('正在拉取榜单…');

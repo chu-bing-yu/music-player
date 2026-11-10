@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultSettings, normalizeSettings, atLeastOneSource, resolveMediaMode, DEFAULT_CHAT_PROMPT, DEFAULT_NETEASE_API } from '../src/core/settings.js';
+import { readFile } from 'node:fs/promises';
+import { defaultSettings, normalizeSettings, atLeastOneSource, resolveMediaMode, DEFAULT_CHAT_PROMPT, DEFAULT_NETEASE_API, resolveNeteaseApi } from '../src/core/settings.js';
 import { REPEAT } from '../src/core/queue.js';
 
 test('默认设置：QQ + iTunes + 免费曲库 + 网易云兜底', () => {
@@ -15,18 +16,35 @@ test('默认设置：QQ + iTunes + 免费曲库 + 网易云兜底', () => {
   assert.equal(s.chatListen, true);
 });
 
-test('网易云 API 地址：默认公共实例、可覆盖、空值回落、去尾斜杠', () => {
-  assert.equal(defaultSettings().neteaseApi, DEFAULT_NETEASE_API);
-  assert.ok(DEFAULT_NETEASE_API.indexOf('https://') === 0);
+test('网易云 API 地址：设置里留空，运行时才回落到公共实例', () => {
+  // 设置本身永远留空，界面不显示地址，也不把地址写进 storage
+  assert.equal(defaultSettings().neteaseApi, '');
+  assert.equal(normalizeSettings({}).neteaseApi, '');
+  assert.equal(normalizeSettings({ neteaseApi: '' }).neteaseApi, '');
+  assert.equal(normalizeSettings({ neteaseApi: '   ' }).neteaseApi, '');
 
-  // 空 / 空白 / undefined 都回落到公共实例
-  assert.equal(normalizeSettings({}).neteaseApi, DEFAULT_NETEASE_API);
-  assert.equal(normalizeSettings({ neteaseApi: '' }).neteaseApi, DEFAULT_NETEASE_API);
-  assert.equal(normalizeSettings({ neteaseApi: '   ' }).neteaseApi, DEFAULT_NETEASE_API);
-
-  // 用户填自己的地址时不覆盖，并去掉尾部斜杠
+  // 用户填了自己的地址：保留，去掉尾部斜杠
   assert.equal(normalizeSettings({ neteaseApi: 'https://my.example.com/' }).neteaseApi, 'https://my.example.com');
   assert.equal(normalizeSettings({ neteaseApi: ' https://my.example.com// ' }).neteaseApi, 'https://my.example.com');
+
+  // 真正请求用的地址：留空走公共实例，填了用用户的
+  assert.equal(resolveNeteaseApi({}), DEFAULT_NETEASE_API);
+  assert.equal(resolveNeteaseApi({ neteaseApi: '' }), DEFAULT_NETEASE_API);
+  assert.equal(resolveNeteaseApi({ neteaseApi: 'https://my.example.com/' }), 'https://my.example.com');
+
+  // 公共实例必须是 https，且不以斜杠结尾
+  assert.ok(DEFAULT_NETEASE_API.indexOf('https://') === 0, '公共实例必须是 https');
+  assert.ok(!/\/$/.test(DEFAULT_NETEASE_API), '公共实例不应带尾部斜杠');
+});
+
+test('公共实例地址不以明文出现在源码里', async () => {
+  const src = await readFile(new URL('../src/core/settings.js', import.meta.url), 'utf8');
+  assert.ok(
+    src.indexOf('netease-api-music-player') === -1,
+    '默认地址不要写明文，用 base64 存，否则仓库/plugin.js 里一眼就能搜到',
+  );
+  // 但运行时必须解得出来
+  assert.equal(DEFAULT_NETEASE_API, 'https://netease-api-music-player.netlify.app');
 });
 
 test('一起听开关能关掉', () => {

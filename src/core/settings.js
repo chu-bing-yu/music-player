@@ -6,10 +6,23 @@ export var APP_ID = 'music-player';
 export var SCHEMA_VERSION = 4;
 
 /**
- * 公共网易云 API 实例（Netlify Functions，白名单版）。
- * 不填也能扫码登录；用户填了自己的地址就用自己的，清空则回落到这里。
+ * 公共网易云 API 实例。
+ * 地址不写成明文：仓库和 plugin.js 都是公开的，明文等于把地址直接递出去，所以存 base64、运行时解。
+ * 设置里留空就走它；用户填了自己的地址以用户为准。
  */
-export var DEFAULT_NETEASE_API = 'https://netease-api-music-player.netlify.app';
+var PUBLIC_API_B64 = 'aHR0cHM6Ly9uZXRlYXNlLWFwaS1tdXNpYy1wbGF5ZXIubmV0bGlmeS5hcHA=';
+
+function decodeBase64(str) {
+  try {
+    if (typeof atob === 'function') return atob(str);
+  } catch (e) {}
+  try {
+    if (typeof Buffer !== 'undefined') return Buffer.from(str, 'base64').toString('utf8');
+  } catch (e) {}
+  return '';
+}
+
+export var DEFAULT_NETEASE_API = decodeBase64(PUBLIC_API_B64);
 
 /** 标记通道的提示词；占位符：{{title}} {{artist}} {{state}} {{queue}} */
 export var DEFAULT_CHAT_PROMPT = [
@@ -163,8 +176,8 @@ export function defaultSettings() {
     accentColor: '',
     floating: true,
     floatLyric: true,
-    // 网易云：默认走公共实例，用户也可以改成自己部署的地址 + 扫码登录后的 cookie
-    neteaseApi: DEFAULT_NETEASE_API,
+    // 网易云：留空 = 走公共实例（界面不显示地址）；填了就用自己部署的
+    neteaseApi: '',
     neteaseCookie: '',
     neteaseProfile: '',
     chatListen: true,
@@ -228,10 +241,15 @@ function resolvePlayMode(s) {
   return 'sequence';
 }
 
-/** 网易云地址：非空就用用户的（去掉尾部斜杠），空则回落到公共实例 */
+/** 网易云地址：只保留用户填的值（去掉尾部斜杠），空就是空，不把默认地址写进设置 */
 function normalizeNeteaseApi(value) {
-  var url = String(value || '').trim().replace(/\/+$/, '');
-  return url || DEFAULT_NETEASE_API;
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+/** 实际请求用的地址：用户填了用用户的，留空走公共实例 */
+export function resolveNeteaseApi(settings) {
+  var own = normalizeNeteaseApi(settings && settings.neteaseApi);
+  return own || DEFAULT_NETEASE_API;
 }
 
 export function normalizeSettings(raw) {

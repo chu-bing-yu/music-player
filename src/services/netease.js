@@ -6,6 +6,7 @@
  */
 
 import { fetchJson } from './http.js';
+import { resolveNeteaseApi } from '../core/settings.js';
 
 /** 网易云封面常给 http，WebView 里会被当混合内容拦掉，统一升 https */
 function httpsCover(url) {
@@ -15,8 +16,8 @@ function httpsCover(url) {
 }
 
 function base(settings) {
-  var url = String(settings && settings.neteaseApi ? settings.neteaseApi : '').trim();
-  return url.replace(/\/+$/, '');
+  // 留空 = 走公共实例，填了就用用户的地址
+  return resolveNeteaseApi(settings);
 }
 
 export function isReady(settings) {

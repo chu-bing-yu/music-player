@@ -1,4 +1,4 @@
-/* music-player v0.63.0 | built 2026-11-10T15:09:00.961Z */
+/* music-player v0.64.0 | built 2026-11-10T15:14:48.916Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -426,7 +426,19 @@
 
   // src/core/settings.js
   var SCHEMA_VERSION = 4;
-  var DEFAULT_NETEASE_API = "https://netease-api-music-player.netlify.app";
+  var PUBLIC_API_B64 = "aHR0cHM6Ly9uZXRlYXNlLWFwaS1tdXNpYy1wbGF5ZXIubmV0bGlmeS5hcHA=";
+  function decodeBase64(str) {
+    try {
+      if (typeof atob === "function") return atob(str);
+    } catch (e) {
+    }
+    try {
+      if (typeof Buffer !== "undefined") return Buffer.from(str, "base64").toString("utf8");
+    } catch (e) {
+    }
+    return "";
+  }
+  var DEFAULT_NETEASE_API = decodeBase64(PUBLIC_API_B64);
   var DEFAULT_CHAT_PROMPT = [
     "【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。",
     "",
@@ -531,8 +543,8 @@
       accentColor: "",
       floating: true,
       floatLyric: true,
-      // 网易云：默认走公共实例，用户也可以改成自己部署的地址 + 扫码登录后的 cookie
-      neteaseApi: DEFAULT_NETEASE_API,
+      // 网易云：留空 = 走公共实例（界面不显示地址）；填了就用自己部署的
+      neteaseApi: "",
       neteaseCookie: "",
       neteaseProfile: "",
       chatListen: true,
@@ -593,8 +605,11 @@
     return "sequence";
   }
   function normalizeNeteaseApi(value) {
-    var url = String(value || "").trim().replace(/\/+$/, "");
-    return url || DEFAULT_NETEASE_API;
+    return String(value || "").trim().replace(/\/+$/, "");
+  }
+  function resolveNeteaseApi(settings) {
+    var own = normalizeNeteaseApi(settings && settings.neteaseApi);
+    return own || DEFAULT_NETEASE_API;
   }
   function normalizeSettings(raw) {
     var def = defaultSettings();
@@ -1185,8 +1200,7 @@
     return text.replace(/^http:\/\//i, "https://");
   }
   function base(settings) {
-    var url = String(settings && settings.neteaseApi ? settings.neteaseApi : "").trim();
-    return url.replace(/\/+$/, "");
+    return resolveNeteaseApi(settings);
   }
   function isReady(settings) {
     return !!base(settings);
@@ -12444,8 +12458,8 @@
     }
     async function openNeteaseToplist() {
       if (!shell) return;
-      if (!state.settings.neteaseApi) {
-        toast("先在设置里填网易云 API 地址");
+      if (!isReady(state.settings)) {
+        toast("网易云服务不可用");
         return;
       }
       toast("正在拉取榜单…");
@@ -13449,7 +13463,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.63.0" });
+    app = await createApp({ container, roche, version: "0.64.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -13465,7 +13479,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.63.0",
+    version: "0.64.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {
