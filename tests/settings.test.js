@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultSettings, normalizeSettings, atLeastOneSource, resolveMediaMode, DEFAULT_CHAT_PROMPT } from '../src/core/settings.js';
+import { defaultSettings, normalizeSettings, atLeastOneSource, resolveMediaMode, DEFAULT_CHAT_PROMPT, DEFAULT_NETEASE_API } from '../src/core/settings.js';
 import { REPEAT } from '../src/core/queue.js';
 
 test('默认设置：QQ + iTunes + 免费曲库 + 网易云兜底', () => {
@@ -13,6 +13,20 @@ test('默认设置：QQ + iTunes + 免费曲库 + 网易云兜底', () => {
   assert.equal(s.volume, 0.8);
   assert.equal(s.repeat, REPEAT.OFF);
   assert.equal(s.chatListen, true);
+});
+
+test('网易云 API 地址：默认公共实例、可覆盖、空值回落、去尾斜杠', () => {
+  assert.equal(defaultSettings().neteaseApi, DEFAULT_NETEASE_API);
+  assert.ok(DEFAULT_NETEASE_API.indexOf('https://') === 0);
+
+  // 空 / 空白 / undefined 都回落到公共实例
+  assert.equal(normalizeSettings({}).neteaseApi, DEFAULT_NETEASE_API);
+  assert.equal(normalizeSettings({ neteaseApi: '' }).neteaseApi, DEFAULT_NETEASE_API);
+  assert.equal(normalizeSettings({ neteaseApi: '   ' }).neteaseApi, DEFAULT_NETEASE_API);
+
+  // 用户填自己的地址时不覆盖，并去掉尾部斜杠
+  assert.equal(normalizeSettings({ neteaseApi: 'https://my.example.com/' }).neteaseApi, 'https://my.example.com');
+  assert.equal(normalizeSettings({ neteaseApi: ' https://my.example.com// ' }).neteaseApi, 'https://my.example.com');
 });
 
 test('一起听开关能关掉', () => {

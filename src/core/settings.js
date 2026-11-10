@@ -5,6 +5,12 @@ import { REPEAT_ORDER, REPEAT } from './queue.js';
 export var APP_ID = 'music-player';
 export var SCHEMA_VERSION = 4;
 
+/**
+ * 公共网易云 API 实例（Netlify Functions，白名单版）。
+ * 不填也能扫码登录；用户填了自己的地址就用自己的，清空则回落到这里。
+ */
+export var DEFAULT_NETEASE_API = 'https://netease-api-music-player.netlify.app';
+
 /** 标记通道的提示词；占位符：{{title}} {{artist}} {{state}} {{queue}} */
 export var DEFAULT_CHAT_PROMPT = [
   '【音乐插件】当前正在播放《{{title}}》（{{artist}}）{{state}}，队列 {{queue}} 首。',
@@ -157,8 +163,8 @@ export function defaultSettings() {
     accentColor: '',
     floating: true,
     floatLyric: true,
-    // 网易云：自己部署的 NeteaseCloudMusicApi 地址 + 扫码登录后的 cookie
-    neteaseApi: '',
+    // 网易云：默认走公共实例，用户也可以改成自己部署的地址 + 扫码登录后的 cookie
+    neteaseApi: DEFAULT_NETEASE_API,
     neteaseCookie: '',
     neteaseProfile: '',
     chatListen: true,
@@ -222,6 +228,12 @@ function resolvePlayMode(s) {
   return 'sequence';
 }
 
+/** 网易云地址：非空就用用户的（去掉尾部斜杠），空则回落到公共实例 */
+function normalizeNeteaseApi(value) {
+  var url = String(value || '').trim().replace(/\/+$/, '');
+  return url || DEFAULT_NETEASE_API;
+}
+
 export function normalizeSettings(raw) {
   var def = defaultSettings();
   var s = raw && typeof raw === 'object' ? raw : {};
@@ -251,7 +263,7 @@ export function normalizeSettings(raw) {
     accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || '')) ? String(s.accentColor) : '',
     floating: bool(s.floating, def.floating),
     floatLyric: bool(s.floatLyric, def.floatLyric),
-    neteaseApi: String(s.neteaseApi || '').trim().replace(/\/+$/, ''),
+    neteaseApi: normalizeNeteaseApi(s.neteaseApi),
     neteaseCookie: String(s.neteaseCookie || '').trim(),
     neteaseProfile: String(s.neteaseProfile || '').trim(),
     chatListen: bool(s.chatListen, def.chatListen),

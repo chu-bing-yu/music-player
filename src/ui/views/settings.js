@@ -378,7 +378,7 @@ export function mount(host, ctx) {
     var apiInput = h('input', {
       class: 'mp-input',
       type: 'url',
-      placeholder: 'https://你的服务地址',
+      placeholder: '留空 = 用公共实例',
       value: s.neteaseApi || ''
     });
     apiInput.addEventListener('change', function () {
