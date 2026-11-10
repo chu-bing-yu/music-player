@@ -37,14 +37,16 @@ test('网易云 API 地址：设置里留空，运行时才回落到公共实例
   assert.ok(!/\/$/.test(DEFAULT_NETEASE_API), '公共实例不应带尾部斜杠');
 });
 
-test('公共实例地址不以明文出现在源码里', async () => {
-  const src = await readFile(new URL('../src/core/settings.js', import.meta.url), 'utf8');
-  assert.ok(
-    src.indexOf('netease-api-music-player') === -1,
-    '默认地址不要写明文，用 base64 存，否则仓库/plugin.js 里一眼就能搜到',
-  );
+test('公共实例地址不以明文出现在源码与文档里', async () => {
+  // 拿运行时解出来的地址当探针：源码/文档里出现它就等于明文泄漏
+  const probes = ['../src/core/settings.js', '../src/services/netease.js', '../src/app/container.js', '../README.md'];
+  for (const file of probes) {
+    const text = await readFile(new URL(file, import.meta.url), 'utf8');
+    assert.ok(text.indexOf(DEFAULT_NETEASE_API) === -1, file + ' 里不要写明文地址，用 base64');
+  }
   // 但运行时必须解得出来
-  assert.equal(DEFAULT_NETEASE_API, 'https://netease-api-music-player.netlify.app');
+  assert.ok(DEFAULT_NETEASE_API.indexOf('https://') === 0, '公共实例必须是 https');
+  assert.ok(/\.netlify\.app$/.test(DEFAULT_NETEASE_API), '公共实例应指向 netlify 默认域名');
 });
 
 test('一起听开关能关掉', () => {
