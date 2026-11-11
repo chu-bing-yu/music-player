@@ -4,7 +4,7 @@
 
 - 插件 id：`music-player`
 - App id：`music-player-home`
-- 当前版本：`0.62.0`
+- 当前版本：`0.65.0`
 
 ## 安装 / 更新
 
@@ -97,6 +97,16 @@ https://cdn.jsdelivr.net/gh/chu-bing-yu/music-player@main/manifest.json
 - **解析容错**：注释指令允许跨行（长乐评被折行也能认）；闭合符也放宽了 —— `-->` 被折成 `-` 换行 `>`、或 `--` 换行 `>`，都能认出来（以前整条指令会被静默丢掉）；`名|词1,词2`、`名|词1、词2` 会自动转成空格分隔。
 - **角色 ID 兜底**：宿主没把 `contact` 传进来时，会依次看 `contactId / characterId / conversation.*`；仍然没有就只看「唯一角色」（多角色不猜）。旧数据里 `ownerId` 为空、评论记在 `ta` 名下的，TA 页会归到一个「TA」分组显示，不再整页空白。
 - **跨作用域可见**：角色写的歌单/乐评会同时写宿主 storage 与 `mp:mirror:*` 镜像；App 读 storage 时会把两边合并（不会再用旧值覆盖镜像），所以进「歌单」页 / 切回前台就能看到，不用重开 App。
+
+### 指令是怎么被解析和执行的（0.65.0）
+
+1. **正则**（`src/core/marker.js#parseCommands`）：两套写法都认 —— `[[mp:type:arg]]`（行内）与 `<!-- mp:type:arg -->`（注释，参数允许跨行，闭合符 `-`/`-->` 折行也能认）。
+2. **类型白名单**：`MARK_TYPES` 之外的 type 直接忽略；`play / comment / new / recommend` **缺参数直接丢弃**（`<!-- mp:recommend -->` 就死在这一步）。
+3. **参数归一**：折叠空白；挑歌参数里的 `, ， 、 ; ；` 统一成空格，全角 `｜` 视作 `|`；`<!-- mp:comment:一句话评价 -->` 这种照抄示例的占位词会被拒绝。
+4. **选消息**（`src/core/pendingCommands.js#pickPendingCommands`）：每 2.5 秒取最近 8 条，从新到旧扫，只认 assistant、必须有 id、跳过已执行；**没命中就继续往前找**（不会因为最后一条是普通回复就整轮放弃）。
+5. **去重**：消息级 key（会话 + 消息 id + 指令）永久；内容级 key（`type|arg`）按类型分窗口 —— 写库类（`add / comment / new / recommend`）长期有效，播放控制类保留 60 秒。
+6. **执行**：`runCommand()` 分发到 `doPlay / doComment / doRecommend / addTrackForChar`；写库走 `taStore`（宿主 storage + `mp:mirror:*` 双写、读取取并集）。
+7. **幂等**（0.65.0）：同名同角色歌单复用不新建；同曲评论按「歌名 + 歌手」归并到同一个 key、角色 id 统一归一到 `ta`；删除时跨别名跨 key 一次清干净。
 - 设置 → 聊天 → **指令通道**：`标记（省一次）` / `工具（更稳）`，随时可切。
 - 标记通道读不到会话消息（宿主没开 memory）时会**自动降级为工具模式**，不会报错。
 

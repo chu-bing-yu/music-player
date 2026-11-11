@@ -75,6 +75,35 @@ export function parseCommands(text) {
  */
 var PLACEHOLDER_WORDS = ['歌单名', '搜索关键词', '关键词1', '关键词2', '一句话评价', '歌名', '评价内容'];
 
+/**
+ * 哪些指令的「内容级去重」要长期有效。
+ *
+ * 写库类（加歌 / 评论 / 新建歌单 / 挑歌）一旦执行过，就不该因为同一条指令又被投递一次
+ * 而再建一个歌单、再写一条评论；播放控制类（点歌、上下首、暂停继续）保留短窗口，
+ * 免得「过一会儿想再听同一首」被吞掉。
+ */
+export var LONG_DEDUPE_TYPES = ['add', 'comment', 'new', 'recommend'];
+
+/** 内容级 key 形如 `c|comment|一句话`；返回 0 表示永不过期 */
+export function contentDedupeTtl(key, shortTtl) {
+  var text = String(key || '');
+  var short = Number(shortTtl) || 0;
+  if (text.indexOf('c|') !== 0) return short;
+  var type = text.split('|')[1] || '';
+  return LONG_DEDUPE_TYPES.indexOf(type) !== -1 ? 0 : short;
+}
+
+/**
+ * 执行失败要不要重试。
+ * 「已经存在 / 重复 / 已在歌单里」这类是幂等冲突，重试只会重复执行，直接算完成。
+ */
+export function shouldRetryResult(res) {
+  if (!res || res.ok !== false) return false;
+  var reason = String(res.reason || '');
+  if (/已经|重复|已存在|已在|幂等/.test(reason)) return false;
+  return true;
+}
+
 export function isPlaceholderArg(text) {
   var s = String(text == null ? '' : text).trim();
   if (!s) return false;

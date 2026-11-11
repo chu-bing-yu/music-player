@@ -7,7 +7,10 @@
  * 拿不到会话消息（宿主没开放 memory）时自动降级为工具模式，不报错。
  */
 
-import { parseCommands, dedupeKey, parseRecommendArg, isPlaceholderArg } from '../core/marker.js';
+import {
+  parseCommands, dedupeKey, parseRecommendArg, isPlaceholderArg,
+  contentDedupeTtl, shouldRetryResult
+} from '../core/marker.js';
 import { pickPendingCommands } from '../core/pendingCommands.js';
 import { getBridge } from './bridge.js';
 import { isOn } from './listenState.js';
@@ -433,9 +436,13 @@ var CONTENT_TTL = 60 * 1000;
 
 function alreadyDone(key) {
   var now = Date.now();
+  // 写库类（add/comment/new/recommend）长期有效，播放控制类仍是 60 秒窗口
+  var ttl = contentDedupeTtl(key, CONTENT_TTL);
   return runtime.executed.some(function (item) {
     if (typeof item === 'string') return item === key;
-    return item && item.k === key && now - (item.at || 0) < CONTENT_TTL;
+    if (!item || item.k !== key) return false;
+    if (!ttl) return true;
+    return now - (item.at || 0) < ttl;
   });
 }
 
@@ -526,7 +533,8 @@ async function pollOnce() {
     } catch (err) {
       res = { ok: false, reason: String((err && err.message) || err) };
     }
-    if (res && res.ok === false) unmarkDone(key, contentKey);
+    // 只有「明确失败且不是幂等冲突」才撤销标记重试（否则会重复建歌单/重复写评论）
+    if (shouldRetryResult(res)) unmarkDone(key, contentKey);
   }
 }
 

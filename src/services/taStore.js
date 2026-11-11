@@ -14,6 +14,33 @@ export var RECOMMEND_PLAYLIST_NAME = '为你挑的';
 export var MAX_COMMENT_LEN = 80;
 export var MAX_COMMENT_TRACKS = 300;
 
+/**
+ * 角色 id 归一：空 / 'ta' 都当成同一个兜底角色。
+ * 以前一会儿存成 ''、一会儿存成 'ta'、一会儿存真实 id，
+ * 结果同一条评价会变成两份，TA 页还会分成两个块，删也删不干净。
+ */
+export function normalizeCharId(id) {
+  var s = String(id == null ? '' : id).trim();
+  return s || 'ta';
+}
+
+/** 取一条评论 entry 里任意一个角色条目（用来判断「这是哪首歌」） */
+function firstEntryOf(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  var keys = Object.keys(entry);
+  for (var i = 0; i < keys.length; i++) {
+    var one = entry[keys[i]];
+    if (one && typeof one === 'object') return one;
+  }
+  return null;
+}
+
+function sameSong(a, b) {
+  if (!a || !b) return false;
+  return String(a.name || '') === String(b.name || '')
+    && String(a.artist || '') === String(b.artist || '');
+}
+
 function mirrorRead(key) {
   try {
     if (typeof localStorage === 'undefined') return null;
@@ -37,10 +64,20 @@ function hasData(value) {
   return Object.keys(value).length > 0;
 }
 
-/** 深度合并：两边都是对象时递归，带 at 的取较新的一条 */
+/**
+ * 深度合并：两边都是对象时递归，带 at 的取较新的一条。
+ *
+ * 注意数组（歌单列表）：**只有一边有数据时就用那一边**。
+ * 以前不管三七二十一返回 b，镜像为空时会把宿主那份歌单整个丢掉
+ * （`loadPlaylists` 只拿到 `{}`，界面上一首歌单都没有）。
+ */
 function mergeDeep(a, b) {
-  if (a == null) return b;
-  if (b == null) return a;
+  var ha = hasData(a);
+  var hb = hasData(b);
+  if (!ha && !hb) return a == null ? b : a;
+  if (!ha) return b;
+  if (!hb) return a;
+
   if (typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) || Array.isArray(b)) return b;
 
   var out = {};
@@ -103,10 +140,10 @@ export async function loadPlaylists(roche) {
 
 /** 这个角色的歌单（可能多个，按更新时间倒序） */
 export function charPlaylists(list, characterId) {
-  var id = String(characterId || '');
+  var id = normalizeCharId(characterId);
   return (list || [])
     .filter(function (p) {
-      return p && p.owner === 'char' && String(p.ownerId || '') === id;
+      return p && p.owner === 'char' && normalizeCharId(p.ownerId) === id;
     })
     .sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
 }
@@ -124,9 +161,9 @@ export async function addTrackForChar(roche, characterId, track) {
   var created = false;
 
   if (!target) {
-    var made = createPlaylist(list, CHAR_PLAYLIST_NAME, 'char-' + String(characterId || 'ta'), Date.now(), {
+    var made = createPlaylist(list, CHAR_PLAYLIST_NAME, 'char-' + normalizeCharId(characterId), Date.now(), {
       owner: 'char',
-      ownerId: characterId
+      ownerId: normalizeCharId(characterId)
     });
     if (!made.playlist) return { ok: false, reason: '歌单数量已达上限' };
     list = made.list;
@@ -149,12 +186,40 @@ export async function addTrackForChar(roche, characterId, track) {
   };
 }
 
-/** 新建一个角色歌单（推荐用） */
+/**
+ * 角色歌单（推荐用）。
+ * **同名 + 同角色已经存在就复用**（把歌去重追加进去），否则才新建。
+ * 以前每次都 `'char-'+Date.now()` 新建，同一条指令执行两次就多一个同名歌单。
+ */
 export async function createCharPlaylist(roche, characterId, name, tracks) {
   var list = await loadPlaylists(roche);
-  var made = createPlaylist(list, name || CHAR_PLAYLIST_NAME, 'char-' + Date.now().toString(36), Date.now(), {
+  var owner = normalizeCharId(characterId);
+  var wantName = String(name == null ? '' : name).trim() || CHAR_PLAYLIST_NAME;
+
+  var existing = (list || []).filter(function (p) {
+    return p && p.owner === 'char'
+      && normalizeCharId(p.ownerId) === owner
+      && String(p.name || '').trim() === wantName;
+  })[0] || null;
+
+  if (existing) {
+    var reuse = addTracksToPlaylist(list, existing.id, tracks || [], Date.now());
+    await writeJson(roche, 'mp:playlists', reuse.list);
+    var updated = null;
+    reuse.list.forEach(function (p) { if (p.id === existing.id) updated = p; });
+    return {
+      ok: true,
+      reused: true,
+      created: false,
+      playlist: updated || existing,
+      added: reuse.added,
+      playlistId: existing.id
+    };
+  }
+
+  var made = createPlaylist(list, wantName, 'char-' + Date.now().toString(36), Date.now(), {
     owner: 'char',
-    ownerId: characterId
+    ownerId: owner
   });
   if (!made.playlist) return { ok: false, reason: '歌单数量已达上限' };
 
@@ -166,7 +231,7 @@ export async function createCharPlaylist(roche, characterId, name, tracks) {
     added = res.added;
   }
   await writeJson(roche, 'mp:playlists', list);
-  return { ok: true, playlist: made.playlist, added: added, created: true, playlistId: made.playlist.id };
+  return { ok: true, reused: false, playlist: made.playlist, added: added, created: true, playlistId: made.playlist.id };
 }
 
 /* ---------------- 短评 ---------------- */
@@ -193,39 +258,92 @@ export async function saveComment(roche, characterId, track, text) {
   if (!key) return { ok: false, reason: '没有正在播放的歌' };
 
   var map = await loadComments(roche);
-  var entry = map[key] && typeof map[key] === 'object' ? map[key] : {};
-  entry[String(characterId || 'ta')] = {
-    text: clean,
-    at: Date.now(),
-    name: track.name || '',
-    artist: track.artist || ''
-  };
+  var cid = normalizeCharId(characterId);
+  var me = { text: clean, at: Date.now(), name: String(track.name || ''), artist: String(track.artist || '') };
+
+  // 同曲归并：同一个 track 从不同来源拿到的 key 不一样（tencent:qq:xxx / name|歌名|歌手），
+  // 只要「歌名 + 歌手」相同就写到已有的那个 key 上，别再多存一条。
+  var sameSongKeys = Object.keys(map).filter(function (k) {
+    return sameSong(firstEntryOf(map[k]), me);
+  });
+  var targetKey = sameSongKeys.indexOf(key) !== -1 ? key : (sameSongKeys[0] || key);
+
+  var entry = map[targetKey] && typeof map[targetKey] === 'object' ? map[targetKey] : {};
+  // 把其它同曲 key 下的角色条目并过来，清掉重复 key
+  sameSongKeys.forEach(function (k) {
+    if (k === targetKey) return;
+    var other = map[k];
+    Object.keys(other || {}).forEach(function (c) {
+      if (!entry[c]) entry[c] = other[c];
+    });
+    delete map[k];
+  });
+
+  entry[cid] = me;
+  map[targetKey] = entry;
 
   // 只保留最近 300 首，避免 storage 越滚越大
   var keys = Object.keys(map);
   if (keys.length > MAX_COMMENT_TRACKS) {
     keys.sort(function (a, b) {
-      return (map[a] && map[a][String(characterId)] && map[a][String(characterId)].at) || 0;
+      return (map[a] && map[a][cid] && map[a][cid].at) || 0;
     }).slice(0, keys.length - MAX_COMMENT_TRACKS).forEach(function (k) { delete map[k]; });
   }
-  map[key] = entry;
 
   await writeJson(roche, 'mp:comments', map);
-  return { ok: true, text: clean, key: key };
+  return { ok: true, text: clean, key: targetKey };
 }
 
-/** 删除某个角色在某首歌下的短评（TA 页左滑删除用） */
-export async function deleteComment(roche, characterId, key) {
-  var id = String(characterId || '');
+/**
+ * 删除某个角色在某首歌下的短评（TA 页左滑删除用）。
+ *
+ * 一条评价可能因为历史原因存了好几份：不同 track key（`tencent:...` / `name|歌名|歌手`）、
+ * 不同角色 key（'' / 'ta' / 真实 id）。这里一次清干净，否则删掉一份另一份还在，
+ * 看着就是「删不掉」。
+ *
+ * @param {string} [text] 要删的那条正文；给了就顺带清掉同曲同文的重复副本
+ * @returns {{ok:boolean, removed:number, reason?:string}}
+ */
+export async function deleteComment(roche, characterId, key, text) {
+  var cid = normalizeCharId(characterId);
+  var want = String(text == null ? '' : text).trim();
   var map = await loadComments(roche);
-  var entry = key && map[key] && typeof map[key] === 'object' ? map[key] : null;
-  if (!entry || !entry[id]) return { ok: false, reason: '没有这条短评' };
 
-  delete entry[id];
-  if (!Object.keys(entry).length) delete map[key];
+  var target = key && map[key] && typeof map[key] === 'object' ? map[key] : null;
+  var anchor = firstEntryOf(target);
 
+  // 同曲的其它 key（歌名 + 歌手相同）
+  var keys = key ? [key] : [];
+  if (anchor) {
+    Object.keys(map).forEach(function (k) {
+      if (k === key) return;
+      if (sameSong(firstEntryOf(map[k]), anchor)) keys.push(k);
+    });
+  }
+
+  var aliases = [cid];
+  if (cid === 'ta') aliases.push('');
+  else aliases.push('ta', '');
+
+  var removed = 0;
+  keys.forEach(function (k) {
+    var entry = map[k];
+    if (!entry || typeof entry !== 'object') return;
+    Object.keys(entry).forEach(function (c) {
+      var one = entry[c];
+      var hitCid = aliases.indexOf(c) !== -1;
+      var hitText = want && one && String(one.text || '').trim() === want;
+      if (hitCid || hitText) {
+        delete entry[c];
+        removed += 1;
+      }
+    });
+    if (!Object.keys(entry).length) delete map[k];
+  });
+
+  if (!removed) return { ok: false, reason: '没有这条短评', removed: 0 };
   await writeJson(roche, 'mp:comments', map);
-  return { ok: true };
+  return { ok: true, removed: removed };
 }
 
 export function commentsOf(map, track, characterId) {

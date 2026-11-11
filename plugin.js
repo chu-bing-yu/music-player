@@ -1,4 +1,4 @@
-/* music-player v0.64.1 | built 2026-11-10T15:15:38.191Z */
+/* music-player v0.65.0 | built 2026-11-11T13:16:34.071Z */
 (() => {
   // src/services/host.js
   function isFn(obj, name) {
@@ -3034,6 +3034,23 @@
   var RECOMMEND_PLAYLIST_NAME = "为你挑的";
   var MAX_COMMENT_LEN = 80;
   var MAX_COMMENT_TRACKS = 300;
+  function normalizeCharId(id) {
+    var s = String(id == null ? "" : id).trim();
+    return s || "ta";
+  }
+  function firstEntryOf(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    var keys = Object.keys(entry);
+    for (var i = 0; i < keys.length; i++) {
+      var one = entry[keys[i]];
+      if (one && typeof one === "object") return one;
+    }
+    return null;
+  }
+  function sameSong(a, b) {
+    if (!a || !b) return false;
+    return String(a.name || "") === String(b.name || "") && String(a.artist || "") === String(b.artist || "");
+  }
   function mirrorRead(key) {
     try {
       if (typeof localStorage === "undefined") return null;
@@ -3056,8 +3073,11 @@
     return Object.keys(value).length > 0;
   }
   function mergeDeep(a, b) {
-    if (a == null) return b;
-    if (b == null) return a;
+    var ha = hasData(a);
+    var hb = hasData(b);
+    if (!ha && !hb) return a == null ? b : a;
+    if (!ha) return b;
+    if (!hb) return a;
     if (typeof a !== "object" || typeof b !== "object" || Array.isArray(a) || Array.isArray(b)) return b;
     var out = {};
     Object.keys(a).forEach(function(k) {
@@ -3106,9 +3126,9 @@
     return normalizePlaylists(raw);
   }
   function charPlaylists(list, characterId) {
-    var id = String(characterId || "");
+    var id = normalizeCharId(characterId);
     return (list || []).filter(function(p) {
-      return p && p.owner === "char" && String(p.ownerId || "") === id;
+      return p && p.owner === "char" && normalizeCharId(p.ownerId) === id;
     }).sort(function(a, b) {
       return (b.updatedAt || 0) - (a.updatedAt || 0);
     });
@@ -3120,9 +3140,9 @@
     var target = mine[0] || null;
     var created = false;
     if (!target) {
-      var made = createPlaylist(list, CHAR_PLAYLIST_NAME, "char-" + String(characterId || "ta"), Date.now(), {
+      var made = createPlaylist(list, CHAR_PLAYLIST_NAME, "char-" + normalizeCharId(characterId), Date.now(), {
         owner: "char",
-        ownerId: characterId
+        ownerId: normalizeCharId(characterId)
       });
       if (!made.playlist) return { ok: false, reason: "歌单数量已达上限" };
       list = made.list;
@@ -3145,9 +3165,30 @@
   }
   async function createCharPlaylist(roche, characterId, name, tracks) {
     var list = await loadPlaylists(roche);
-    var made = createPlaylist(list, name || CHAR_PLAYLIST_NAME, "char-" + Date.now().toString(36), Date.now(), {
+    var owner = normalizeCharId(characterId);
+    var wantName = String(name == null ? "" : name).trim() || CHAR_PLAYLIST_NAME;
+    var existing = (list || []).filter(function(p) {
+      return p && p.owner === "char" && normalizeCharId(p.ownerId) === owner && String(p.name || "").trim() === wantName;
+    })[0] || null;
+    if (existing) {
+      var reuse = addTracksToPlaylist(list, existing.id, tracks || [], Date.now());
+      await writeJson(roche, "mp:playlists", reuse.list);
+      var updated = null;
+      reuse.list.forEach(function(p) {
+        if (p.id === existing.id) updated = p;
+      });
+      return {
+        ok: true,
+        reused: true,
+        created: false,
+        playlist: updated || existing,
+        added: reuse.added,
+        playlistId: existing.id
+      };
+    }
+    var made = createPlaylist(list, wantName, "char-" + Date.now().toString(36), Date.now(), {
       owner: "char",
-      ownerId: characterId
+      ownerId: owner
     });
     if (!made.playlist) return { ok: false, reason: "歌单数量已达上限" };
     list = made.list;
@@ -3158,7 +3199,7 @@
       added = res.added;
     }
     await writeJson(roche, "mp:playlists", list);
-    return { ok: true, playlist: made.playlist, added, created: true, playlistId: made.playlist.id };
+    return { ok: true, reused: false, playlist: made.playlist, added, created: true, playlistId: made.playlist.id };
   }
   function cleanComment(text) {
     var s = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
@@ -3174,34 +3215,68 @@
     var key = trackKey(track) || (track && track.name ? "name|" + track.name + "|" + (track.artist || "") : "");
     if (!key) return { ok: false, reason: "没有正在播放的歌" };
     var map2 = await loadComments(roche);
-    var entry = map2[key] && typeof map2[key] === "object" ? map2[key] : {};
-    entry[String(characterId || "ta")] = {
-      text: clean,
-      at: Date.now(),
-      name: track.name || "",
-      artist: track.artist || ""
-    };
+    var cid = normalizeCharId(characterId);
+    var me = { text: clean, at: Date.now(), name: String(track.name || ""), artist: String(track.artist || "") };
+    var sameSongKeys = Object.keys(map2).filter(function(k) {
+      return sameSong(firstEntryOf(map2[k]), me);
+    });
+    var targetKey = sameSongKeys.indexOf(key) !== -1 ? key : sameSongKeys[0] || key;
+    var entry = map2[targetKey] && typeof map2[targetKey] === "object" ? map2[targetKey] : {};
+    sameSongKeys.forEach(function(k) {
+      if (k === targetKey) return;
+      var other = map2[k];
+      Object.keys(other || {}).forEach(function(c) {
+        if (!entry[c]) entry[c] = other[c];
+      });
+      delete map2[k];
+    });
+    entry[cid] = me;
+    map2[targetKey] = entry;
     var keys = Object.keys(map2);
     if (keys.length > MAX_COMMENT_TRACKS) {
       keys.sort(function(a, b) {
-        return map2[a] && map2[a][String(characterId)] && map2[a][String(characterId)].at || 0;
+        return map2[a] && map2[a][cid] && map2[a][cid].at || 0;
       }).slice(0, keys.length - MAX_COMMENT_TRACKS).forEach(function(k) {
         delete map2[k];
       });
     }
-    map2[key] = entry;
     await writeJson(roche, "mp:comments", map2);
-    return { ok: true, text: clean, key };
+    return { ok: true, text: clean, key: targetKey };
   }
-  async function deleteComment(roche, characterId, key) {
-    var id = String(characterId || "");
+  async function deleteComment(roche, characterId, key, text) {
+    var cid = normalizeCharId(characterId);
+    var want = String(text == null ? "" : text).trim();
     var map2 = await loadComments(roche);
-    var entry = key && map2[key] && typeof map2[key] === "object" ? map2[key] : null;
-    if (!entry || !entry[id]) return { ok: false, reason: "没有这条短评" };
-    delete entry[id];
-    if (!Object.keys(entry).length) delete map2[key];
+    var target = key && map2[key] && typeof map2[key] === "object" ? map2[key] : null;
+    var anchor = firstEntryOf(target);
+    var keys = key ? [key] : [];
+    if (anchor) {
+      Object.keys(map2).forEach(function(k) {
+        if (k === key) return;
+        if (sameSong(firstEntryOf(map2[k]), anchor)) keys.push(k);
+      });
+    }
+    var aliases = [cid];
+    if (cid === "ta") aliases.push("");
+    else aliases.push("ta", "");
+    var removed = 0;
+    keys.forEach(function(k) {
+      var entry = map2[k];
+      if (!entry || typeof entry !== "object") return;
+      Object.keys(entry).forEach(function(c) {
+        var one = entry[c];
+        var hitCid = aliases.indexOf(c) !== -1;
+        var hitText = want && one && String(one.text || "").trim() === want;
+        if (hitCid || hitText) {
+          delete entry[c];
+          removed += 1;
+        }
+      });
+      if (!Object.keys(entry).length) delete map2[k];
+    });
+    if (!removed) return { ok: false, reason: "没有这条短评", removed: 0 };
     await writeJson(roche, "mp:comments", map2);
-    return { ok: true };
+    return { ok: true, removed };
   }
 
   // src/core/prefs.js
@@ -8923,9 +8998,12 @@
       del.addEventListener("click", function(e) {
         e.stopPropagation();
         if (!ctx.deleteTaComment) return;
-        ctx.deleteTaComment(item).then(function(res) {
+        var target = Object.assign({}, item, { characterId: groupIdOf(item.characterId) });
+        ctx.deleteTaComment(target).then(function(res) {
           if (res && res.ok) {
             if (ctx.toast) ctx.toast("已删除");
+            var card = row;
+            if (card && card.parentNode) card.parentNode.removeChild(card);
             renderAll();
           } else if (ctx.toast) {
             ctx.toast(res && res.reason || "删除失败");
@@ -9000,6 +9078,13 @@
       applyBg();
       var playlists = charPlaylistsAll();
       var comments = allComments();
+      var seen = /* @__PURE__ */ Object.create(null);
+      comments = comments.filter(function(c) {
+        var k = [groupIdOf(c.characterId), String(c.name || ""), String(c.artist || ""), String(c.text || "")].join("|");
+        if (seen[k]) return false;
+        seen[k] = true;
+        return true;
+      });
       if (currentChar) {
         playlists = playlists.filter(function(p) {
           return groupIdOf(p.ownerId) === currentChar;
@@ -11101,6 +11186,20 @@
     return out;
   }
   var PLACEHOLDER_WORDS = ["歌单名", "搜索关键词", "关键词1", "关键词2", "一句话评价", "歌名", "评价内容"];
+  var LONG_DEDUPE_TYPES = ["add", "comment", "new", "recommend"];
+  function contentDedupeTtl(key, shortTtl) {
+    var text = String(key || "");
+    var short = Number(shortTtl) || 0;
+    if (text.indexOf("c|") !== 0) return short;
+    var type = text.split("|")[1] || "";
+    return LONG_DEDUPE_TYPES.indexOf(type) !== -1 ? 0 : short;
+  }
+  function shouldRetryResult(res) {
+    if (!res || res.ok !== false) return false;
+    var reason = String(res.reason || "");
+    if (/已经|重复|已存在|已在|幂等/.test(reason)) return false;
+    return true;
+  }
   function isPlaceholderArg(text) {
     var s = String(text == null ? "" : text).trim();
     if (!s) return false;
@@ -11497,9 +11596,12 @@
   var CONTENT_TTL = 60 * 1e3;
   function alreadyDone(key) {
     var now = Date.now();
+    var ttl = contentDedupeTtl(key, CONTENT_TTL);
     return runtime.executed.some(function(item) {
       if (typeof item === "string") return item === key;
-      return item && item.k === key && now - (item.at || 0) < CONTENT_TTL;
+      if (!item || item.k !== key) return false;
+      if (!ttl) return true;
+      return now - (item.at || 0) < ttl;
     });
   }
   function markDone(key, cmd) {
@@ -11572,7 +11674,7 @@
       } catch (err) {
         res = { ok: false, reason: String(err && err.message || err) };
       }
-      if (res && res.ok === false) unmarkDone(key, contentKey);
+      if (shouldRetryResult(res)) unmarkDone(key, contentKey);
     }
   }
   function startCommandBridge() {
@@ -13028,7 +13130,8 @@
       /** TA 页左滑删除一条短评 */
       deleteTaComment: async function(item) {
         if (!item || !item.key) return { ok: false, reason: "没有这条短评" };
-        var res = await deleteComment(window.Roche || null, item.characterId, item.key);
+        var api2 = host && host.raw || window.Roche || null;
+        var res = await deleteComment(api2, item.characterId, item.key, item.text);
         if (res.ok) await reloadComments();
         return res;
       },
@@ -13463,7 +13566,7 @@
   async function mount8(container, roche) {
     ensureStyle();
     container.classList.add("mp-host");
-    app = await createApp({ container, roche, version: "0.64.1" });
+    app = await createApp({ container, roche, version: "0.65.0" });
   }
   async function unmount(container) {
     if (app) {
@@ -13479,7 +13582,7 @@
   window.RochePlugin.register({
     id: "music-player",
     name: "音乐播放器",
-    version: "0.64.1",
+    version: "0.65.0",
     description: "多音源搜歌、播放、歌单与收藏，可在聊天里发起一起听。",
     apps: [
       {

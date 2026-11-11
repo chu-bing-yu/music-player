@@ -1246,7 +1246,11 @@ export async function createApp(opts) {
     /** TA 页左滑删除一条短评 */
     deleteTaComment: async function (item) {
       if (!item || !item.key) return { ok: false, reason: '没有这条短评' };
-      var res = await taDeleteComment(window.Roche || null, item.characterId, item.key);
+      // 把正文也传下去：同一条评价可能因为历史原因存了好几份，要一起清掉
+      // 用 App 自己那份 roche（host.raw）写宿主 storage：
+      // 只写镜像的话，下一次 storage.get 会拿宿主旧值把镜像合并回来 —— 删了又出现。
+      var api = (host && host.raw) || window.Roche || null;
+      var res = await taDeleteComment(api, item.characterId, item.key, item.text);
       if (res.ok) await reloadComments();
       return res;
     },

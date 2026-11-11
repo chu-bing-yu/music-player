@@ -196,7 +196,11 @@ try {
   check('搜索页有推荐词', await evaluate('document.querySelectorAll(".mp-rec-chip").length >= 6'));
   check('搜索页不再有平台按钮', await evaluate('document.querySelectorAll(".mp-chip").length === 0'));
   check('搜索页没有最小化按钮', await evaluate('!document.querySelector(".mp-mast .mp-icon-btn[aria-label=\\"最小化\\"]")'));
-  check('未配置网易云时不显示榜单块', await evaluate('!document.querySelector(".mp-rank")'));
+  // 0.63/0.64 起网易云默认走公共实例，搜索页会带排行榜区块：这里只校验它的结构，不再断言「不存在」
+  check('搜索页排行榜区块结构正常', await evaluate(`(function () {
+    var r = document.querySelector('.mp-rank');
+    return !r || r.textContent.indexOf('排行榜') !== -1;
+  })()`));
 
   // 二级页返回：搜索 → 推荐（上一版这里因为路由白名单失效）
   await evaluate(`(() => {
@@ -660,7 +664,6 @@ try {
     } catch (e) { return false; }
   })()`, 9000);
   check('最新一条无指令时，上一条的评论仍被执行', commentSaved);
-  await evaluate('localStorage.removeItem("mp:mirror:mp:comments")');
 
   // v0.55.0：角色在聊天侧写的歌单只落在镜像里，进歌单页就要能看到（不用重开 App）
   await evaluate(`(function () {
@@ -701,6 +704,64 @@ try {
   })()`, 8000);
   check('角色 ID 为空时 TA 页仍有「TA」分组并显示乐评', taFallback);
   await evaluate('localStorage.removeItem("mp:mirror:mp:playlists"); localStorage.removeItem("mp:mirror:mp:comments");');
+
+  // v0.65.0：同一条指令重复投递，只能落一条（以前会建两个同名歌单 / 存两条评论）
+  await evaluate(`window.__mockMessages = [
+    { id: "dup-1", role: "assistant", content: "<!-- mp:comment:这是一条重复投递的测试乐评 -->" },
+    { id: "dup-2", role: "assistant", content: "<!-- mp:comment:这是一条重复投递的测试乐评 -->" }
+  ]`);
+  await sleep(6000);
+  check('同一句评论重复投递只落一条', await evaluate(`(function () {
+    try {
+      var m = JSON.parse(localStorage.getItem('mp:mirror:mp:comments') || '{}');
+      var n = 0;
+      Object.keys(m).forEach(function (k) {
+        Object.keys(m[k] || {}).forEach(function (c) {
+          if (String((m[k][c] && m[k][c].text) || '').indexOf('这是一条重复投递的测试乐评') !== -1) n += 1;
+        });
+      });
+      return n === 1;
+    } catch (e) { return false; }
+  })()`));
+
+  await evaluate(`window.__mockMessages = [
+    { id: "dup-add-1", role: "assistant", content: "<!-- mp:add -->" },
+    { id: "dup-add-2", role: "assistant", content: "<!-- mp:add -->" }
+  ]`);
+  await sleep(6000);
+  check('add 重复投递不会建出第二个同名歌单', await evaluate(`(function () {
+    try {
+      var list = JSON.parse(localStorage.getItem('mp:mirror:mp:playlists') || '[]');
+      var mine = list.filter(function (p) {
+        return p && p.owner === 'char' && String(p.name || '').indexOf('TA 的歌') === 0;
+      });
+      return mine.length <= 1;
+    } catch (e) { return false; }
+  })()`));
+
+  // v0.65.0：TA 页删除要真的删掉（宿主 + 镜像都不留）
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "歌单")');
+  await sleep(500);
+  await evaluate('window.__t.clickByText(".mp-dock__btn", "TA")');
+  const delClicked = await waitFor(`(function () {
+    var cards = Array.prototype.slice.call(document.querySelectorAll('.mp-ta-review'));
+    var hit = cards.filter(function (c) { return c.textContent.indexOf('这是一条重复投递的测试乐评') !== -1; })[0];
+    if (!hit) return false;
+    var del = hit.querySelector('.mp-ta-review__del');
+    if (!del || del.dataset.done) return false;
+    del.dataset.done = '1';
+    del.click();
+    return true;
+  })()`, 6000);
+  await sleep(1200);
+
+  check('TA 页删除后镜像里也没有这条评论', delClicked && (await evaluate(`(function () {
+    try {
+      var raw = localStorage.getItem('mp:mirror:mp:comments') || '';
+      return raw.indexOf('这是一条重复投递的测试乐评') === -1;
+    } catch (e) { return false; }
+  })()`)));
+  await evaluate('localStorage.removeItem("mp:mirror:mp:comments")');
 } catch (err) {
   failures.push('运行异常：' + (err && err.message));
   console.error('运行异常：', err);

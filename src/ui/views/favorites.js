@@ -536,9 +536,13 @@ export function mount(host, ctx) {
     del.addEventListener('click', function (e) {
       e.stopPropagation();
       if (!ctx.deleteTaComment) return;
-      ctx.deleteTaComment(item).then(function (res) {
+      // 分组 id 归一（空 → 'ta'）：不归一的话删除会打不中存下来的 key
+      var target = Object.assign({}, item, { characterId: groupIdOf(item.characterId) });
+      ctx.deleteTaComment(target).then(function (res) {
         if (res && res.ok) {
           if (ctx.toast) ctx.toast('已删除');
+          var card = row;
+          if (card && card.parentNode) card.parentNode.removeChild(card);
           renderAll();
         } else if (ctx.toast) {
           ctx.toast((res && res.reason) || '删除失败');
@@ -616,6 +620,17 @@ export function mount(host, ctx) {
 
     var playlists = charPlaylistsAll();
     var comments = allComments();
+
+    // 旧数据里同一条评价可能存了好几份（不同 track key / 不同角色 key）：
+    // 同一分组内按「歌名 + 歌手 + 正文」去重，先把界面收敛干净。
+    var seen = Object.create(null);
+    comments = comments.filter(function (c) {
+      var k = [groupIdOf(c.characterId), String(c.name || ''), String(c.artist || ''), String(c.text || '')].join('|');
+      if (seen[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+
     if (currentChar) {
       playlists = playlists.filter(function (p) { return groupIdOf(p.ownerId) === currentChar; });
       comments = comments.filter(function (c) { return groupIdOf(c.characterId) === currentChar; });
